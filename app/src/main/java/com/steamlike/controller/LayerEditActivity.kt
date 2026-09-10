@@ -845,9 +845,26 @@ class LayerEditActivity : AppCompatActivity() { // 定义操作层编辑 Activit
             } // 结束恢复定位 when 块
         } // 结束 restoreActionValueSelection 局部函数
 
-        // 设置初始动作值选择（基于已有映射）
-        // 需延迟到 onItemSelected 异步回调（重建适配器并重置选中位置）之后执行，定位才能生效
-        spinnerActionType.post { restoreActionValueSelection() } // 在主线程消息队列末尾恢复动作值选中项（语法：post=延迟到主线程后续消息执行）
+        // ===== 定义「动作类型是否匹配已有映射」局部函数 =====
+        // 仅在"当前动作类型与已有映射类型一致"时恢复动作值选中项：
+        // - 打开对话框时 setSelection 触发的首次回调 / attach 布局重复触发的回调，
+        //   重建动作值 Spinner（重置到首项）后能同步恢复为当前映射（如键盘 X）；
+        // - 用户手动切换动作类型到其它类型时不匹配，不恢复（显示首项，重新选择）。
+        fun actionTypeMatchesMapping(position: Int): Boolean = when (existingMapping?.action) { // 判断动作类型是否匹配已有映射（语法：局部函数 + when 表达式体）
+            is MappedAction.KeyboardKey -> position == 1 // 键盘按键 → 类型 1
+            is MappedAction.MouseClick -> position == 2 // 鼠标点击 → 类型 2
+            is MappedAction.MouseToggle -> position == 3 // 鼠标长按 → 类型 3
+            is MappedAction.SwitchLayer -> position == 4 // 切换层 → 类型 4
+            is MappedAction.SwitchLayerAndKey -> position == 10 // 切层+按键 → 类型 10
+            is MappedAction.NumpadKey -> position == 11 // 数字小键盘 → 类型 11
+            is MappedAction.MouseScrollUp -> position == 5 // 滚轮上滚 → 类型 5
+            is MappedAction.MouseScrollDown -> position == 6 // 滚轮下滚 → 类型 6
+            is MappedAction.ToggleOverlay -> position == 7 // 切换悬浮窗 → 类型 7
+            is MappedAction.ToggleKeyboard -> position == 8 // 切换键盘 → 类型 8
+            is MappedAction.ToggleCapture -> position == 9 // 切换捕获 → 类型 9
+            is MappedAction.MouseMove, is MappedAction.LookAround -> position == 0 // 摇杆专用 → 未设置(0)
+            null -> position == 0 // 未映射 → 未设置(0)
+        } // 结束 actionTypeMatchesMapping 局部函数
 
         // ===== 子命令管理 =====
         // 子命令 Spinner 列表（动态添加/删除）
@@ -886,6 +903,12 @@ class LayerEditActivity : AppCompatActivity() { // 定义操作层编辑 Activit
                         View.GONE else View.VISIBLE // 隐藏子命令区，否则显示
                 // 额外按键区域仅「切换层+按键」类型显示
                 layoutExtraKey.visibility = if (position == 10) View.VISIBLE else View.GONE // 仅切层+按键类型显示附加按键区
+                // 动作类型与已有映射一致时，同步恢复动作值选中项：
+                // 打开对话框/attach 布局会触发本回调重建动作值 Spinner（重置到首项），
+                // 这里在重建后立即恢复为当前映射，避免显示错误（如映射键盘 X 却显示键盘 A）。
+                if (actionTypeMatchesMapping(position)) { // 仅匹配时恢复，用户手动切到其它类型不误恢复
+                    restoreActionValueSelection() // 恢复动作值选中项
+                } // 结束匹配判断
             } // 结束 onItemSelected 回调
 
             override fun onNothingSelected(parent: AdapterView<*>?) {} // 覆写：无选项选中时回调，空实现
