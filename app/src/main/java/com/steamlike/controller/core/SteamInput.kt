@@ -574,39 +574,87 @@ class SteamInput(context: Context) { // 主控制器类（语法：class 声明�
      * [ControllerButton.RIGHT_TRIGGER_CLICK] 按下事件，低于阈值触发释放。
      * 使用 [l2Pressed]/[r2Pressed] 状态避免重复触发。
      *
+     * ## 快速扳机（霍尔扳机 0↔255 直跳）适配
+     * 手柄 App 设为"快速扳机"后，扳机轴只在 0 和满值间跳变，没有中间值；
+     * Android 会把高频的多次轴采样合并进同一个 [MotionEvent]（含历史采样）。
+     * 若只读最新采样值，合并窗口内的"松开"或"按下"翻转会被最新值覆盖而丢失，
+     * 状态机卡在按下态，表现为鼠标/按键按下后不回弹。
+     * 因此这里按时间顺序遍历该事件的全部采样（历史→最新），逐采样执行状态翻转，
+     * 保证窗口内每次 0↔1 跳变都被正确处理（快速连点不漏、不卡）。
+     *
      * @param event MotionEvent
      * @param device InputDevice（用于检测其他可能轴）
      */
     private fun handleTriggerAxis(event: MotionEvent, device: InputDevice) { // 处理扳机轴事件
         // L2: 优先 AXIS_LTRIGGER，回退 AXIS_BRAKE
-        var l2Value = event.getAxisValue(MotionEvent.AXIS_LTRIGGER) // 读取 L2 轴值（语法：var 可变变量）
-        if (l2Value == 0f && device.getMotionRange(MotionEvent.AXIS_BRAKE) != null) { // LTRIGGER 无效且存在 BRAKE 轴时回退
-            l2Value = event.getAxisValue(MotionEvent.AXIS_BRAKE) // 读取 BRAKE 轴值
-        } // 结束 if
+        val l2Values = collectTriggerSamples( // 收集 L2 全部采样（历史→最新）
+            event, MotionEvent.AXIS_LTRIGGER, MotionEvent.AXIS_BRAKE, device
+        )
         // R2: 优先 AXIS_RTRIGGER，回退 AXIS_GAS
-        var r2Value = event.getAxisValue(MotionEvent.AXIS_RTRIGGER) // 读取 R2 轴值
-        if (r2Value == 0f && device.getMotionRange(MotionEvent.AXIS_GAS) != null) { // RTRIGGER 无效且存在 GAS 轴时回退
-            r2Value = event.getAxisValue(MotionEvent.AXIS_GAS) // 读取 GAS 轴值
-        } // 结束 if
+        val r2Values = collectTriggerSamples( // 收集 R2 全部采样（历史→最新）
+            event, MotionEvent.AXIS_RTRIGGER, MotionEvent.AXIS_GAS, device
+        )
 
-        // L2 按下/释放检测
-        if (l2Value >= TRIGGER_CLICK_THRESHOLD && !l2Pressed) { // L2 超过阈值且未按下则触发按下（语法：>= 比较 + ! 逻辑非）
-            l2Pressed = true // 标记 L2 已按下
-            handleButtonEvent(ControllerButton.LEFT_TRIGGER_CLICK, isPressed = true) // 触发左扳机点击按下
-        } else if (l2Value < TRIGGER_CLICK_THRESHOLD && l2Pressed) { // L2 低于阈值且已按下则触发释放
-            l2Pressed = false // 标记 L2 已释放
-            handleButtonEvent(ControllerButton.LEFT_TRIGGER_CLICK, isPressed = false) // 触发左扳机点击释放
-        } // 结束 L2 处理
+        // 按时间顺序逐采样执行状态翻转（历史→最新），快速连点/直跳不漏翻转
+        l2Values.forEach { value -> // 遍历 L2 采样序列
+            if (value >= TRIGGER_CLICK_THRESHOLD && !l2Pressed) { // L2 超过阈值且未按下则触发按下
+                l2Pressed = true // 标记 L2 已按下
+                handleButtonEvent(ControllerButton.LEFT_TRIGGER_CLICK, isPressed = true) // 触发左扳机点击按下
+            } else if (value < TRIGGER_CLICK_THRESHOLD && l2Pressed) { // L2 低于阈值且已按下则触发释放
+                l2Pressed = false // 标记 L2 已释放
+                handleButtonEvent(ControllerButton.LEFT_TRIGGER_CLICK, isPressed = false) // 触发左扳机点击释放
+            } // 结束 L2 采样判断
+        } // 结束 L2 采样遍历
 
-        // R2 按下/释放检测
-        if (r2Value >= TRIGGER_CLICK_THRESHOLD && !r2Pressed) { // R2 超过阈值且未按下则触发按下
-            r2Pressed = true // 标记 R2 已按下
-            handleButtonEvent(ControllerButton.RIGHT_TRIGGER_CLICK, isPressed = true) // 触发右扳机点击按下
-        } else if (r2Value < TRIGGER_CLICK_THRESHOLD && r2Pressed) { // R2 低于阈值且已按下则触发释放
-            r2Pressed = false // 标记 R2 已释放
-            handleButtonEvent(ControllerButton.RIGHT_TRIGGER_CLICK, isPressed = false) // 触发右扳机点击释放
-        } // 结束 R2 处理
+        // R2 按下/释放检测（逻辑同 L2）
+        r2Values.forEach { value -> // 遍历 R2 采样序列
+            if (value >= TRIGGER_CLICK_THRESHOLD && !r2Pressed) { // R2 超过阈值且未按下则触发按下
+                r2Pressed = true // 标记 R2 已按下
+                handleButtonEvent(ControllerButton.RIGHT_TRIGGER_CLICK, isPressed = true) // 触发右扳机点击按下
+            } else if (value < TRIGGER_CLICK_THRESHOLD && r2Pressed) { // R2 低于阈值且已按下则触发释放
+                r2Pressed = false // 标记 R2 已释放
+                handleButtonEvent(ControllerButton.RIGHT_TRIGGER_CLICK, isPressed = false) // 触发右扳机点击释放
+            } // 结束 R2 采样判断
+        } // 结束 R2 采样遍历
     } // 结束 handleTriggerAxis 函数
+
+    /**
+     * 收集某个扳机在本次 [MotionEvent] 内的全部采样值（历史→最新）
+     *
+     * 快速扳机模式下 Android 会把多次轴采样合并进同一个 MotionEvent，
+     * 必须按时间顺序遍历所有历史采样 + 当前采样，避免漏掉中间的 0↔1 翻转。
+     *
+     * 轴兼容：优先轴每个采样点取 [primaryAxis]；若该采样点为 0 且设备存在
+     * [fallbackAxis]，则改用 [fallbackAxis] 的同位置采样值（兼容只报
+     * BRAKE/GAS 而不报 LTRIGGER/RTRIGGER 的手柄）。
+     *
+     * @param event MotionEvent
+     * @param primaryAxis 优先轴（如 AXIS_LTRIGGER）
+     * @param fallbackAxis 回退轴（如 AXIS_BRAKE）
+     * @param device InputDevice（用于判断回退轴是否存在）
+     * @return 采样值序列（按时间先后）
+     */
+    private fun collectTriggerSamples( // 收集扳机采样序列（语法：private fun 私有函数）
+        event: MotionEvent, // 运动事件
+        primaryAxis: Int, // 优先轴
+        fallbackAxis: Int, // 回退轴
+        device: InputDevice // 输入设备
+    ): List<Float> { // 返回 Float 列表
+        val useFallback = device.getMotionRange(fallbackAxis) != null // 回退轴是否存在
+        val total = event.historySize + 1 // 采样总数 = 历史采样数 + 当前采样（语法：+1 当前采样）
+        val samples = ArrayList<Float>(total) // 创建采样值列表
+        for (i in 0 until total) { // 遍历每个采样位置
+            val atHistory = i < event.historySize // 是否为历史采样
+            var v = if (atHistory) event.getHistoricalAxisValue(primaryAxis, i) // 读取历史采样
+                    else event.getAxisValue(primaryAxis) // 读取当前采样
+            if (v == 0f && useFallback) { // 优先轴采样为 0 且存在回退轴则回退
+                v = if (atHistory) event.getHistoricalAxisValue(fallbackAxis, i) // 读取回退轴历史采样
+                    else event.getAxisValue(fallbackAxis) // 读取回退轴当前采样
+            } // 结束回退判断
+            samples.add(v) // 加入采样列表
+        } // 结束采样遍历
+        return samples // 返回采样序列
+    } // 结束 collectTriggerSamples 函数
 
     /**
      * 处理按钮事件
