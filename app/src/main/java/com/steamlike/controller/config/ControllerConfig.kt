@@ -314,6 +314,9 @@ object ControllerConfig { // 单例对象：配置的 JSON 序列化/反序列�
                 json.put("type", "mouseToggle") // 写入类型标识
                 json.put("button", action.button.name) // 写入鼠标按钮名
             } // 结束鼠标切换分支
+            is MappedAction.MouseSwapToggle -> { // 鼠标长按交换类型
+                json.put("type", "mouseSwapToggle") // 写入类型标识
+            } // 结束鼠标长按交换分支
             is MappedAction.SwitchLayer -> { // 切换操作层类型
                 json.put("type", "switchLayer") // 写入类型标识
                 json.put("layerName", action.layerName) // 写入目标层名
@@ -371,6 +374,7 @@ object ControllerConfig { // 单例对象：配置的 JSON 序列化/反序列�
                     ?: return null // 解析失败返回 null
                 MappedAction.MouseToggle(button) // 构造鼠标切换动作
             } // 结束鼠标切换分支
+            "mouseSwapToggle" -> MappedAction.MouseSwapToggle // 鼠标长按交换：直接返回单例对象
             "switchLayer" -> { // 切换操作层类型
                 val layerName = json.getString("layerName") // 读取目标层名
                 MappedAction.SwitchLayer(layerName) // 构造切换层动作

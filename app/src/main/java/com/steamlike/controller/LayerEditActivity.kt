@@ -773,9 +773,9 @@ class LayerEditActivity : AppCompatActivity() { // 定义操作层编辑 Activit
 
         // ===== 设置动作类型 Spinner =====
         // 0=未设置(取消映射), 1=键盘按键, 2=鼠标点击, 3=鼠标长按, 4=切换操作层,
-        // 5=滚轮上滚, 6=滚轮下滚, 7=切换悬浮窗, 8=切换键盘, 9=切换捕获, 10=切换层+按键, 11=数字小键盘
+        // 5=滚轮上滚, 6=滚轮下滚, 7=切换悬浮窗, 8=切换键盘, 9=切换捕获, 10=切换层+按键, 11=数字小键盘, 12=鼠标长按交换
         val actionTypes = listOf("未设置", "键盘按键", "鼠标点击", "鼠标长按", "切换操作层", // 定义动作类型选项列表（语法：listOf=列表工厂）
-            "滚轮上滚", "滚轮下滚", "切换悬浮窗", "切换键盘", "切换捕获", "切换层+按键", "数字小键盘") // 动作类型列表续行（共 12 种）
+            "滚轮上滚", "滚轮下滚", "切换悬浮窗", "切换键盘", "切换捕获", "切换层+按键", "数字小键盘", "鼠标长按交换") // 动作类型列表续行（共 13 种）
         // 设置动作类型下拉框的适配器（语法：ArrayAdapter=数组适配器，also{}=作用域函数）
         spinnerActionType.adapter = ArrayAdapter(this, android.R.layout.simple_spinner_item, actionTypes).also {
             it.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item) // 设置下拉展开项的布局资源
@@ -786,6 +786,7 @@ class LayerEditActivity : AppCompatActivity() { // 定义操作层编辑 Activit
             is MappedAction.KeyboardKey -> 1 // 键盘按键动作 → 类型 1（语法：is=类型判断分支）
             is MappedAction.MouseClick -> 2 // 鼠标点击动作 → 类型 2
             is MappedAction.MouseToggle -> 3 // 鼠标长按动作 → 类型 3
+            is MappedAction.MouseSwapToggle -> 12 // 鼠标长按交换动作 → 类型 12
             is MappedAction.SwitchLayer -> 4 // 切换层动作 → 类型 4
             is MappedAction.SwitchLayerAndKey -> 10 // 切层+按键动作 → 类型 10
             is MappedAction.NumpadKey -> 11 // 数字小键盘动作 → 类型 11
@@ -854,6 +855,7 @@ class LayerEditActivity : AppCompatActivity() { // 定义操作层编辑 Activit
             is MappedAction.KeyboardKey -> position == 1 // 键盘按键 → 类型 1
             is MappedAction.MouseClick -> position == 2 // 鼠标点击 → 类型 2
             is MappedAction.MouseToggle -> position == 3 // 鼠标长按 → 类型 3
+            is MappedAction.MouseSwapToggle -> position == 12 // 鼠标长按交换 → 类型 12
             is MappedAction.SwitchLayer -> position == 4 // 切换层 → 类型 4
             is MappedAction.SwitchLayerAndKey -> position == 10 // 切层+按键 → 类型 10
             is MappedAction.NumpadKey -> position == 11 // 数字小键盘 → 类型 11
@@ -884,7 +886,7 @@ class LayerEditActivity : AppCompatActivity() { // 定义操作层编辑 Activit
             if (initialActionType == 0 || initialActionType == 4 || // 若初始类型为未设置(0)或切换层(4)（跨行条件）
                 initialActionType == 5 || initialActionType == 6 || // 或为滚轮上滚(5)、滚轮下滚(6)
                 initialActionType == 7 || initialActionType == 8 || // 或为切换悬浮窗(7)、切换键盘(8)
-                initialActionType == 9) // 或为切换捕获(9)
+                initialActionType == 9 || initialActionType == 12) // 或为切换捕获(9)、鼠标长按交换(12)
                 View.GONE else View.VISIBLE // 上述类型隐藏子命令区，否则显示（语法：if...else 表达式，View.GONE=隐藏且不占位）
 
         // 额外按键区域仅「切换层+按键」类型显示
@@ -899,7 +901,7 @@ class LayerEditActivity : AppCompatActivity() { // 定义操作层编辑 Activit
                 // 未设置/切换操作层/滚轮/悬浮窗/键盘/捕获时隐藏子命令区域（切层+按键类型支持子命令故显示）
                 layoutSubCommands.visibility = // 设置子命令区域可见性（跨行赋值）
                     if (position == 0 || position == 4 || position == 5 || position == 6 || // 若类型为未设置/切换层/滚轮上下滚（跨行条件）
-                        position == 7 || position == 8 || position == 9) // 或为切换悬浮窗/键盘/捕获
+                        position == 7 || position == 8 || position == 9 || position == 12) // 或为切换悬浮窗/键盘/捕获/鼠标长按交换
                         View.GONE else View.VISIBLE // 隐藏子命令区，否则显示
                 // 额外按键区域仅「切换层+按键」类型显示
                 layoutExtraKey.visibility = if (position == 10) View.VISIBLE else View.GONE // 仅切层+按键类型显示附加按键区
@@ -1638,6 +1640,10 @@ class LayerEditActivity : AppCompatActivity() { // 定义操作层编辑 Activit
                 label.text = "按下时暂停/恢复手柄事件捕获" // 更新动作标签文字
                 listOf("（切换捕获）") // 返回占位选项
             } // 结束切换捕获分支
+            12 -> {  // 鼠标长按交换 // 鼠标长按交换类型分支
+                label.text = "按下时交换左右键的长按锁存状态" // 更新动作标签文字
+                listOf("（鼠标长按交换）") // 返回占位选项
+            } // 结束鼠标长按交换分支
             else -> emptyList() // 其它类型返回空列表（语法：else=默认分支）
         } // 结束选项列表 when 表达式
 
@@ -1679,6 +1685,7 @@ class LayerEditActivity : AppCompatActivity() { // 定义操作层编辑 Activit
                 ) // 结束 SwitchLayerAndKey 构造
             } // 结束切层+按键分支
             10 -> MappedAction.NumpadKey(numpadKeyOptions[valuePosition].second) // 数字小键盘动作：用所选小键盘键码构建（语法：下标访问列表元素）
+            11 -> MappedAction.MouseSwapToggle // 鼠标长按交换动作：交换左右键长按锁存状态
             4 -> MappedAction.MouseScrollUp   // 滚轮上滚 // 滚轮上滚动作
             5 -> MappedAction.MouseScrollDown  // 滚轮下滚 // 滚轮下滚动作
             6 -> MappedAction.ToggleOverlay   // 切换悬浮窗 // 切换悬浮窗动作

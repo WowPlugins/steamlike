@@ -123,6 +123,16 @@ sealed class MappedAction { // 映射动作密封类（语法：sealed class 密
     data class MouseToggle(val button: MouseButton) : MappedAction() // 鼠标长按切换动作
 
     /**
+     * 鼠标长按交换动作
+     *
+     * 处理时检查左右键的长按锁存状态并交换：
+     * - 右键长按中 → 释放右键，改为长按左键
+     * - 左键长按中 → 释放左键，改为长按右键
+     * 若左右键都没有处于长按锁存状态，则不做任何处理。
+     */
+    data object MouseSwapToggle : MappedAction() // 鼠标长按交换动作
+
+    /**
      * 鼠标滚轮上滚动作
      *
      * 将手柄按键映射为鼠标滚轮向上滚动（发送一次固定增量的滚轮事件）。
@@ -218,6 +228,7 @@ data class KeyMapping( // 按键映射定义（语法：data class 数据类）
             is MappedAction.MouseMove -> parts.add("鼠标移动") // 鼠标移动描述
             is MappedAction.LookAround -> parts.add("视角控制") // 视角控制描述
             is MappedAction.MouseToggle -> parts.add("长按${action.button.toDisplayName()}") // 鼠标长按描述
+            is MappedAction.MouseSwapToggle -> parts.add("长按交换") // 鼠标长按交换描述
             is MappedAction.MouseScrollUp -> parts.add("滚轮上滚") // 滚轮上滚描述
             is MappedAction.MouseScrollDown -> parts.add("滚轮下滚") // 滚轮下滚描述
             is MappedAction.ToggleOverlay -> parts.add("切换悬浮窗") // 切换悬浮窗描述

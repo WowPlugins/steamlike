@@ -191,6 +191,8 @@ class ControllerOverlayService : Service() {  // class=类声明；继承 Servic
         private const val COLOR_OVERLAY_BORDER_NORMAL = 0x33FFFFFF  // const val=编译期常量；悬浮窗常驻边框普通态颜色
         /** 悬浮窗常驻边框（右键长按锁存激活态，红色高亮） */
         private const val COLOR_OVERLAY_BORDER_ACTIVE = 0xFFFF4444.toInt()  // const val=编译期常量；悬浮窗边框激活态颜色（红色高亮）
+        /** 悬浮窗常驻边框（左键长按锁存激活态，绿色高亮） */
+        private const val COLOR_OVERLAY_BORDER_LEFT_ACTIVE = 0xFF4CAF50.toInt()  // const val=编译期常量；悬浮窗边框左键锁存颜色（绿色高亮）
         /** 按键映射列表项背景 */
         private const val COLOR_MAPPING_ITEM = 0x77222222.toInt()  // const val=编译期常量；按键映射列表项背景色
         /** 按键映射列表项高亮（手柄按键按下时的反馈色） */
@@ -207,6 +209,8 @@ class ControllerOverlayService : Service() {  // class=类声明；继承 Servic
      * 悬浮窗常驻容器的圆角边框背景，右键长按锁存时切换边框颜色
      */
     private var overlayFrameBackground: GradientDrawable? = null  // var=可变变量；?=可空类型；悬浮窗常驻容器的圆角边框背景
+    /** 当前处于长按锁存状态的鼠标按钮集合（左/右键），用于决定悬浮窗边框颜色 */
+    private val lockedMouseToggles = mutableSetOf<MouseButton>()  // val=只读引用；可变集合记录长按锁存的鼠标按钮
     private var gamepadInputView: GamepadInputView? = null  // var=可变变量；?=可空类型；全屏透明焦点输入窗口
     private var statusText: TextView? = null  // var=可变变量；?=可空类型；状态文本视图
     private var layerText: TextView? = null  // var=可变变量；?=可空类型；操作层堆栈文本视图
@@ -532,11 +536,10 @@ class ControllerOverlayService : Service() {  // class=类声明；继承 Servic
                 mapper?.onToggleKeyboard = { mainHandler.post { toggleSystemKeyboard() } }  // ?.=安全调用；lambda；切换系统键盘（回主线程）
                 mapper?.onToggleCapture = { mainHandler.post { toggleCaptureState() } }  // ?.=安全调用；lambda；切换捕获状态（回主线程）
 
-                // 鼠标长按切换（MouseToggle）：右键锁存时悬浮窗边框红色高亮，释放恢复
+                // 鼠标长按切换/交换（MouseToggle / MouseSwapToggle）：
+                // 左键锁存 → 绿色边框；右键锁存 → 红色边框；都未锁存 → 普通边框
                 mapper?.onMouseToggleChanged = { mouseButton, active ->  // ?.=安全调用；lambda {mouseButton, active->}；设置鼠标长按切换回调
-                    if (mouseButton == MouseButton.RIGHT) {  // if 判断：仅右键锁存时处理
-                        setRightToggleBorder(active)  // 切换悬浮窗边框颜色
-                    }  // 结束 if 块
+                    onMouseToggleStateChanged(mouseButton, active)  // 更新锁存集合并刷新悬浮窗边框颜色
                 }  // 结束 onMouseToggleChanged lambda
 
                 if (mapper?.start() == true) {  // ?.=安全调用；if 判断：映射器启动成功
@@ -1710,17 +1713,36 @@ class ControllerOverlayService : Service() {  // class=类声明；继承 Servic
     }  // 结束 applyBatteryText 函数
 
     /**
-     * 切换悬浮窗常驻边框颜色（鼠标右键长按锁存提示）
+     * 处理鼠标按钮长按锁存状态变化，刷新悬浮窗边框颜色
      *
-     * @param active true=右键长按锁存激活（红色高亮边框），false=恢复普通态
+     * 左键锁存优先显示绿色，其次右键锁存显示红色，都未锁存恢复普通态。
+     * 由 [KeyboardMouseMapper.onMouseToggleChanged] 回调（鼠标长按 / 长按交换）触发。
+     *
+     * @param button 状态发生变化的鼠标按钮
+     * @param active true=进入长按锁存，false=解除长按锁存
      */
-    private fun setRightToggleBorder(active: Boolean) {  // private=私有；fun=函数声明；切换悬浮窗边框颜色
+    private fun onMouseToggleStateChanged(button: MouseButton, active: Boolean) {  // private=私有；fun=函数声明；处理鼠标长按锁存状态变化
+        if (button != MouseButton.LEFT && button != MouseButton.RIGHT) return  // if 判断：仅左右键参与边框提示
+        if (active) lockedMouseToggles.add(button) else lockedMouseToggles.remove(button)  // 更新锁存集合
+        val color = when {  // val=只读变量；when{}=按条件选择颜色
+            lockedMouseToggles.contains(MouseButton.LEFT) -> COLOR_OVERLAY_BORDER_LEFT_ACTIVE  // 左键锁存 → 绿色边框
+            lockedMouseToggles.contains(MouseButton.RIGHT) -> COLOR_OVERLAY_BORDER_ACTIVE  // 右键锁存 → 红色边框
+            else -> COLOR_OVERLAY_BORDER_NORMAL  // 均未锁存 → 普通边框
+        }  // 结束颜色选择 when
+        applyOverlayBorderColor(color)  // 应用到悬浮窗常驻边框
+    }  // 结束 onMouseToggleStateChanged 函数
+
+    /**
+     * 应用悬浮窗常驻边框颜色（鼠标长按锁存提示）
+     *
+     * @param color 目标边框颜色
+     */
+    private fun applyOverlayBorderColor(color: Int) {  // private=私有；fun=函数声明；应用悬浮窗边框颜色
         mainHandler.post {  // 回主线程执行
-            val color = if (active) COLOR_OVERLAY_BORDER_ACTIVE else COLOR_OVERLAY_BORDER_NORMAL  // val=只读变量；if 表达式；按状态选颜色
             overlayFrameBackground?.setStroke(dp(2), color)  // ?.=安全调用；设置边框宽度与颜色
-            Log.d(TAG, "Overlay border: ${if (active) "ACTIVE(right hold)" else "normal"}")  // 字符串模板 "$var"=插值；if 表达式；打印边框状态
+            Log.d(TAG, "Overlay border color: #${Integer.toHexString(color)}")  // 打印边框颜色日志
         }  // 结束 post lambda
-    }  // 结束 setRightToggleBorder 函数
+    }  // 结束 applyOverlayBorderColor 函数
 
     /**
      * 更新按键映射列表页的按钮高亮（手柄按键按下/释放反馈）

@@ -11,7 +11,7 @@ android {  // 语法：android{} 块，Android 应用模块的配置入口
         minSdk = 24  // 语法：minSdk 最低支持 Android 版本（Android 7.0）
         targetSdk = 37  // 语法：targetSdk 目标 Android 版本（37，决定系统兼容行为）
         versionCode = 1  // 内部版本号（整数，用于版本比较/升级判断）
-        versionName = "0.1.11"  // 对外显示的版本名称
+        versionName = "0.1.12"  // 对外显示的版本名称
     }  // 结束 defaultConfig 块
 
     buildTypes {  // 语法：buildTypes{} 块，配置各构建类型（debug/release 等）

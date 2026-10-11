@@ -345,6 +345,7 @@ class KeyboardMouseMapper( // 语法：class 类声明，定义键盘/鼠标映�
             is MappedAction.NumpadKey -> handleKeyboardKey(button, true, action.keyCode, mapping.subCommands) // 数字小键盘动作：按键盘键注入（VK 映射到小键盘键）
             is MappedAction.MouseClick -> handleMouseClick(button, true, action.button) // 鼠标点击动作：按下鼠标按钮
             is MappedAction.MouseToggle -> handleMouseToggle(action.button) // 鼠标长按切换动作（仅在按下时到达此处）
+            is MappedAction.MouseSwapToggle -> handleMouseSwapToggle() // 鼠标长按交换动作：在左右键长按间交换
             is MappedAction.SwitchLayer -> {} // SteamInput 已处理 // 切换层动作：由 SteamInput 内部处理
             is MappedAction.MouseMove, is MappedAction.LookAround -> {} // handleStick 处理 // 鼠标移动/视角动作：由 handleStick 处理
             is MappedAction.MouseScrollUp -> handleMouseScroll(button, SCROLL_DELTA) // 鼠标上滚动作：传入正增量
@@ -512,6 +513,43 @@ class KeyboardMouseMapper( // 语法：class 类声明，定义键盘/鼠标映�
     } // 结束 handleMouseToggle 函数
 
     /**
+     * 处理鼠标长按交换映射
+     *
+     * 检查左右键的长按锁存状态并交换：
+     * - 右键长按中 → 释放右键，改为长按左键
+     * - 左键长按中 → 释放左键，改为长按右键
+     * - 左右键都未长按 → 不做任何处理
+     *
+     * 与「鼠标长按」共用全局锁存标志 [toggledMouseButtons]，交换后仍可由
+     * 各自的长按映射键解锁（见 [handleMouseToggle]）。
+     */
+    private fun handleMouseSwapToggle() { // 语法：private fun 私有函数，交换左右键的长按锁存状态
+        when { // 语法：when 无参数分支表达式，按条件匹配
+            toggledMouseButtons.contains(MouseButton.RIGHT) -> { // 右键长按中 → 换成长按左键
+                injector.sendMouseUp(MouseButton.RIGHT) // 释放右键
+                toggledMouseButtons.remove(MouseButton.RIGHT) // 移出右键锁存记录
+                onMouseToggleChanged?.invoke(MouseButton.RIGHT, false) // 通知右键已释放（语法：?. 安全调用）
+                injector.sendMouseDown(MouseButton.LEFT) // 按下并锁存左键
+                toggledMouseButtons.add(MouseButton.LEFT) // 记入左键锁存记录
+                onMouseToggleChanged?.invoke(MouseButton.LEFT, true) // 通知左键已锁存
+                Log.d(TAG, "Swap MouseToggle: RIGHT -> LEFT") // 打印交换日志
+            } // 结束右键分支
+            toggledMouseButtons.contains(MouseButton.LEFT) -> { // 左键长按中 → 换成长按右键
+                injector.sendMouseUp(MouseButton.LEFT) // 释放左键
+                toggledMouseButtons.remove(MouseButton.LEFT) // 移出左键锁存记录
+                onMouseToggleChanged?.invoke(MouseButton.LEFT, false) // 通知左键已释放
+                injector.sendMouseDown(MouseButton.RIGHT) // 按下并锁存右键
+                toggledMouseButtons.add(MouseButton.RIGHT) // 记入右键锁存记录
+                onMouseToggleChanged?.invoke(MouseButton.RIGHT, true) // 通知右键已锁存
+                Log.d(TAG, "Swap MouseToggle: LEFT -> RIGHT") // 打印交换日志
+            } // 结束左键分支
+            else -> { // 语法：else 兜底分支，左右键均未长按
+                Log.d(TAG, "Swap MouseToggle: no active hold, ignored") // 打印忽略日志
+            } // 结束 else 分支
+        } // 结束 when 分支
+    } // 结束 handleMouseSwapToggle 函数
+
+    /**
      * 左摇杆移动（WASD）时确保鼠标右键处于锁定状态
      *
      * 移动触发时检查全局锁存状态（[toggledMouseButtons]）：
@@ -522,6 +560,7 @@ class KeyboardMouseMapper( // 语法：class 类声明，定义键盘/鼠标映�
      * 需再按一次映射到右键长按的手柄键解锁（见 [handleMouseToggle]）。
      */
     private fun ensureRightButtonLockedOnMove() { // 语法：private fun 私有函数，左摇杆移动时自动锁定鼠标右键
+        if (toggledMouseButtons.contains(MouseButton.LEFT)) return // 左键长按锁存时不做自动锁定右键（避免与左键锁存冲突）
         if (toggledMouseButtons.contains(MouseButton.RIGHT)) return // 右键已锁定：直接返回不重复锁定（语法：if 单行返回）
         if (pressedMouseButtons.containsValue(MouseButton.RIGHT)) return // 右键正被临时按住（MouseClick 动作）：不重复按下，避免其松开时打断锁定态（语法：containsValue 映射值包含判断）
         injector.sendMouseCenter() // 锁定前先把鼠标光标移到屏幕中央，避免锁定瞬间视角从偏移位置开始漂移
