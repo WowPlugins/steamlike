@@ -85,17 +85,20 @@ class KeyboardMouseMapper( // 语法：class 类声明，定义键盘/鼠标映�
     private val leftStickPressedKeys = mutableSetOf<Int>() // 语法：val+mutableSetOf 可变集合（无重复元素），保存左摇杆当前按下的方向键
 
     /**
-     * MouseToggle 当前处于"按下"状态的手柄按钮集合
+     * 当前处于"锁存"状态的鼠标按钮集合（全局统一状态）
      *
-     * key = 手柄按钮, value = 已按下的鼠标按钮
+     * 只按鼠标按钮记录，不区分是哪个手柄按钮触发的，因此
+     * 「鼠标长按」映射与左摇杆移动自动锁定右键共用同一份标志：
      *
-     * 第一次按下 → 发送 MouseDown，加入集合
-     * 第二次按下 → 发送 MouseUp，移出集合
+     * - 第一次按下（鼠标长按映射）→ 发送 MouseDown，加入集合
+     * - 再次按下 → 发送 MouseUp，移出集合
+     * - 左摇杆 WASD 触发且右键不在集合中 → 发送 MouseDown 并加入集合
+     *   （见 [ensureRightButtonLockedOnMove]）
      *
-     * toggle 是用户主动锁存机制，不随操作层切换自动释放
+     * 锁存状态由用户主动解锁，不随操作层切换自动释放
      * （松开手柄键也不改变状态，见 [handleMouseToggle]）。
      */
-    private val toggledMouseButtons = mutableMapOf<ControllerButton, MouseButton>() // 语法：val+mutableMapOf 可变映射，记录 MouseToggle 锁存状态
+    private val toggledMouseButtons = mutableSetOf<MouseButton>() // 语法：val+mutableSetOf 可变集合，记录鼠标按钮锁存状态（全局统一标志）
 
     /**
      * 右摇杆最新位置（主线程事件回调写入，发送循环线程读取）
@@ -233,7 +236,7 @@ class KeyboardMouseMapper( // 语法：class 类声明，定义键盘/鼠标映�
         pressedSubKeys.clear() // 清空子命令键按下记录
         pressedMouseButtons.clear() // 清空鼠标按钮按下记录
         leftStickPressedKeys.clear() // 清空左摇杆方向键集合
-        toggledMouseButtons.clear() // 清空 MouseToggle 锁存记录
+        toggledMouseButtons.clear() // 清空鼠标按钮锁存记录（含左摇杆移动自动锁定的右键）
         latestLookX = 0f // 重置右摇杆最新 X
         latestLookY = 0f // 重置右摇杆最新 Y
         smoothedLookX = 0f // 重置平滑 X
@@ -341,7 +344,7 @@ class KeyboardMouseMapper( // 语法：class 类声明，定义键盘/鼠标映�
             is MappedAction.SwitchLayerAndKey -> handleKeyboardKey(button, true, action.keyCode, mapping.subCommands) // 切层+按键动作：按键盘键注入（层切换由 SteamInput 处理）
             is MappedAction.NumpadKey -> handleKeyboardKey(button, true, action.keyCode, mapping.subCommands) // 数字小键盘动作：按键盘键注入（VK 映射到小键盘键）
             is MappedAction.MouseClick -> handleMouseClick(button, true, action.button) // 鼠标点击动作：按下鼠标按钮
-            is MappedAction.MouseToggle -> handleMouseToggle(button, true, action.button) // 鼠标长按切换动作
+            is MappedAction.MouseToggle -> handleMouseToggle(action.button) // 鼠标长按切换动作（仅在按下时到达此处）
             is MappedAction.SwitchLayer -> {} // SteamInput 已处理 // 切换层动作：由 SteamInput 内部处理
             is MappedAction.MouseMove, is MappedAction.LookAround -> {} // handleStick 处理 // 鼠标移动/视角动作：由 handleStick 处理
             is MappedAction.MouseScrollUp -> handleMouseScroll(button, SCROLL_DELTA) // 鼠标上滚动作：传入正增量
@@ -487,26 +490,45 @@ class KeyboardMouseMapper( // 语法：class 类声明，定义键盘/鼠标映�
      * 第二次按下 → 发送 MouseUp（不再按下）
      * 松开手柄键不触发任何操作（保持 toggle 状态）
      *
-     * @param button 手柄按钮
-     * @param isPressed true=按下, false=释放（toggle模式中释放无操作）
+     * 锁存状态按鼠标按钮全局记录（[toggledMouseButtons]），与左摇杆移动
+     * 自动锁定右键共用：无论由谁锁定的右键，再按一次该映射键即解锁。
+     *
      * @param mouseButton 鼠标按钮
      */
-    private fun handleMouseToggle(button: ControllerButton, isPressed: Boolean, mouseButton: MouseButton) { // 语法：private fun 私有函数，处理鼠标长按切换映射
-        if (!isPressed) return  // toggle模式：松开手柄键不触发任何操作 // toggle 锁存：松开不改变状态
-        if (toggledMouseButtons.containsKey(button)) { // 语法：if 分支，若该按钮已处于锁存按下（第二次按下，containsKey 判断）
-            // 第二次按下 → 释放
+    private fun handleMouseToggle(mouseButton: MouseButton) { // 语法：private fun 私有函数，处理鼠标长按切换映射
+        if (toggledMouseButtons.contains(mouseButton)) { // 语法：if 分支，若该鼠标按钮已处于锁存状态（contains 集合包含判断）
+            // 再次按下 → 释放（左摇杆自动锁定过的右键也在此一并解锁）
             injector.sendMouseUp(mouseButton) // 发送鼠标按钮松开事件
-            toggledMouseButtons.remove(button) // 从锁存记录中移除该按钮
+            toggledMouseButtons.remove(mouseButton) // 从锁存记录中移除该鼠标按钮
             onMouseToggleChanged?.invoke(mouseButton, false) // 通知回调当前为松开状态（语法：?. 安全调用）
             Log.d(TAG, "Toggle MouseUp: $mouseButton") // 打印 toggle 松开日志（语法：字符串模板）
-        } else { // 语法：if-else 分支，第一次按下
+        } else { // 语法：else 分支，第一次按下
             // 第一次按下 → 按下
             injector.sendMouseDown(mouseButton) // 发送鼠标按钮按下事件（保持不松开）
-            toggledMouseButtons[button] = mouseButton // 记录该按钮处于锁存按下状态（语法：Map 下标写入键值）
+            toggledMouseButtons.add(mouseButton) // 记录该鼠标按钮处于锁存状态（语法：Set.add 集合添加元素）
             onMouseToggleChanged?.invoke(mouseButton, true) // 通知回调当前为按下状态（语法：?. 安全调用）
             Log.d(TAG, "Toggle MouseDown: $mouseButton") // 打印 toggle 按下日志（语法：字符串模板）
         } // 结束 if-else 分支
     } // 结束 handleMouseToggle 函数
+
+    /**
+     * 左摇杆移动（WASD）时确保鼠标右键处于锁定状态
+     *
+     * 移动触发时检查全局锁存状态（[toggledMouseButtons]）：
+     * - 右键已锁定 → 不做任何事，避免重复发送 MouseDown
+     * - 右键未锁定 → 发送 MouseDown(RIGHT) 并记为锁存
+     *
+     * 锁定后不随停止移动自动松开，与「鼠标长按」一致，
+     * 需再按一次映射到右键长按的手柄键解锁（见 [handleMouseToggle]）。
+     */
+    private fun ensureRightButtonLockedOnMove() { // 语法：private fun 私有函数，左摇杆移动时自动锁定鼠标右键
+        if (toggledMouseButtons.contains(MouseButton.RIGHT)) return // 右键已锁定：直接返回不重复锁定（语法：if 单行返回）
+        if (pressedMouseButtons.containsValue(MouseButton.RIGHT)) return // 右键正被临时按住（MouseClick 动作）：不重复按下，避免其松开时打断锁定态（语法：containsValue 映射值包含判断）
+        injector.sendMouseDown(MouseButton.RIGHT) // 发送鼠标右键按下事件（保持不松开）
+        toggledMouseButtons.add(MouseButton.RIGHT) // 记入全局锁存状态（与「鼠标长按」共用同一标志）
+        onMouseToggleChanged?.invoke(MouseButton.RIGHT, true) // 通知回调，悬浮窗边框红色高亮（语法：?. 安全调用）
+        Log.d(TAG, "Auto MouseDown: RIGHT (left stick move)") // 打印自动锁定日志
+    } // 结束 ensureRightButtonLockedOnMove 函数
 
     /**
      * 处理鼠标滚轮映射
@@ -551,6 +573,10 @@ class KeyboardMouseMapper( // 语法：class 类声明，定义键盘/鼠标映�
                 else if (x < -threshold) newKeys.add(KeyEvent.KEYCODE_A) // 摇杆左偏：加入 A 键（语法：else if）
                 if (y > threshold) newKeys.add(KeyEvent.KEYCODE_S) // 摇杆下偏：加入 S 键（语法：if 单行语句）
                 else if (y < -threshold) newKeys.add(KeyEvent.KEYCODE_W) // 摇杆上偏：加入 W 键（语法：else if）
+
+                // WASD 触发（正在移动）→ 确保鼠标右键已锁定；摇杆回中（无方向键）不做处理，
+                // 锁定态保持到用户按「鼠标长按」映射键解锁。
+                if (newKeys.isNotEmpty()) ensureRightButtonLockedOnMove() // 有方向键触发时检查并自动锁定右键（语法：isNotEmpty() 集合非空判断）
 
                 // 释放不再按下的方向键
                 for (key in leftStickPressedKeys) { // 遍历旧集合中的方向键（语法：for(x in y) 遍历）
