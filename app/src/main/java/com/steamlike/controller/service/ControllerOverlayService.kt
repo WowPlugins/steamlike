@@ -47,6 +47,8 @@ import com.steamlike.controller.config.AppConfigStore  // 导入运行时配置�
 import com.steamlike.controller.config.ConfigManager  // 导入配置管理器
 import com.steamlike.controller.config.ControllerConfig  // 导入控制器配置（JSON 解析）
 import com.steamlike.controller.core.ControllerButton  // 导入手柄按键枚举
+import com.steamlike.controller.core.ControllerDevice  // 导入手柄设备类（读取手柄电量）
+import com.steamlike.controller.core.GamepadBattery  // 导入手柄电量信息数据类
 import com.steamlike.controller.core.KeyMapping  // 导入按键映射数据类
 import com.steamlike.controller.core.MouseButton  // 导入鼠标按键枚举
 import com.steamlike.controller.core.SteamInput  // 导入 SteamInput 手柄控制器
@@ -193,6 +195,10 @@ class ControllerOverlayService : Service() {  // class=类声明；继承 Servic
         private const val COLOR_MAPPING_ITEM = 0x77222222.toInt()  // const val=编译期常量；按键映射列表项背景色
         /** 按键映射列表项高亮（手柄按键按下时的反馈色） */
         private const val COLOR_MAPPING_ACTIVE = 0xFF2196F3.toInt()  // const val=编译期常量；按键映射列表项高亮色（蓝色）
+        /** 手柄电量文本颜色（浅绿色，区别于层名与操作集颜色） */
+        private const val COLOR_BATTERY_TEXT = 0xFF8BC34A.toInt()  // const val=编译期常量；电量文本颜色
+        /** 手柄电量刷新间隔（毫秒）：电量变化缓慢，60 秒刷新一次足够 */
+        private const val BATTERY_REFRESH_INTERVAL_MS = 60_000L  // const val=编译期常量；60_000L=Long 字面量（下划线分隔便于阅读）
     }  // 结束 companion object 伴生对象
 
     private var windowManager: WindowManager? = null  // var=可变变量；?=可空类型；窗口管理器（管理悬浮窗与焦点窗口）
@@ -230,7 +236,28 @@ class ControllerOverlayService : Service() {  // class=类声明；继承 Servic
      * 操作集切换时由 [onActionSetSwitched] 更新文本（展开面板重建时一并重建）。
      */
     private var actionSetText: TextView? = null  // var=可变变量；?=可空类型；操作集信息文本视图
+    /**
+     * 展开面板中显示手柄电量的 TextView
+     *
+     * 由 [refreshBatteryText] 刷新（每 [BATTERY_REFRESH_INTERVAL_MS] 毫秒一次），
+     * 未连接手柄（或系统低于 Android 14）时该行隐藏，电量未知时显示"未知"。
+     */
+    private var batteryText: TextView? = null  // var=可变变量；?=可空类型；手柄电量文本视图
     private val mainHandler = android.os.Handler(android.os.Looper.getMainLooper())  // val=只读变量；主线程消息处理器，用于跨线程回主线程更新 UI
+
+    /**
+     * 手柄电量定时刷新任务
+     *
+     * 自排队循环：每 [BATTERY_REFRESH_INTERVAL_MS] 毫秒刷新一次电量文本。
+     * 展开面板未创建时 [batteryText] 为 null，[refreshBatteryText] 内部自动跳过，
+     * 因此任务常驻无副作用（Service 销毁时在 [onDestroy] 中移除）。
+     */
+    private val batteryRefreshTask = object : Runnable {  // val=只读变量；object : Runnable=匿名对象实现接口（语法：object 表达式）
+        override fun run() {  // override=覆写接口方法；fun=函数声明；任务体
+            refreshBatteryText()  // 后台读取并刷新手柄电量文本
+            mainHandler.postDelayed(this, BATTERY_REFRESH_INTERVAL_MS)  // 延迟投递自身，形成循环（语法：postDelayed 延迟投递 Runnable）
+        }  // 结束 run 函数
+    }  // 结束 batteryRefreshTask 匿名对象
 
     // 悬浮窗收起/展开/映射列表状态
     private var isExpanded = false  // var=可变变量；悬浮窗是否处于展开状态
@@ -1647,7 +1674,40 @@ class ControllerOverlayService : Service() {  // class=类声明；继承 Servic
         setupOverlayTouchListener(frame)  // 为容器设置拖动与点击监听
         // 初始显示收起胶囊
         showCollapsedView()  // 显示收起胶囊
+        // 启用手柄电量定时刷新（先移除防重复排队）
+        mainHandler.removeCallbacks(batteryRefreshTask)  // 移除可能存在的旧任务
+        mainHandler.postDelayed(batteryRefreshTask, BATTERY_REFRESH_INTERVAL_MS)  // 延迟投递刷新任务，启动自排队循环
     }  // 结束 createOverlay 函数
+
+    /**
+     * 后台读取手柄电量并刷新悬浮窗显示
+     *
+     * [ControllerDevice.readBattery] 在部分设备上会阻塞数秒（实测 Xbox 手柄约 10 秒），
+     * 因此必须在后台线程执行，读完再回主线程更新文本。
+     * 展开面板未创建（收起状态）时 [batteryText] 为 null，直接返回不做任何事。
+     */
+    private fun refreshBatteryText() {  // private=私有；fun=函数声明；后台刷新电量文本
+        if (batteryText == null) return  // 面板未创建则无需读取（语法：if 单行返回）
+        Thread {  // 启动后台线程执行阻塞读取（语法：Thread { }.start() 匿名线程）
+            val battery = ControllerDevice.readBattery()  // 读取手柄电量（阻塞操作）
+            mainHandler.post { applyBatteryText(battery) }  // 回主线程更新 UI（语法：post 投递 Runnable）
+        }.start()  // 启动线程
+    }  // 结束 refreshBatteryText 函数
+
+    /**
+     * 在主线程把电量信息写入悬浮窗文本
+     *
+     * @param battery 电量信息；null 表示无手柄或系统不支持，此时隐藏该行
+     */
+    private fun applyBatteryText(battery: GamepadBattery?) {  // private=私有；fun=函数声明；应用电量文本
+        val view = batteryText ?: return  // 取电量文本控件，为空（面板已收起/销毁）则直接返回（语法：?: 空值合并提前返回）
+        if (battery == null) {  // 无电量数据时（语法：if 分支）
+            view.visibility = View.GONE  // 隐藏该行
+        } else {  // 读到电量信息（可能为"未知"）时
+            view.text = battery.displayText  // 更新文本内容
+            view.visibility = View.VISIBLE  // 显示该行
+        }  // 结束分支
+    }  // 结束 applyBatteryText 函数
 
     /**
      * 切换悬浮窗常驻边框颜色（鼠标右键长按锁存提示）
@@ -1886,6 +1946,17 @@ class ControllerOverlayService : Service() {  // class=类声明；继承 Servic
             setPadding(0, dp(2), 0, dp(2))  // 设置上下内边距 2dp
         }  // 结束 apply lambda
         container.addView(actionSetText)  // 把操作集文本加入容器
+
+        // 手柄电量（Android 14+ 才能读取；后台读取完成后再显示，未连接手柄时该行隐藏）
+        batteryText = TextView(this).apply {  // apply=作用域函数；创建电量文本控件并赋值给成员字段
+            text = ""  // 初始为空，读取完成前不显示
+            setTextColor(COLOR_BATTERY_TEXT)  // 设置浅绿色文字
+            textSize = 11f  // 设置字号 11sp
+            setPadding(0, 0, 0, dp(2))  // 设置底部内边距 2dp
+            visibility = View.GONE  // 读取完成前隐藏该行，避免出现空行
+        }  // 结束 apply lambda
+        container.addView(batteryText)  // 把电量文本加入容器
+        refreshBatteryText()  // 展开面板后立即后台读取一次电量
 
         // 操作层堆栈
         layerText = TextView(this).apply {  // apply=作用域函数；创建操作层堆栈文本控件并赋值给成员字段
@@ -2665,5 +2736,7 @@ class ControllerOverlayService : Service() {  // class=类声明；继承 Servic
         // 移除悬浮窗UI
         overlayView?.let { windowManager?.removeView(it) }  // ?.=安全调用；let=作用域函数；移除悬浮窗容器
         overlayView = null  // 清空悬浮窗引用
+        batteryText = null  // 清空电量文本引用（避免持有已移除的视图）
+        mainHandler.removeCallbacks(batteryRefreshTask)  // 移除电量定时刷新任务，避免 Service 销毁后残留循环
     }  // 结束 onDestroy 函数
 }  // 结束 ControllerOverlayService 类

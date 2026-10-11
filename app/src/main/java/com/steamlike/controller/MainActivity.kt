@@ -17,6 +17,7 @@ import android.os.Process // 导入 Process，获取当前进程 UID
 import android.provider.MediaStore // 导入 MediaStore，媒体文件数据库
 import android.provider.Settings // 导入 Settings，系统设置（悬浮窗权限等）
 import android.util.Log // 导入 Log，日志输出
+import android.view.View // 导入 View 基类（控制控件可见性）
 import android.view.WindowManager // 导入 WindowManager，窗口布局参数
 import android.widget.Button // 导入 Button 按钮控件
 import android.widget.EditText // 导入 EditText 输入框控件
@@ -32,6 +33,7 @@ import com.steamlike.controller.config.AppConfig // 导入运行时配置数据�
 import com.steamlike.controller.config.AppConfigStore // 导入运行时配置读写类
 import com.steamlike.controller.config.ConfigManager // 导入配置管理器
 import com.steamlike.controller.config.ControllerConfig // 导入控制器配置类（JSON 序列化）
+import com.steamlike.controller.core.ControllerDevice // 导入手柄设备类（读取手柄电量）
 import com.steamlike.controller.core.ControllerProfile // 导入控制器配置文件（操作集/图层）
 import com.steamlike.controller.core.GlobalSettings // 导入全局设置（右摇杆参数）
 import com.steamlike.controller.service.ControllerOverlayService // 导入悬浮窗服务
@@ -46,6 +48,8 @@ class MainActivity : AppCompatActivity() { // 声明主界面 Activity，继承 
     private lateinit var overlayButton: Button // 悬浮窗权限按钮
     private lateinit var configStatusText: TextView // 配置状态文本控件
     private lateinit var connectionStatusText: TextView // 客户端连接状态文本控件
+    /** 手柄电量显示文本（Android 14+ 可读取，无法读取时隐藏） */
+    private lateinit var batteryStatusText: TextView // 手柄电量显示文本（语法：lateinit 延迟初始化变量）
     /** 智能暂停开关 */
     private lateinit var smartPauseSwitch: Switch // 智能暂停开关控件（语法：lateinit 延迟初始化变量）
     /** 捕获白名单输入框 */
@@ -218,6 +222,11 @@ class MainActivity : AppCompatActivity() { // 声明主界面 Activity，继承 
             ellipsize = android.text.TextUtils.TruncateAt.END // 超长时末尾省略号
         } // 结束连接状态文本 apply 块
         statusCard.addView(connectionStatusText) // 把连接状态文本加入卡片
+        // 手柄电量（Android 14+ 才能读取；读取在后台线程完成后再显示，未连接手柄时该行隐藏）
+        batteryStatusText = UiKit.caption(this, "", 0xFF8BC34A.toInt(), 13f).apply { // 初始化手柄电量文本（浅绿色、13sp）
+            visibility = View.GONE // 读取完成前先隐藏，避免出现空行
+        } // 结束 apply 块
+        statusCard.addView(batteryStatusText) // 把手柄电量文本加入卡片
         statusCard.addView(UiKit.spacer(this, 10)) // 添加 10dp 间距
         // 悬浮窗权限按钮
         overlayButton = UiKit.button(this, "授予悬浮窗权限", { // 创建悬浮窗权限按钮（语法：lambda 点击回调）
@@ -1309,5 +1318,30 @@ class MainActivity : AppCompatActivity() { // 声明主界面 Activity，继承 
         startButton.isEnabled = canStart // 可启动时启用启动按钮
 
         overlayButton.text = if (hasOverlay) "悬浮窗已就绪 ✅" else "授予悬浮窗权限" // 更新按钮文字（语法：if/else 表达式）
+
+        updateBatteryStatus() // 刷新卡片中的手柄电量显示
     } // 结束 updateUI 函数
+
+    /**
+     * 刷新主界面的手柄电量显示
+     *
+     * 使用 [ControllerDevice.readBattery]（Android 14 公开 API）读取，读取在后台线程执行；
+     * 系统低于 Android 14 或未连接手柄时隐藏该行，
+     * 手柄已连接但报告电量未知时显示"手柄电量: 未知"。
+     */
+    private fun updateBatteryStatus() { // private=私有；fun=函数声明；刷新手柄电量
+        // 读取会阻塞（部分设备约 10 秒），必须在后台线程执行
+        Thread { // 启动后台线程（语法：Thread { }.start() 匿名线程）
+            val battery = ControllerDevice.readBattery() // 读取当前手柄电量
+            if (isFinishing || isDestroyed) return@Thread // 页面已销毁则不再更新（语法：return@Thread 从 lambda 返回）
+            runOnUiThread { // 回到主线程更新 UI（语法：runOnUiThread 主线程调度）
+                if (battery == null) { // 无法读取电量（无手柄/系统不支持）时（语法：if 分支）
+                    batteryStatusText.visibility = View.GONE // 隐藏电量文本行
+                } else { // 读到电量信息（可能为"未知"）时
+                    batteryStatusText.text = battery.displayText // 显示电量文本（未知时显示"手柄电量: 未知"）
+                    batteryStatusText.visibility = View.VISIBLE // 显示电量文本行
+                } // 结束分支
+            } // 结束 runOnUiThread lambda
+        }.start() // 启动线程
+    } // 结束 updateBatteryStatus 函数
 } // 结束 MainActivity 类

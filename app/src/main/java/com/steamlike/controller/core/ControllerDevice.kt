@@ -1,8 +1,11 @@
 package com.steamlike.controller.core // 包声明（语法：package 声明当前文件所属包）
 
+import android.hardware.BatteryState // 导入电量状态类（Android 14+ 公开 API，手柄电量）
+import android.os.Build // 导入 Build 类，用于判断系统版本（电量 API 需 Android 14+）
 import android.view.InputDevice // 导入输入设备类（语法：import 导入声明）
 import android.view.KeyEvent // 导入按键事件类
 import android.view.MotionEvent // 导入运动事件类
+import kotlin.math.roundToInt // 导入 Float 四舍五入取整扩展函数（语法：import 顶层扩展函数）
 
 /**
  * 已连接的手柄设备信息
@@ -95,8 +98,70 @@ data class ControllerDevice( // 手柄设备信息数据类（语法：data clas
                 hasDpad = hasDpad // 十字键标记
             ) // 结束 ControllerDevice 构造
         } // 结束 fromInputDevice 函数
+
+        /**
+         * 读取当前手柄电量
+         *
+         * 使用 Android 14 (API 34) 的公开 API [InputDevice.getBatteryState]，
+         * 遍历已连接输入设备，返回第一个上报电量信息的手柄。
+         * 手柄的 HID 电量由内核 power_supply 节点上报给系统，无需特殊权限。
+         * 手柄已连接但报告"电量未知"（capacity 为负数，如部分 Xbox 手柄）时，
+         * 返回 [GamepadBattery.percent] 为 -1 的对象（界面显示"未知"）。
+         *
+         * **注意**：部分设备上该调用会阻塞数秒（实测 Xbox 手柄约 10 秒），
+         * 必须在后台线程调用，禁止在主线程直接调用。
+         *
+         * @return 电量信息；系统低于 Android 14、无手柄或手柄不报告电量存在时返回 null
+         */
+        fun readBattery(): GamepadBattery? { // 读取手柄电量（语法：可空返回类型 GamepadBattery?）
+            if (Build.VERSION.SDK_INT < Build.VERSION_CODES.UPSIDE_DOWN_CAKE) return null // Android 14 以下无此 API，直接返回 null（语法：if 单行返回）
+            for (deviceId in InputDevice.getDeviceIds()) { // 遍历所有输入设备 ID（语法：for(x in 数组) 遍历）
+                val device = InputDevice.getDevice(deviceId) ?: continue // 取设备对象，为空则跳过本次循环（语法：?: 空值合并 + continue）
+                val sources = device.sources // 读取设备输入来源位掩码
+                val isGamepad = sources and InputDevice.SOURCE_GAMEPAD == InputDevice.SOURCE_GAMEPAD // 是否含游戏手柄源（语法：and 位与运算）
+                val isJoystick = sources and InputDevice.SOURCE_JOYSTICK == InputDevice.SOURCE_JOYSTICK // 是否含摇杆源
+                if (!isGamepad && !isJoystick) continue // 非手柄设备跳过（语法：! 逻辑非 + && 与运算）
+                val batteryState = device.batteryState // 取该设备的电量状态对象（该 API 不会返回 null）
+                if (!batteryState.isPresent) continue // 设备未上报电量则跳过
+                val capacity = batteryState.capacity // 电量原始值（浮点数，0.0~1.0；未知时为负数）
+                val charging = batteryState.status == BatteryState.STATUS_CHARGING || // 是否正在充电
+                        batteryState.status == BatteryState.STATUS_FULL // 或已充满（语法：|| 或运算，跨行连接）
+                return GamepadBattery( // 返回电量信息对象
+                    deviceName = device.name ?: "", // 手柄名称（语法：?: 空值合并，避免 null）
+                    percent = if (capacity < 0f) -1 // 手柄报告"电量未知"（如部分 Xbox 手柄）时标记为 -1
+                    else (capacity * 100f).roundToInt().coerceIn(0, 100), // 否则换算为 0~100 整数并钳制范围（语法：coerceIn 范围钳制）
+                    charging = charging // 充电状态标记
+                ) // 结束 GamepadBattery 构造
+            } // 结束设备遍历 for
+            return null // 未找到带电量信息的手柄
+        } // 结束 readBattery 函数
     } // 结束 companion object
 } // 结束 ControllerDevice 数据类
+
+/**
+ * 手柄电量信息
+ *
+ * 由 [ControllerDevice.readBattery] 读取，用于悬浮窗与主界面显示。
+ *
+ * @param deviceName 手柄名称（来自 InputDevice.name）
+ * @param percent 电量百分比（0~100 整数）；-1 表示手柄报告"电量未知"
+ * @param charging 是否充电中或已充满
+ */
+data class GamepadBattery( // 手柄电量信息数据类（语法：data class 自动生成 equals/hashCode/toString/copy）
+    val deviceName: String, // 手柄名称（语法：val 只读属性）
+    val percent: Int, // 电量百分比 0~100；-1 表示未知
+    val charging: Boolean // 是否充电中/已充满
+) { // 数据类主体开始
+    /**
+     * 界面显示文本
+     *
+     * 电量未知（[percent] 为 -1）时显示"手柄电量: 未知"，
+     * 否则显示"手柄电量: 85%"，充电中/已充满时追加"（充电中）"。
+     */
+    val displayText: String // val=只读属性；get()=自定义取值逻辑
+        get() = if (percent < 0) "手柄电量: 未知" // 电量未知分支
+        else "手柄电量: $percent%" + if (charging) "（充电中）" else "" // 有数值分支（语法：字符串模板 + if 表达式）
+} // 结束 GamepadBattery 数据类
 
 /**
  * 手柄输入映射器
