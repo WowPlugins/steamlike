@@ -144,6 +144,10 @@ class ControllerOverlayService : Service() {  // class=类声明；继承 Servic
         const val EXTRA_LOOK_SMOOTHING = "look_smoothing"  // const val=编译期常量；视角平滑系数的 extra 键
         /** Intent extra: 视角加速曲线指数 (Float, 0.5~3.0) */
         const val EXTRA_LOOK_ACCELERATION = "look_acceleration"  // const val=编译期常量；视角加速指数的 extra 键
+        /** Intent extra: 长按判定阈值 (Int, 毫秒) */
+        const val EXTRA_LONG_PRESS_THRESHOLD_MS = "long_press_threshold_ms"  // const val=编译期常量；长按判定阈值的 extra 键
+        /** Intent extra: 长按未映射时是否回退执行短按动作 (Boolean) */
+        const val EXTRA_LONG_PRESS_FALLBACK = "long_press_fallback"  // const val=编译期常量；长按回退开关的 extra 键
 
         /** 广播: 客户端连接状态变化 */
         const val ACTION_CLIENT_STATUS = "CLIENT_STATUS"  // const val=编译期常量；客户端连接状态广播 action
@@ -776,7 +780,9 @@ class ControllerOverlayService : Service() {  // class=类声明；继承 Servic
             lookSensitivity = intent.getFloatExtra(EXTRA_LOOK_SENSITIVITY, old.lookSensitivity),  // 命名参数；读取视角灵敏度
             cursorSpeed = intent.getFloatExtra(EXTRA_CURSOR_SPEED, old.cursorSpeed),  // 命名参数；读取光标速度
             lookSmoothing = intent.getFloatExtra(EXTRA_LOOK_SMOOTHING, old.lookSmoothing),  // 命名参数；读取平滑系数
-            lookAcceleration = intent.getFloatExtra(EXTRA_LOOK_ACCELERATION, old.lookAcceleration)  // 命名参数；读取加速指数
+            lookAcceleration = intent.getFloatExtra(EXTRA_LOOK_ACCELERATION, old.lookAcceleration),  // 命名参数；读取加速指数
+            longPressThresholdMs = intent.getIntExtra(EXTRA_LONG_PRESS_THRESHOLD_MS, old.longPressThresholdMs),  // 命名参数；读取长按阈值
+            longPressFallbackToShort = intent.getBooleanExtra(EXTRA_LONG_PRESS_FALLBACK, old.longPressFallbackToShort)  // 命名参数；读取长按回退开关
         )  // 结束 GlobalSettings 构造
         // 更新运行时 profile（loadProfile 会重置操作层状态，设置更新时合理）
         si.loadProfile(si.profile.copy(globalSettings = newSettings))  // copy()=复制对象并修改指定属性；应用新设置

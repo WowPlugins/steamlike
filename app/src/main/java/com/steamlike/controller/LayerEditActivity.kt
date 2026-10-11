@@ -762,6 +762,9 @@ class LayerEditActivity : AppCompatActivity() { // 定义操作层编辑 Activit
         val spinnerActionType = dialogView.findViewById<Spinner>(R.id.spinner_action_type) // 获取动作类型下拉框
         val tvActionLabel = dialogView.findViewById<TextView>(R.id.tv_action_label) // 获取动作值标签文本控件
         val spinnerActionValue = dialogView.findViewById<Spinner>(R.id.spinner_action_value) // 获取动作值下拉框
+        val spinnerLongPressType = dialogView.findViewById<Spinner>(R.id.spinner_long_press_type) // 获取长按动作类型下拉框
+        val tvLongPressLabel = dialogView.findViewById<TextView>(R.id.tv_long_press_label) // 获取长按动作值标签文本控件
+        val spinnerLongPressValue = dialogView.findViewById<Spinner>(R.id.spinner_long_press_value) // 获取长按动作值下拉框
         val layoutExtraKey = dialogView.findViewById<LinearLayout>(R.id.layout_extra_key) // 获取「同时按下的按键」区域容器
         val spinnerExtraKey = dialogView.findViewById<Spinner>(R.id.spinner_extra_key) // 获取「同时按下的按键」下拉框
         val layoutSubCommands = dialogView.findViewById<LinearLayout>(R.id.layout_sub_commands) // 获取子命令区域父容器
@@ -781,26 +784,23 @@ class LayerEditActivity : AppCompatActivity() { // 定义操作层编辑 Activit
             it.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item) // 设置下拉展开项的布局资源
         } // 结束 also 块
 
-        // 从已有映射确定初始动作类型
-        val initialActionType = when (existingMapping?.action) { // 根据已有映射动作确定初始类型（语法：when=分支表达式，?.=安全调用）
-            is MappedAction.KeyboardKey -> 1 // 键盘按键动作 → 类型 1（语法：is=类型判断分支）
-            is MappedAction.MouseClick -> 2 // 鼠标点击动作 → 类型 2
-            is MappedAction.MouseToggle -> 3 // 鼠标长按动作 → 类型 3
-            is MappedAction.MouseSwapToggle -> 12 // 鼠标长按交换动作 → 类型 12
-            is MappedAction.SwitchLayer -> 4 // 切换层动作 → 类型 4
-            is MappedAction.SwitchLayerAndKey -> 10 // 切层+按键动作 → 类型 10
-            is MappedAction.NumpadKey -> 11 // 数字小键盘动作 → 类型 11
-            is MappedAction.MouseScrollUp -> 5 // 滚轮上滚动作 → 类型 5
-            is MappedAction.MouseScrollDown -> 6 // 滚轮下滚动作 → 类型 6
-            is MappedAction.ToggleOverlay -> 7 // 切换悬浮窗动作 → 类型 7
-            is MappedAction.ToggleKeyboard -> 8 // 切换键盘动作 → 类型 8
-            is MappedAction.ToggleCapture -> 9 // 切换捕获动作 → 类型 9
-            is MappedAction.MouseMove, is MappedAction.LookAround -> 0  // 摇杆专用，显示未设置 // 摇杆专用动作（MouseMove/LookAround）统一按未设置处理
-            null -> 0  // 未映射 → 未设置 // 无映射时初始为未设置
-        } // 结束初始动作类型 when 表达式
+        // 从已有映射确定初始动作类型（0=未设置, 1=键盘按键, ... 12=鼠标长按交换）
+        val initialActionType = actionTypeIndexOf(existingMapping?.action) // 复用动作类型索引转换（语法：调用私有辅助函数）
 
         // 先设置动作值 Spinner 的适配器（基于初始类型）
         setupActionValueSpinner(spinnerActionValue, tvActionLabel, initialActionType) // 按初始类型初始化动作值下拉框的选项
+
+        // ===== 长按动作类型 Spinner =====
+        // 长按可选类型：排除「切换操作层」「切层+按键」（层切换按键保持原有「按住即切层」语义）
+        val longPressTypeIndices = listOf(0, 1, 2, 3, 5, 6, 7, 8, 9, 11, 12) // 长按可选动作类型索引列表（语法：listOf 列表）
+        spinnerLongPressType.adapter = ArrayAdapter(this, android.R.layout.simple_spinner_item, // 设置长按类型下拉框适配器
+            longPressTypeIndices.map { actionTypes[it] }).also { // 用可选项索引映射出显示名（语法：map lambda）
+            it.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item) // 设置下拉展开项的布局资源
+        } // 结束 also 块
+        val initialLongPressType = actionTypeIndexOf(existingMapping?.longPressAction) // 长按动作类型索引
+        val initialLongPressPos = longPressTypeIndices.indexOf(initialLongPressType).coerceAtLeast(0) // 在长按选项列表中的位置
+        setupActionValueSpinner(spinnerLongPressValue, tvLongPressLabel, initialLongPressType) // 初始化长按动作值下拉框选项
+        spinnerLongPressType.setSelection(initialLongPressPos) // 设置长按动作类型下拉框的初始选中项
 
         // 设置「同时按下的按键」下拉框的适配器（固定为键盘按键列表，仅切层+按键类型使用）
         spinnerExtraKey.adapter = ArrayAdapter(this, android.R.layout.simple_spinner_item, keyboardKeyOptions.map { it.first }).also {
@@ -814,37 +814,42 @@ class LayerEditActivity : AppCompatActivity() { // 定义操作层编辑 Activit
         // 仅用于打开对话框时的初始定位（让下拉框显示当前映射的按键，如映射的是"4"却显示"A"）。
         // 注意：不能用于动作类型切换后的 onItemSelected 回调，否则会按旧映射类型把选中位置
         // 设置到新列表的非法索引（如键盘长列表的 74 → 数字小键盘仅 11 项）导致越界崩溃。
-        fun restoreActionValueSelection() { // 局部函数：根据已有映射恢复动作值下拉框选中项（语法：fun 局部函数）
-            when (val action = existingMapping?.action) { // 根据已有映射动作设置动作值选中（语法：when(值)=分支，val action=在 when 内声明绑定变量）
+        fun restoreValueSelectionFor(action: MappedAction?, valueSpinner: Spinner) { // 局部函数：根据已有动作恢复动作值下拉框选中项（语法：fun 局部函数）
+            when (action) { // 根据已有映射动作设置动作值选中（语法：when(值)=分支）
                 is MappedAction.KeyboardKey -> { // 若为键盘按键动作
                     val pos = keyboardKeyOptions.indexOfFirst { it.second == action.keyCode } // 查找与已存 KeyCode 匹配的选项下标（语法：indexOfFirst=按条件查找 lambda，it=隐式参数）
-                    if (pos >= 0) spinnerActionValue.setSelection(pos) // 找到则设置动作值下拉框选中项
+                    if (pos >= 0) valueSpinner.setSelection(pos) // 找到则设置动作值下拉框选中项
                 } // 结束键盘按键分支
                 is MappedAction.MouseClick -> { // 若为鼠标点击动作
                     val pos = mouseButtonOptions.indexOfFirst { it.second == action.button } // 查找与已存鼠标按键匹配的选项下标
-                    if (pos >= 0) spinnerActionValue.setSelection(pos) // 找到则设置选中项
+                    if (pos >= 0) valueSpinner.setSelection(pos) // 找到则设置选中项
                 } // 结束鼠标点击分支
                 is MappedAction.MouseToggle -> { // 若为鼠标长按动作
                     val pos = mouseButtonOptions.indexOfFirst { it.second == action.button } // 查找与已存鼠标按键匹配的选项下标
-                    if (pos >= 0) spinnerActionValue.setSelection(pos) // 找到则设置选中项
+                    if (pos >= 0) valueSpinner.setSelection(pos) // 找到则设置选中项
                 } // 结束鼠标长按分支
                 is MappedAction.SwitchLayer -> { // 若为切换层动作
                     val pos = layerNames.indexOfFirst { it == action.layerName } // 查找与目标层名匹配的选项下标
-                    if (pos >= 0) spinnerActionValue.setSelection(pos) // 找到则设置选中项
+                    if (pos >= 0) valueSpinner.setSelection(pos) // 找到则设置选中项
                 } // 结束切换层分支
                 is MappedAction.SwitchLayerAndKey -> { // 若为切层+按键动作
                     val pos = layerNames.indexOfFirst { it == action.layerName } // 查找与目标层名匹配的选项下标
-                    if (pos >= 0) spinnerActionValue.setSelection(pos) // 找到则设置目标层选中项
+                    if (pos >= 0) valueSpinner.setSelection(pos) // 找到则设置目标层选中项
                     val keyPos = keyboardKeyOptions.indexOfFirst { it.second == action.keyCode } // 查找与同时按键 KeyCode 匹配的选项下标
                     if (keyPos >= 0) spinnerExtraKey.setSelection(keyPos) // 找到则设置额外按键选中项
                 } // 结束切层+按键分支
                 is MappedAction.NumpadKey -> { // 若为数字小键盘动作
                     val pos = numpadKeyOptions.indexOfFirst { it.second == action.keyCode } // 查找与小键盘键码匹配的选项下标
-                    if (pos >= 0) spinnerActionValue.setSelection(pos) // 找到则设置动作值下拉框选中项
+                    if (pos >= 0) valueSpinner.setSelection(pos) // 找到则设置动作值下拉框选中项
                 } // 结束数字小键盘分支
                 else -> {} // 其它类型无需设置动作值
             } // 结束恢复定位 when 块
-        } // 结束 restoreActionValueSelection 局部函数
+        } // 结束 restoreValueSelectionFor 局部函数
+
+        // 包装：恢复短按动作值选中项（语法：局部函数调用参数化版本）
+        fun restoreActionValueSelection() = restoreValueSelectionFor(existingMapping?.action, spinnerActionValue) // 恢复短按动作值选中项
+        // 包装：恢复长按动作值选中项
+        fun restoreLongPressValueSelection() = restoreValueSelectionFor(existingMapping?.longPressAction, spinnerLongPressValue) // 恢复长按动作值选中项
 
         // ===== 定义「动作类型是否匹配已有映射」局部函数 =====
         // 仅在"当前动作类型与已有映射类型一致"时恢复动作值选中项：
@@ -916,6 +921,21 @@ class LayerEditActivity : AppCompatActivity() { // 定义操作层编辑 Activit
             override fun onNothingSelected(parent: AdapterView<*>?) {} // 覆写：无选项选中时回调，空实现
         } // 结束动作类型监听匿名对象
 
+        // ===== 长按动作类型切换监听器 =====
+        // 用户切换长按动作类型时，重建长按动作值下拉框的选项
+        spinnerLongPressType.onItemSelectedListener = object : AdapterView.OnItemSelectedListener { // 设置长按类型下拉框选择监听（语法：object:接口=匿名对象）
+            override fun onItemSelected(parent: AdapterView<*>?, view: View?, position: Int, id: Long) { // 覆写：长按类型切换时回调
+                val actionType = longPressTypeIndices[position] // 位置还原为动作类型索引（语法：列表下标访问）
+                setupActionValueSpinner(spinnerLongPressValue, tvLongPressLabel, actionType) // 按新类型重建长按动作值选项
+                // 与已有长按动作类型一致时恢复选中值（打开对话框/attach 触发时显示当前长按动作）
+                if (actionType == actionTypeIndexOf(existingMapping?.longPressAction)) { // 类型匹配判断（语法：== 相等比较）
+                    restoreLongPressValueSelection() // 恢复长按动作值选中项
+                } // 结束匹配判断
+            } // 结束 onItemSelected 回调
+
+            override fun onNothingSelected(parent: AdapterView<*>?) {} // 覆写：无选项选中时回调，空实现
+        } // 结束长按动作类型监听匿名对象
+
         // 添加子命令按钮点击事件
         btnAddSubCommand.setOnClickListener { // 设置「添加子命令」按钮点击监听（语法：setOnClickListener{}=点击监听 lambda）
             if (subCommandSpinners.size < KeyMapping.MAX_SUB_COMMANDS) { // 未达到子命令数量上限时才允许添加
@@ -942,9 +962,13 @@ class LayerEditActivity : AppCompatActivity() { // 定义操作层编辑 Activit
                     ) // 结束 buildAction 调用
                     // 收集子命令（跳过"无"选项）
                     val subCommands = collectSubCommands(subCommandSpinners) // 收集所有已选子命令 KeyCode
+                    // 长按动作：位置还原为动作类型索引，0=未设置（不启用长按判定）
+                    val longPressType = longPressTypeIndices[spinnerLongPressType.selectedItemPosition] // 长按动作类型索引
+                    val longPressAction = if (longPressType == 0) null // 未设置 → 不启用长按判定（语法：if 表达式）
+                        else buildAction(longPressType - 1, spinnerLongPressValue.selectedItemPosition) // 否则构建长按动作
 
-                    // 创建新的按键映射
-                    val newMapping = KeyMapping(action, subCommands) // 构建新的按键映射对象
+                    // 创建新的按键映射（含可选长按动作）
+                    val newMapping = KeyMapping(action, subCommands, longPressAction) // 构建新的按键映射对象（语法：三参构造）
 
                     // 写入当前操作层的 buttonMappings（MutableMap，可直接修改）
                     layer.buttonMappings[button] = newMapping // 将新映射写入当前层的映射表
@@ -1575,6 +1599,30 @@ class LayerEditActivity : AppCompatActivity() { // 定义操作层编辑 Activit
 
         suppressLayerSpinnerListener = false // 复位抑制标志
     } // 结束 refreshLayerSpinner 函数
+
+    /**
+     * 将动作对象转换为对话框动作类型索引（短按与长按类型下拉框共用）
+     *
+     * 索引: 0=未设置, 1=键盘按键, 2=鼠标点击, 3=鼠标长按, 4=切换操作层, 5=滚轮上滚,
+     *       6=滚轮下滚, 7=切换悬浮窗, 8=切换键盘, 9=切换捕获, 10=切换层+按键,
+     *       11=数字小键盘, 12=鼠标长按交换
+     */
+    private fun actionTypeIndexOf(action: MappedAction?): Int = when (action) { // 动作 → 类型索引（语法：表达式体函数 + when）
+        is MappedAction.KeyboardKey -> 1 // 键盘按键 → 类型 1（语法：is=类型判断分支）
+        is MappedAction.MouseClick -> 2 // 鼠标点击 → 类型 2
+        is MappedAction.MouseToggle -> 3 // 鼠标长按 → 类型 3
+        is MappedAction.SwitchLayer -> 4 // 切换层 → 类型 4
+        is MappedAction.MouseScrollUp -> 5 // 滚轮上滚 → 类型 5
+        is MappedAction.MouseScrollDown -> 6 // 滚轮下滚 → 类型 6
+        is MappedAction.ToggleOverlay -> 7 // 切换悬浮窗 → 类型 7
+        is MappedAction.ToggleKeyboard -> 8 // 切换键盘 → 类型 8
+        is MappedAction.ToggleCapture -> 9 // 切换捕获 → 类型 9
+        is MappedAction.SwitchLayerAndKey -> 10 // 切层+按键 → 类型 10
+        is MappedAction.NumpadKey -> 11 // 数字小键盘 → 类型 11
+        is MappedAction.MouseSwapToggle -> 12 // 鼠标长按交换 → 类型 12
+        is MappedAction.MouseMove, is MappedAction.LookAround -> 0 // 摇杆专用 → 未设置（语法：多类型分支）
+        null -> 0 // 未映射 → 未设置
+    } // 结束 when 表达式
 
     /**
      * 根据动作类型设置动作值 Spinner 的选项

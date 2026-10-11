@@ -1,5 +1,7 @@
 package com.steamlike.controller.mapping // 语法：package 包声明，声明本文件所属的包（映射模块）
 
+import android.os.Handler // 语法：import 导入声明，导入 Handler（长按阈值定时器用）
+import android.os.Looper // 语法：import 导入声明，导入 Looper（主线程消息循环）
 import android.os.SystemClock // 语法：import 导入声明，导入系统单调时钟 SystemClock（摇杆循环计时用）
 import android.util.Log // 语法：import 导入声明，导入 Log 日志工具
 import android.view.KeyEvent // 语法：import 导入声明，导入 KeyEvent（使用 Android 按键码常量，如 KEYCODE_D）
@@ -99,6 +101,36 @@ class KeyboardMouseMapper( // 语法：class 类声明，定义键盘/鼠标映�
      * （松开手柄键也不改变状态，见 [handleMouseToggle]）。
      */
     private val toggledMouseButtons = mutableSetOf<MouseButton>() // 语法：val+mutableSetOf 可变集合，记录鼠标按钮锁存状态（全局统一标志）
+
+    // ====================================================================
+    // 长按判定状态机（Long-Press）
+    // ====================================================================
+    // 仅对「已配置长按动作」或「全局回退开关开启」的可延迟短按动作生效：
+    // 按下时不立即注入，改为记录按下时间并启动阈值定时器；松开时按按住时长
+    // 决定执行短按动作还是长按动作（见 [beginDeferredPress]/[finishDeferredPress]）。
+    // 层切换、滚轮、鼠标长按锁存、悬浮窗/键盘/捕获切换等动作不参与判定。
+    // ====================================================================
+
+    /** 主线程 Handler，用于长按阈值定时（与输入事件同线程，避免并发） */
+    private val mainHandler = Handler(Looper.getMainLooper()) // 语法：Handler(Looper.getMainLooper())=绑定主线程的消息处理器
+
+    /** 一次延迟按下（长按判定中）的上下文 */
+    private data class DeferredPress( // 语法：private data class 私有数据类，封装延迟按下上下文
+        val mapping: KeyMapping, // 按下时生效的映射（松开时按它判定，避免层切换后映射变化）
+        val pressTimeMs: Long // 按下时刻（SystemClock.elapsedRealtime）
+    ) // 结束 DeferredPress 数据类
+
+    /** 处于长按判定中的按键 → 延迟按下上下文 */
+    private val deferredPresses = mutableMapOf<ControllerButton, DeferredPress>() // 语法：val+mutableMapOf 可变映射
+
+    /** 各按键的长按阈值定时器（松开时取消） */
+    private val longPressTimers = mutableMapOf<ControllerButton, Runnable>() // 语法：val+mutableMapOf 可变映射（按钮→定时任务）
+
+    /** 已在阈值到达时注入「保持型」长按动作按下的按键（松开时释放） */
+    private val longHoldActive = mutableSetOf<ControllerButton>() // 语法：val+mutableSetOf 可变集合
+
+    /** 已在阈值到达时触发「瞬时」长按动作的按键（松开时无需再处理） */
+    private val longInstantFired = mutableSetOf<ControllerButton>() // 语法：val+mutableSetOf 可变集合
 
     /**
      * 右摇杆最新位置（主线程事件回调写入，发送循环线程读取）
@@ -231,6 +263,12 @@ class KeyboardMouseMapper( // 语法：class 类声明，定义键盘/鼠标映�
      */
     fun stop() { // 语法：fun 函数声明，停止映射器并释放所有按键状态
         stopLookLoop() // 停止右摇杆发送循环
+        // 清理长按判定状态：取消所有阈值定时器，避免停止后仍触发注入
+        longPressTimers.values.forEach { mainHandler.removeCallbacks(it) } // 遍历取消所有定时任务（语法：values=映射值集合 + forEach lambda）
+        longPressTimers.clear() // 清空定时器记录
+        deferredPresses.clear() // 清空延迟按下记录
+        longHoldActive.clear() // 清空保持型长按记录
+        longInstantFired.clear() // 清空瞬时长按记录
         injector.releaseAll() // 通知注入器释放所有已注入的键鼠状态
         pressedMainKeys.clear() // 清空主键按下记录
         pressedSubKeys.clear() // 清空子命令键按下记录
@@ -326,9 +364,16 @@ class KeyboardMouseMapper( // 语法：class 类声明，定义键盘/鼠标映�
      */
     private fun handleMapping(button: ControllerButton, isPressed: Boolean, mapping: KeyMapping) { // 语法：private fun 私有函数，按动作类型分发按键映射
         if (!isPressed) { // 语法：if 分支，判断是否为松开事件
+            if (finishDeferredPress(button)) return // 若该按钮处于长按判定中，按按住时长决定短按/长按（语法：if 提前返回）
             releaseButtonInjection(button) // 按已注入状态释放该按钮的全部键鼠状态
             return // 直接返回，松开不按当前层映射分发
         } // 结束 if 松开分支
+
+        // 长按判定：仅对「已配置长按动作」或「全局回退开启」的可延迟短按动作生效
+        if (isLongPressEligible(mapping)) { // 语法：if 判断是否启用长按判定
+            beginDeferredPress(button, mapping) // 按下时不注入，记录时间并启动阈值定时器
+            return // 返回，等待松开时判定
+        } // 结束长按判定分支
 
         when (val action = mapping.action) { // 语法：when 分支表达式，同时用 val 声明局部变量 action
             // 切换动作：始终处理
@@ -348,13 +393,154 @@ class KeyboardMouseMapper( // 语法：class 类声明，定义键盘/鼠标映�
             is MappedAction.MouseSwapToggle -> handleMouseSwapToggle() // 鼠标长按交换动作：在左右键长按间交换
             is MappedAction.SwitchLayer -> {} // SteamInput 已处理 // 切换层动作：由 SteamInput 内部处理
             is MappedAction.MouseMove, is MappedAction.LookAround -> {} // handleStick 处理 // 鼠标移动/视角动作：由 handleStick 处理
-            is MappedAction.MouseScrollUp -> handleMouseScroll(button, SCROLL_DELTA) // 鼠标上滚动作：传入正增量
-            is MappedAction.MouseScrollDown -> handleMouseScroll(button, -SCROLL_DELTA) // 鼠标下滚动作：传入负增量
+            is MappedAction.MouseScrollUp -> handleMouseScroll(SCROLL_DELTA) // 鼠标上滚动作：传入正增量
+            is MappedAction.MouseScrollDown -> handleMouseScroll(-SCROLL_DELTA) // 鼠标下滚动作：传入负增量
             is MappedAction.ToggleOverlay, // 悬浮窗切换动作（此处重复列出，上面已处理）
             is MappedAction.ToggleKeyboard, // 系统键盘切换动作（此处重复列出，上面已处理）
             is MappedAction.ToggleCapture -> {} // 已处理 // 捕获切换动作：上面已处理
         } // 结束非切换动作 when
     } // 结束 handleMapping 函数
+
+    /**
+     * 判断某映射是否启用「长按判定」
+     *
+     * - 已配置长按动作 → 一律启用（无论短按动作是保持型还是触发型，如鼠标锁存/交换）
+     * - 未配置长按动作但全局回退开关开启，且短按为保持型动作（键盘键/数字小键盘/鼠标点击）
+     *   → 也启用（长按松开时回退执行短按动作）
+     * - 其余情况（未配置且回退关闭）→ 不启用，保持原有「按下即触发」行为
+     *
+     * @param mapping 按键映射
+     */
+    private fun isLongPressEligible(mapping: KeyMapping): Boolean { // 语法：private fun 私有函数，判断是否启用长按判定
+        if (mapping.longPressAction != null) return true // 配置了长按动作 → 一律启用判定
+        val shortAction = mapping.action // 取短按动作
+        // 未配置长按动作时，仅「保持型短按动作」在回退开关开启下参与判定
+        val holdable = shortAction is MappedAction.KeyboardKey || // 键盘键（语法：|| 逻辑或）
+                shortAction is MappedAction.NumpadKey || // 数字小键盘
+                shortAction is MappedAction.MouseClick // 鼠标点击
+        return holdable && steamInput.profile.globalSettings.longPressFallbackToShort // 回退开关决定
+    } // 结束 isLongPressEligible 函数
+
+    /**
+     * 判断长按动作是否为「保持型」（按下保持、松开释放）
+     *
+     * - 保持型：键盘键 / 数字小键盘 / 鼠标点击 → 阈值到达时注入按下，手柄松开时释放
+     * - 瞬时型：滚轮/切换/锁存等 → 阈值到达时触发一次，手柄松开时不处理
+     */
+    private fun isHoldableAction(action: MappedAction): Boolean = // 语法：表达式体函数 + when 判断
+        action is MappedAction.KeyboardKey || action is MappedAction.NumpadKey || action is MappedAction.MouseClick
+
+    /**
+     * 按下注入一个「可保持」动作（记录状态，供 [releaseButtonInjection] 释放）
+     *
+     * @param subCommands 子命令键码列表（短按动作沿用原映射的子命令；长按动作为空）
+     */
+    private fun injectActionDown(button: ControllerButton, action: MappedAction, subCommands: List<Int> = emptyList()) { // 语法：private fun 私有函数，注入动作按下
+        when (action) { // 按动作类型分发（语法：when 分支）
+            is MappedAction.KeyboardKey -> handleKeyboardKey(button, true, action.keyCode, subCommands) // 键盘键：注入按下+子命令
+            is MappedAction.NumpadKey -> handleKeyboardKey(button, true, action.keyCode, subCommands) // 数字小键盘：注入按下+子命令
+            is MappedAction.MouseClick -> handleMouseClick(button, true, action.button) // 鼠标点击：注入按下
+            else -> {} // 其它动作不由本函数处理
+        } // 结束 when
+    } // 结束 injectActionDown 函数
+
+    /**
+     * 触发一个「瞬时」动作（一次生效，无按下/松开之分）
+     */
+    private fun injectInstantAction(action: MappedAction) { // 语法：private fun 私有函数，触发瞬时动作
+        when (action) { // 按动作类型分发（语法：when 分支）
+            is MappedAction.MouseToggle -> handleMouseToggle(action.button) // 鼠标长按锁存：切换锁存状态
+            is MappedAction.MouseSwapToggle -> handleMouseSwapToggle() // 鼠标长按交换：交换左右键锁存
+            is MappedAction.MouseScrollUp -> handleMouseScroll(SCROLL_DELTA) // 滚轮上滚：发送一次上滚
+            is MappedAction.MouseScrollDown -> handleMouseScroll(-SCROLL_DELTA) // 滚轮下滚：发送一次下滚
+            is MappedAction.ToggleOverlay -> onToggleOverlay?.invoke() // 切换悬浮窗（语法：?. 安全调用）
+            is MappedAction.ToggleKeyboard -> onToggleKeyboard?.invoke() // 切换系统键盘
+            is MappedAction.ToggleCapture -> onToggleCapture?.invoke() // 切换捕获
+            else -> {} // 其余动作（键盘/小键盘/鼠标点击为保持型，层切换/摇杆不处理）
+        } // 结束 when
+    } // 结束 injectInstantAction 函数
+
+    /**
+     * 执行一次「点按」（短按动作的统一执行入口）
+     *
+     * - 保持型动作：按下后立即释放，形成一次点按
+     * - 触发型动作（鼠标锁存/交换、滚轮、悬浮窗/键盘/捕获切换）：直接触发一次
+     *
+     * @param subCommands 保持型动作的子命令键码列表（触发型动作忽略）
+     */
+    private fun tapAction(button: ControllerButton, action: MappedAction, subCommands: List<Int> = emptyList()) { // 语法：private fun 私有函数，执行一次点按
+        if (isHoldableAction(action)) { // 保持型动作
+            injectActionDown(button, action, subCommands) // 注入按下
+            releaseButtonInjection(button) // 立即释放 → 形成点按
+        } else { // 触发型动作
+            injectInstantAction(action) // 直接触发一次
+        } // 结束类型判断
+    } // 结束 tapAction 函数
+
+    /**
+     * 开始一次「延迟按下」（长按判定）
+     *
+     * 按下时不注入任何事件，仅记录按下时间；若配置了长按动作，则在阈值到达时
+     * 由 [onLongPressThreshold] 注入长按按下。
+     */
+    private fun beginDeferredPress(button: ControllerButton, mapping: KeyMapping) { // 语法：private fun 私有函数，开始长按判定
+        if (deferredPresses.containsKey(button)) return // 已在判定中则忽略，防重复（语法：containsKey 判断）
+        val pressTime = SystemClock.elapsedRealtime() // 记录按下时刻（单调时钟，不受系统时间调整影响）
+        deferredPresses[button] = DeferredPress(mapping, pressTime) // 存入延迟按下上下文
+        if (mapping.longPressAction != null) { // 仅配置了长按动作时才需要阈值定时器
+            val threshold = steamInput.profile.globalSettings.longPressThresholdMs.toLong() // 读取长按阈值（毫秒）
+            val runnable = Runnable { onLongPressThreshold(button) } // 构造阈值到达回调（语法：Runnable{}=可运行 lambda）
+            longPressTimers[button] = runnable // 记录定时任务，便于松开时取消
+            mainHandler.postDelayed(runnable, threshold) // 延迟阈值毫秒后触发（语法：postDelayed 延迟投递）
+        } // 结束长按动作判断
+        Log.d(TAG, "LongPress begin: $button (threshold=${steamInput.profile.globalSettings.longPressThresholdMs}ms)") // 打印开始判定日志
+    } // 结束 beginDeferredPress 函数
+
+    /**
+     * 长按阈值到达回调：注入长按动作
+     *
+     * - 保持型动作 → 注入按下并记入 [longHoldActive]，等待手柄松开时释放
+     * - 瞬时型动作 → 触发一次并记入 [longInstantFired]
+     */
+    private fun onLongPressThreshold(button: ControllerButton) { // 语法：private fun 私有函数，阈值到达注入长按动作
+        longPressTimers.remove(button) // 定时器已触发，移除记录
+        val pending = deferredPresses[button] ?: return // 取出延迟按下上下文，已松开则返回（语法：?: 空值合并）
+        val longAction = pending.mapping.longPressAction ?: return // 无长按动作（回退模式）则不注入
+        if (isHoldableAction(longAction)) { // 保持型动作
+            injectActionDown(button, longAction) // 注入按下（记录状态）
+            longHoldActive.add(button) // 记入保持型长按集合
+        } else { // 瞬时型动作
+            injectInstantAction(longAction) // 触发一次
+            longInstantFired.add(button) // 记入瞬时长按集合
+        } // 结束类型判断
+        Log.d(TAG, "LongPress fired: $button → $longAction") // 打印长按触发日志（语法：字符串模板 "$var"）
+    } // 结束 onLongPressThreshold 函数
+
+    /**
+     * 结束一次「延迟按下」：按按住时长决定执行短按还是长按
+     *
+     * @return true=该按钮此前处于长按判定中（已处理）；false=不在判定中
+     */
+    private fun finishDeferredPress(button: ControllerButton): Boolean { // 语法：private fun 私有函数，结束长按判定
+        val pending = deferredPresses.remove(button) ?: return false // 取出并移除延迟按下上下文，无则返回 false
+        longPressTimers.remove(button)?.let { mainHandler.removeCallbacks(it) } // 取消未触发的阈值定时器（语法：?.let 安全调用）
+        val held = SystemClock.elapsedRealtime() - pending.pressTimeMs // 计算按住时长（毫秒）
+        val threshold = steamInput.profile.globalSettings.longPressThresholdMs.toLong() // 读取长按阈值
+        val longAction = pending.mapping.longPressAction // 取长按动作
+        if (held < threshold) { // 短按：按住时长未达阈值
+            tapAction(button, pending.mapping.action, pending.mapping.subCommands) // 执行短按动作（保持型点按/触发型触发）
+        } else if (longAction != null) { // 长按：已配置长按动作
+            if (longHoldActive.remove(button)) { // 保持型长按已按下 → 释放
+                releaseButtonInjection(button) // 释放长按注入的按键
+            } else if (!longInstantFired.remove(button)) { // 瞬时型尚未触发（阈值回调与松开竞态）→ 补发一次
+                tapAction(button, longAction) // 补发执行长按动作（保持型点按/触发型触发）
+            } // 结束长按类型判断
+        } else if (steamInput.profile.globalSettings.longPressFallbackToShort) { // 长按未配置动作：回退开关开启
+            tapAction(button, pending.mapping.action, pending.mapping.subCommands) // 松开时执行短按动作（保持型点按/触发型触发）
+        } // 否则（未配置长按动作且回退关闭）：什么都不做
+        Log.d(TAG, "LongPress end: $button held=${held}ms threshold=${threshold}ms") // 打印判定结束日志
+        return true // 已处理
+    } // 结束 finishDeferredPress 函数
 
     /**
      * 释放指定手柄按钮已注入的全部键鼠状态
@@ -575,10 +761,9 @@ class KeyboardMouseMapper( // 语法：class 类声明，定义键盘/鼠标映�
      *
      * 每次按下发送一次滚轮事件（不需要松开）。
      *
-     * @param button 手柄按钮
      * @param delta 滚轮增量（正数=上滚，负数=下滚）
      */
-    private fun handleMouseScroll(button: ControllerButton, delta: Float) { // 语法：private fun 私有函数，处理鼠标滚轮映射
+    private fun handleMouseScroll(delta: Float) { // 语法：private fun 私有函数，处理鼠标滚轮映射
         injector.sendMouseScroll(delta) // 发送滚轮事件（正数=上滚，负数=下滚）
         Log.d(TAG, "MouseScroll: delta=$delta") // 打印滚轮日志（语法：字符串模板 "$delta"）
     } // 结束 handleMouseScroll 函数

@@ -199,12 +199,22 @@ sealed class MappedAction { // 映射动作密封类（语法：sealed class 密
  * - 子命令最多 3 个
  * - 主动作为 [MappedAction.SwitchLayer] 或摇杆动作时，子命令无效
  *
- * @param action 主动作
+ * ## 长按映射（Long-Press）
+ * 每个按键可选配置一个「长按动作」（[longPressAction]）。判定在**松开时**进行：
+ * - 仅当配置了长按动作时该按键才进入判定；未配置时保持原有「按下即触发」行为
+ * - 按住时长 < [GlobalSettings.longPressThresholdMs]：执行短按动作（按下+立即松开）
+ * - 按住时长 ≥ 阈值：执行长按动作（保持型动作为按住，松开时释放；瞬时动作触发一次）
+ * - 全局开关 [GlobalSettings.longPressFallbackToShort] 开启时，未配置长按动作的按键
+ *   也会进入判定，长按松开时回退执行短按动作
+ *
+ * @param action 主动作（短按动作）
  * @param subCommands 子命令列表（最多 3 个 Android [KeyEvent.KEYCODE_*] 常量）
+ * @param longPressAction 长按动作（null=不启用长按判定）
  */
 data class KeyMapping( // 按键映射定义（语法：data class 数据类）
-    val action: MappedAction, // 主动作
-    val subCommands: List<Int> = emptyList() // 子命令列表（语法：默认参数 = emptyList()）
+    val action: MappedAction, // 主动作（短按动作）
+    val subCommands: List<Int> = emptyList(), // 子命令列表（语法：默认参数 = emptyList()）
+    val longPressAction: MappedAction? = null // 长按动作（语法：可空类型 + 默认参数 = null）
 ) { // 数据类主体开始
     init { // 初始化块校验（语法：init 初始化块）
         require(subCommands.size <= MAX_SUB_COMMANDS) { // 校验子命令数量不超上限（语法：require 前置条件检查）
@@ -219,25 +229,35 @@ data class KeyMapping( // 按键映射定义（语法：data class 数据类）
      */
     fun describe(): String { // 转为可读描述（语法：fun 成员函数声明）
         val parts = mutableListOf<String>() // 描述片段列表（语法：mutableListOf + <String> 泛型）
-        when (action) { // 按动作类型分支（语法：when 表达式）
-            is MappedAction.KeyboardKey -> parts.add(keyCodeToName(action.keyCode)) // 键盘键：加入按键名（语法：is 类型判断分支）
-            is MappedAction.MouseClick -> parts.add(action.button.toDisplayName()) // 鼠标点击：加入按钮名
-            is MappedAction.SwitchLayer -> parts.add("切换→${action.layerName}") // 层切换：加入目标层名
-            is MappedAction.SwitchLayerAndKey -> parts.add("切换→${action.layerName}+${keyCodeToName(action.keyCode)}") // 层切换+按键：加入目标层名和按键名
-            is MappedAction.NumpadKey -> parts.add("小键盘${keyCodeToName(action.keyCode)}") // 数字小键盘：加入小键盘键名
-            is MappedAction.MouseMove -> parts.add("鼠标移动") // 鼠标移动描述
-            is MappedAction.LookAround -> parts.add("视角控制") // 视角控制描述
-            is MappedAction.MouseToggle -> parts.add("长按${action.button.toDisplayName()}") // 鼠标长按描述
-            is MappedAction.MouseSwapToggle -> parts.add("长按交换") // 鼠标长按交换描述
-            is MappedAction.MouseScrollUp -> parts.add("滚轮上滚") // 滚轮上滚描述
-            is MappedAction.MouseScrollDown -> parts.add("滚轮下滚") // 滚轮下滚描述
-            is MappedAction.ToggleOverlay -> parts.add("切换悬浮窗") // 切换悬浮窗描述
-            is MappedAction.ToggleKeyboard -> parts.add("切换键盘") // 切换键盘描述
-            is MappedAction.ToggleCapture -> parts.add("切换捕获") // 切换捕获描述
-        } // 结束 when
+        parts.add(actionLabel(action)) // 加入短按动作描述
         subCommands.forEach { parts.add(keyCodeToName(it)) } // 追加各子命令名（语法：forEach lambda + it 默认参数名）
-        return parts.joinToString("+") // 用 + 拼接为最终描述
+        var text = parts.joinToString("+") // 用 + 拼接为最终描述
+        val lp = longPressAction // 取长按动作（局部变量便于智能转换）
+        if (lp != null) { // 若配置了长按动作则追加显示
+            text += " / 长按:${actionLabel(lp)}" // 追加长按动作描述（语法：+= 字符串拼接）
+        } // 结束长按描述判断
+        return text // 返回完整描述
     } // 结束 describe 函数
+
+    /**
+     * 将单个动作转换为可读名称片段（供 [describe] 复用）
+     */
+    private fun actionLabel(action: MappedAction): String = when (action) { // 按动作类型分支（语法：when 表达式）
+        is MappedAction.KeyboardKey -> keyCodeToName(action.keyCode) // 键盘键：按键名（语法：is 类型判断分支）
+        is MappedAction.MouseClick -> action.button.toDisplayName() // 鼠标点击：按钮名
+        is MappedAction.SwitchLayer -> "切换→${action.layerName}" // 层切换：目标层名
+        is MappedAction.SwitchLayerAndKey -> "切换→${action.layerName}+${keyCodeToName(action.keyCode)}" // 层切换+按键
+        is MappedAction.NumpadKey -> "小键盘${keyCodeToName(action.keyCode)}" // 数字小键盘
+        is MappedAction.MouseMove -> "鼠标移动" // 鼠标移动描述
+        is MappedAction.LookAround -> "视角控制" // 视角控制描述
+        is MappedAction.MouseToggle -> "长按${action.button.toDisplayName()}" // 鼠标长按描述
+        is MappedAction.MouseSwapToggle -> "长按交换" // 鼠标长按交换描述
+        is MappedAction.MouseScrollUp -> "滚轮上滚" // 滚轮上滚描述
+        is MappedAction.MouseScrollDown -> "滚轮下滚" // 滚轮下滚描述
+        is MappedAction.ToggleOverlay -> "切换悬浮窗" // 切换悬浮窗描述
+        is MappedAction.ToggleKeyboard -> "切换键盘" // 切换键盘描述
+        is MappedAction.ToggleCapture -> "切换捕获" // 切换捕获描述
+    } // 结束 when
 
     companion object { // 伴生对象（语法：companion object 静态成员容器）
         /** 子命令最大数量 */
@@ -395,13 +415,17 @@ data class OperationLayer( // 操作层定义（语法：data class 数据类）
  * @param cursorSpeed 光标移动速度倍率（>1.0 更快，<1.0 更慢）。默认 1.0
  * @param lookSmoothing 视角平滑系数（0.0~0.95），0=关闭平滑，越大越顺滑但延迟略增。默认 0.5
  * @param lookAcceleration 视角加速曲线指数（0.5~3.0），1.0=线性，>1轻推更慢重推更快，<1相反。默认 1.5
+ * @param longPressThresholdMs 长按判定阈值（毫秒），按住时长达到该值视为长按。默认 500
+ * @param longPressFallbackToShort 长按未配置动作时，是否在松开时回退执行短按动作。默认 false
  */
 data class GlobalSettings( // 全局设置（语法：data class 数据类）
     val deadzone: Float = 0.15f, // 摇杆死区（语法：默认参数 = 0.15f）
     val lookSensitivity: Float = 0.5f, // 视角灵敏度倍率
     val cursorSpeed: Float = 1.0f, // 光标移动速度倍率
     val lookSmoothing: Float = 0.5f, // 视角平滑系数
-    val lookAcceleration: Float = 1.5f // 视角加速曲线指数
+    val lookAcceleration: Float = 1.5f, // 视角加速曲线指数
+    val longPressThresholdMs: Int = 500, // 长按判定阈值（毫秒）
+    val longPressFallbackToShort: Boolean = false // 长按未配置动作时是否回退执行短按动作
 ) // 结束 GlobalSettings 数据类
 
 /**

@@ -86,6 +86,49 @@
             android:paddingHorizontal="10dp"
             android:paddingBottom="14dp" />
 
+        <!-- ===== 长按动作选择（可选） ===== -->
+        <!-- 配置该按键的长按动作；选「未设置」= 不启用长按判定，保持原有按下即触发行为 -->
+        <!-- 语法：TextView 文本控件；"长按动作（可选）:" 标签
+             layout_width=match_parent：与父容器同宽；layout_height=wrap_content：高度自适应；
+             text=长按动作（可选）:：标签文字；textSize=14sp：字号；textColor=#FFDDDDDD：浅灰 -->
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="长按动作（可选）:"
+            android:textSize="14sp"
+            android:textColor="#FFDDDDDD" />
+
+        <!-- 语法：Spinner 下拉选择器控件；选择长按动作类型（未设置/键盘/鼠标点击/…）
+             id=@+id/spinner_long_press_type：新建长按动作类型选择器 id；layout_width=match_parent：与父容器同宽；
+             layout_height=wrap_content：高度自适应；paddingHorizontal=10dp：水平内边距；paddingBottom=10dp：底部内边距 -->
+        <Spinner
+            android:id="@+id/spinner_long_press_type"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:paddingHorizontal="10dp"
+            android:paddingBottom="10dp" />
+
+        <!-- 语法：TextView 文本控件；长按动作值标签（代码中动态改文字）
+             id=@+id/tv_long_press_label：新建长按动作值标签 id；layout_width=match_parent：与父容器同宽；
+             layout_height=wrap_content：高度自适应；text=选择按键:：标签文字；textSize=14sp：字号；textColor=#FFDDDDDD：浅灰 -->
+        <TextView
+            android:id="@+id/tv_long_press_label"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="选择按键:"
+            android:textSize="14sp"
+            android:textColor="#FFDDDDDD" />
+
+        <!-- 语法：Spinner 下拉选择器控件；选择长按动作的具体动作值
+             id=@+id/spinner_long_press_value：新建长按动作值选择器 id；layout_width=match_parent：与父容器同宽；
+             layout_height=wrap_content：高度自适应；paddingHorizontal=10dp：水平内边距；paddingBottom=14dp：底部内边距 -->
+        <Spinner
+            android:id="@+id/spinner_long_press_value"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:paddingHorizontal="10dp"
+            android:paddingBottom="14dp" />
+
         <!-- ===== 「切层+按键」类型的附加按键区域 ===== -->
         <!-- 仅当动作类型选择「切换层+按键」时显示；用于选择切层的同时注入的键盘按键 -->
         <!-- 语法：LinearLayout 线性布局；附加按键区域容器

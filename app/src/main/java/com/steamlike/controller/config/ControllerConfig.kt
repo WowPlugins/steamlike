@@ -233,6 +233,8 @@ object ControllerConfig { // 单例对象：配置的 JSON 序列化/反序列�
         json.put("cursorSpeed", settings.cursorSpeed) // 写入光标速度
         json.put("lookSmoothing", settings.lookSmoothing) // 写入视角平滑
         json.put("lookAcceleration", settings.lookAcceleration) // 写入视角加速度
+        json.put("longPressThresholdMs", settings.longPressThresholdMs) // 写入长按判定阈值
+        json.put("longPressFallbackToShort", settings.longPressFallbackToShort) // 写入长按回退开关
         return json // 返回 JSON 对象
     } // 结束 globalSettingsToJson 函数
 
@@ -242,7 +244,9 @@ object ControllerConfig { // 单例对象：配置的 JSON 序列化/反序列�
             lookSensitivity = json.optDouble("lookSensitivity", 0.5).toFloat(), // 读取灵敏度并转 Float
             cursorSpeed = json.optDouble("cursorSpeed", 1.0).toFloat(), // 读取光标速度并转 Float
             lookSmoothing = json.optDouble("lookSmoothing", 0.5).toFloat(), // 读取平滑并转 Float
-            lookAcceleration = json.optDouble("lookAcceleration", 1.5).toFloat() // 读取加速度并转 Float
+            lookAcceleration = json.optDouble("lookAcceleration", 1.5).toFloat(), // 读取加速度并转 Float
+            longPressThresholdMs = json.optInt("longPressThresholdMs", 500), // 读取长按阈值（语法：optInt=带默认值读取整数）
+            longPressFallbackToShort = json.optBoolean("longPressFallbackToShort", false) // 读取长按回退开关
         ) // 结束 GlobalSettings 构造
     } // 结束 parseGlobalSettings 函数
 
@@ -285,6 +289,7 @@ object ControllerConfig { // 单例对象：配置的 JSON 序列化/反序列�
         val subArray = JSONArray() // 创建子命令 JSON 数组
         mapping.subCommands.forEach { subArray.put(it) } // 遍历子命令加入数组
         json.put("subCommands", subArray) // 写入子命令数组
+        mapping.longPressAction?.let { json.put("longPressAction", actionToJson(it)) } // 写入长按动作（未配置则不写该字段）
         return json // 返回 JSON 对象
     } // 结束 mappingToJson 函数
 
@@ -296,7 +301,8 @@ object ControllerConfig { // 单例对象：配置的 JSON 序列化/反序列�
         if (subCommands.size > KeyMapping.MAX_SUB_COMMANDS) { // 若子命令数量超上限
             return null  // 子命令超过限制，跳过 // 子命令超限，拒绝加载
         } // 结束 if 判断
-        return KeyMapping(action, subCommands) // 构造按键映射
+        val longPressAction = json.optJSONObject("longPressAction")?.let { parseAction(it) } // 读取长按动作，缺失或解析失败则为 null（语法：optJSONObject 带默认值读取）
+        return KeyMapping(action, subCommands, longPressAction) // 构造按键映射（含长按动作）
     } // 结束 parseMapping 函数
 
     private fun actionToJson(action: MappedAction): JSONObject { // 序列化映射动作为 JSON 对象

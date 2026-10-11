@@ -19,10 +19,12 @@ import android.provider.Settings // 导入 Settings，系统设置（悬浮窗�
 import android.util.Log // 导入 Log，日志输出
 import android.view.View // 导入 View 基类（控制控件可见性）
 import android.view.WindowManager // 导入 WindowManager，窗口布局参数
+import android.widget.ArrayAdapter // 导入 ArrayAdapter 数组适配器（下拉框选项）
 import android.widget.Button // 导入 Button 按钮控件
 import android.widget.EditText // 导入 EditText 输入框控件
 import android.widget.LinearLayout // 导入 LinearLayout 线性布局
 import android.widget.ScrollView // 导入 ScrollView 滚动视图
+import android.widget.Spinner // 导入 Spinner 下拉选择器控件
 import android.widget.Switch // 导入 Switch 开关控件
 import android.widget.TextView // 导入 TextView 文本控件
 import android.widget.Toast // 导入 Toast 提示
@@ -519,6 +521,65 @@ class MainActivity : AppCompatActivity() { // 声明主界面 Activity，继承 
             style = UiKit.Style.PRIMARY // 按钮使用主色调样式
         )) // 结束按钮创建
         container.addView(lookCard) // 把右摇杆优化卡片加入内容容器
+
+        // ===== 长按映射设置卡片 =====
+        val longPressCard = UiKit.card(this) // 创建“长按映射设置”卡片
+        longPressCard.addView(UiKit.sectionTitle(this, "长按映射设置")) // 添加卡片标题
+        longPressCard.addView(UiKit.spacer(this, 4)) // 添加 4dp 间距
+        longPressCard.addView(UiKit.caption( // 添加设置说明文字
+            this, // 上下文参数
+            ("在「层与操作集设置」中为某按键配置「长按动作」后，本设置即生效。\n" // 说明第一段
+                + "• 按住时长达到阈值 → 触发长按动作；未达到 → 触发短按动作\n" // 说明第二段
+                + "• 阈值越小，越容易触发长按\n" // 说明第三段
+                + "• 开启下方开关后，未单独配置长按动作的按键，长按松开时会执行其短按动作"), // 说明第四段
+            0xFF999999.toInt(), 11f // 灰色文字、11sp 字号
+        )) // 结束 caption 调用
+        longPressCard.addView(UiKit.spacer(this, 8)) // 添加 8dp 间距
+
+        // 长按判定阈值下拉（档位与 全局设置 longPressThresholdMs 对应）
+        longPressCard.addView(UiKit.label(this, "长按判定阈值")) // 添加阈值标签
+        longPressCard.addView(UiKit.caption(this, "按住时长达到该值即视为长按（默认 500 ms）", 0xFF999999.toInt(), 10f)) // 添加阈值说明
+        longPressCard.addView(UiKit.spacer(this, 4)) // 添加 4dp 间距
+        val longPressThresholdOptions = listOf(300, 500, 800, 1000) // 阈值档位列表（毫秒）
+        val longPressThresholdSpinner = Spinner(this).apply { // 创建阈值下拉框并配置（语法：apply{}=作用域函数）
+            adapter = ArrayAdapter(this@MainActivity, android.R.layout.simple_spinner_item, // 设置适配器
+                longPressThresholdOptions.map { "${it} ms" }).also { // 显示为「500 ms」形式（语法：map lambda）
+                it.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item) // 设置下拉展开项布局
+            } // 结束 also 块
+            setSelection(longPressThresholdOptions.indexOf(currentSettings.longPressThresholdMs).coerceAtLeast(0)) // 初始选中当前阈值档位
+        } // 结束 Spinner apply 块
+        longPressCard.addView(longPressThresholdSpinner) // 把阈值下拉框加入卡片
+        longPressCard.addView(UiKit.spacer(this, 8)) // 添加 8dp 间距
+
+        // 长按未映射时回退执行短按动作开关
+        val longPressFallbackSwitch = UiKit.switchRow( // 创建回退开关行（语法：return 返回 Switch 控件）
+            this, "长按未映射时执行短按动作", currentSettings.longPressFallbackToShort // 标题与当前状态
+        ) {} // 空回调，保存时统一读取状态
+        longPressCard.addView(longPressFallbackSwitch) // 把回退开关加入卡片
+        longPressCard.addView(UiKit.spacer(this, 6)) // 添加 6dp 间距
+
+        // 保存按钮
+        longPressCard.addView(UiKit.button( // 添加“保存长按设置”按钮
+            this, // 上下文参数
+            "保存长按设置", // 按钮文字
+            onClick = { // 点击回调（语法：lambda）
+                if (!Settings.canDrawOverlays(this@MainActivity)) { // 未授予悬浮窗权限时进入（语法：! 取反）
+                    toastLog("请先授予悬浮窗权限并启动服务", long = true) // 提示先授权
+                } else { // 已授权时进入
+                    ensureServiceRunning() // 确保映射服务已启动
+                    val intent = Intent(this@MainActivity, ControllerOverlayService::class.java).apply { // 构建更新设置 Intent 并进入 apply 作用域
+                        action = ControllerOverlayService.ACTION_UPDATE_SETTINGS // 设置动作：更新全局设置
+                        putExtra(ControllerOverlayService.EXTRA_LONG_PRESS_THRESHOLD_MS, // 携带长按阈值（语法：putExtra 写入 extra）
+                            longPressThresholdOptions[longPressThresholdSpinner.selectedItemPosition]) // 读取选中档位毫秒值
+                        putExtra(ControllerOverlayService.EXTRA_LONG_PRESS_FALLBACK, longPressFallbackSwitch.isChecked) // 携带回退开关状态
+                    } // 结束 Intent apply 块
+                    ContextCompat.startForegroundService(this@MainActivity, intent) // 启动前台服务执行设置更新
+                    toastLog("正在保存长按设置...") // 弹出保存提示
+                } // 结束 else 分支
+            }, // 结束点击回调
+            style = UiKit.Style.PRIMARY // 按钮使用主色调样式
+        )) // 结束按钮创建
+        container.addView(longPressCard) // 把长按映射卡片加入内容容器
 
         // ===== Windows 客户端卡片 =====
         val winCard = UiKit.card(this) // 创建“Windows 客户端”卡片
