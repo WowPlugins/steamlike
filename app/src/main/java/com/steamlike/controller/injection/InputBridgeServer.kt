@@ -41,6 +41,7 @@ import java.util.concurrent.atomic.AtomicInteger  // 导入原子整数类（自
  *   0x04 = 鼠标滚轮
  *   0x05 = 释放所有按键
  *   0x06 = 心跳Ping
+ *   0x07 = 鼠标移动到屏幕中央
  *
  * Byte 1-7: 载荷 (按消息类型不同)
  *
@@ -84,6 +85,7 @@ class InputBridgeServer(  // 语法：class 声明类；InputBridge TCP 服务�
         const val MSG_MOUSE_WHEEL: Byte = 0x04  // 消息类型：鼠标滚轮
         const val MSG_RELEASE_ALL: Byte = 0x05  // 消息类型：释放所有按键
         const val MSG_PING: Byte = 0x06  // 消息类型：心跳 Ping
+        const val MSG_MOUSE_CENTER: Byte = 0x07  // 消息类型：鼠标移动到屏幕中央
 
         const val PACKET_SIZE = 8  // 语法：const val 编译期常量；协议数据包固定长度 8 字节
     }  // 结束 companion object
@@ -199,6 +201,19 @@ class InputBridgeServer(  // 语法：class 声明类；InputBridge TCP 服务�
         packet[2] = ((deltaInt shr 8) and 0xFF).toByte()  // 写入 delta 高 8 位
         enqueue(packet)  // 加入发送队列
     }  // 结束 sendMouseWheel 函数
+
+    /**
+     * 发送鼠标移动到屏幕中央事件
+     *
+     * 无载荷：Windows 客户端收到后调用 SetCursorPos 将光标挪到主屏中心。
+     * 用于左摇杆 WASD 移动自动锁定右键前，先把光标归中，
+     * 避免锁定瞬间视角从偏移位置开始漂移。
+     */
+    fun sendMouseCenter() {  // 语法：fun 函数；发送鼠标移动到屏幕中央事件
+        val packet = ByteArray(PACKET_SIZE)  // 语法：val + ByteArray；创建 8 字节数据包
+        packet[0] = MSG_MOUSE_CENTER  // 写入消息类型：鼠标居中
+        enqueue(packet)  // 加入发送队列
+    }  // 结束 sendMouseCenter 函数
 
     /**
      * 发送释放所有按键事件

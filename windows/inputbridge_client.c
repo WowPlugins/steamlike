@@ -40,6 +40,7 @@
 #define MSG_MOUSE_WHEEL  0x04 // 语法：#define 宏定义，消息类型：鼠标滚轮
 #define MSG_RELEASE_ALL  0x05 // 语法：#define 宏定义，消息类型：释放所有已按下的按键
 #define MSG_PING         0x06 // 语法：#define 宏定义，消息类型：心跳包（连接保活）
+#define MSG_MOUSE_CENTER 0x07 // 语法：#define 宏定义，消息类型：把鼠标光标移动到屏幕中央
 
 /* 鼠标按钮ID */
 #define MOUSE_LEFT    0 // 语法：#define 宏定义，鼠标左键按钮 ID
@@ -168,6 +169,15 @@ static void InjectMouseWheel(int delta) { // 语法：static 静态函数定义�
 }
 
 /*
+ * 将鼠标光标移动到屏幕中央
+ */
+static void InjectMouseCenter(void) { // 语法：static 静态函数定义，把光标移到主屏中心
+    int cx = GetSystemMetrics(SM_CXSCREEN) / 2; // 语法：GetSystemMetrics 获取主屏宽度；除以 2 得到中心 X 坐标
+    int cy = GetSystemMetrics(SM_CYSCREEN) / 2; // 语法：GetSystemMetrics 获取主屏高度；除以 2 得到中心 Y 坐标
+    SetCursorPos(cx, cy); // 语法：SetCursorPos 将光标移动到指定屏幕坐标
+}
+
+/*
  * 释放所有按下的键和按钮
  */
 static void ReleaseAllInputs(void) { // 语法：static 静态函数定义，批量释放所有按下的键盘键和鼠标按钮
@@ -282,6 +292,12 @@ static void ProcessPacket(const unsigned char* data) { // 语法：static 静态
             /* 心跳包，无需处理 */
             break; // 语法：break 跳出 switch 语句
         } // 结束 MSG_PING 分支
+
+        case MSG_MOUSE_CENTER: { // 语法：case 分支：鼠标移动到屏幕中央
+            /* 无载荷，直接归中光标 */
+            InjectMouseCenter(); // 调用鼠标居中函数
+            break; // 语法：break 跳出 switch 语句
+        } // 结束 MSG_MOUSE_CENTER 分支
 
         default: // 语法：default 默认分支：未知消息类型
             /* 未知消息类型，忽略 */

@@ -524,6 +524,7 @@ class KeyboardMouseMapper( // 语法：class 类声明，定义键盘/鼠标映�
     private fun ensureRightButtonLockedOnMove() { // 语法：private fun 私有函数，左摇杆移动时自动锁定鼠标右键
         if (toggledMouseButtons.contains(MouseButton.RIGHT)) return // 右键已锁定：直接返回不重复锁定（语法：if 单行返回）
         if (pressedMouseButtons.containsValue(MouseButton.RIGHT)) return // 右键正被临时按住（MouseClick 动作）：不重复按下，避免其松开时打断锁定态（语法：containsValue 映射值包含判断）
+        injector.sendMouseCenter() // 锁定前先把鼠标光标移到屏幕中央，避免锁定瞬间视角从偏移位置开始漂移
         injector.sendMouseDown(MouseButton.RIGHT) // 发送鼠标右键按下事件（保持不松开）
         toggledMouseButtons.add(MouseButton.RIGHT) // 记入全局锁存状态（与「鼠标长按」共用同一标志）
         onMouseToggleChanged?.invoke(MouseButton.RIGHT, true) // 通知回调，悬浮窗边框红色高亮（语法：?. 安全调用）

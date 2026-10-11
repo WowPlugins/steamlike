@@ -108,6 +108,14 @@ interface InputInjector {  // 语法：interface 声明接口；输入注入器�
     fun sendMouseMove(dx: Float, dy: Float)  // 语法：fun 抽象方法；鼠标相对移动
 
     /**
+     * 将鼠标光标移动到屏幕中央
+     *
+     * 用于左摇杆 WASD 移动自动锁定右键前，先把光标归中，
+     * 避免锁定瞬间视角从偏移位置开始漂移。
+     */
+    fun sendMouseCenter()  // 语法：fun 抽象方法；鼠标移动到屏幕中央
+
+    /**
      * 鼠标滚轮滚动
      *
      * @param delta 滚轮增量（正数=上滚，负数=下滚）
