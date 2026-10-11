@@ -133,6 +133,15 @@ sealed class MappedAction { // 映射动作密封类（语法：sealed class 密
     data object MouseSwapToggle : MappedAction() // 鼠标长按交换动作
 
     /**
+     * 释放鼠标所有长按锁存动作
+     *
+     * 一次性释放所有处于长按锁存状态的鼠标按钮（左键/右键/中键，含左摇杆移动
+     * 自动锁定的右键）：逐个发送 MouseUp 并清除锁存状态，同时通知悬浮窗边框恢复。
+     * 适用于"一键解除所有鼠标长按"的场景。无长按锁存时不做任何处理。
+     */
+    data object MouseReleaseAll : MappedAction() // 释放鼠标所有长按动作
+
+    /**
      * 鼠标滚轮上滚动作
      *
      * 将手柄按键映射为鼠标滚轮向上滚动（发送一次固定增量的滚轮事件）。
@@ -252,6 +261,7 @@ data class KeyMapping( // 按键映射定义（语法：data class 数据类）
         is MappedAction.LookAround -> "视角控制" // 视角控制描述
         is MappedAction.MouseToggle -> "长按${action.button.toDisplayName()}" // 鼠标长按描述
         is MappedAction.MouseSwapToggle -> "长按交换" // 鼠标长按交换描述
+        is MappedAction.MouseReleaseAll -> "释放鼠标长按" // 释放鼠标所有长按描述
         is MappedAction.MouseScrollUp -> "滚轮上滚" // 滚轮上滚描述
         is MappedAction.MouseScrollDown -> "滚轮下滚" // 滚轮下滚描述
         is MappedAction.ToggleOverlay -> "切换悬浮窗" // 切换悬浮窗描述

@@ -391,6 +391,7 @@ class KeyboardMouseMapper( // 语法：class 类声明，定义键盘/鼠标映�
             is MappedAction.MouseClick -> handleMouseClick(button, true, action.button) // 鼠标点击动作：按下鼠标按钮
             is MappedAction.MouseToggle -> handleMouseToggle(action.button) // 鼠标长按切换动作（仅在按下时到达此处）
             is MappedAction.MouseSwapToggle -> handleMouseSwapToggle() // 鼠标长按交换动作：在左右键长按间交换
+            is MappedAction.MouseReleaseAll -> handleMouseReleaseAll() // 释放鼠标所有长按动作：解除全部长按锁存
             is MappedAction.SwitchLayer -> {} // SteamInput 已处理 // 切换层动作：由 SteamInput 内部处理
             is MappedAction.MouseMove, is MappedAction.LookAround -> {} // handleStick 处理 // 鼠标移动/视角动作：由 handleStick 处理
             is MappedAction.MouseScrollUp -> handleMouseScroll(SCROLL_DELTA) // 鼠标上滚动作：传入正增量
@@ -451,6 +452,7 @@ class KeyboardMouseMapper( // 语法：class 类声明，定义键盘/鼠标映�
         when (action) { // 按动作类型分发（语法：when 分支）
             is MappedAction.MouseToggle -> handleMouseToggle(action.button) // 鼠标长按锁存：切换锁存状态
             is MappedAction.MouseSwapToggle -> handleMouseSwapToggle() // 鼠标长按交换：交换左右键锁存
+            is MappedAction.MouseReleaseAll -> handleMouseReleaseAll() // 释放鼠标所有长按：解除全部锁存
             is MappedAction.MouseScrollUp -> handleMouseScroll(SCROLL_DELTA) // 滚轮上滚：发送一次上滚
             is MappedAction.MouseScrollDown -> handleMouseScroll(-SCROLL_DELTA) // 滚轮下滚：发送一次下滚
             is MappedAction.ToggleOverlay -> onToggleOverlay?.invoke() // 切换悬浮窗（语法：?. 安全调用）
@@ -734,6 +736,27 @@ class KeyboardMouseMapper( // 语法：class 类声明，定义键盘/鼠标映�
             } // 结束 else 分支
         } // 结束 when 分支
     } // 结束 handleMouseSwapToggle 函数
+
+    /**
+     * 处理释放鼠标所有长按动作
+     *
+     * 遍历全局锁存集合 [toggledMouseButtons]，逐个发送 MouseUp 并清除锁存记录，
+     * 同时通知 [onMouseToggleChanged] 使悬浮窗边框恢复默认色。
+     * 集合为空（无任何长按锁存）时不做任何处理。
+     */
+    private fun handleMouseReleaseAll() { // 语法：private fun 私有函数，释放所有鼠标长按锁存
+        if (toggledMouseButtons.isEmpty()) { // 无任何长按锁存
+            Log.d(TAG, "Release all MouseToggles: none active, ignored") // 打印忽略日志
+            return // 直接返回
+        } // 结束空集合判断
+        val released = toggledMouseButtons.toList() // 复制当前锁存按钮列表（复制后清空，避免遍历中修改）
+        toggledMouseButtons.clear() // 清空全部长按锁存记录
+        released.forEach { button -> // 逐个释放（语法：forEach 遍历 + lambda）
+            injector.sendMouseUp(button) // 发送鼠标按钮松开事件
+            onMouseToggleChanged?.invoke(button, false) // 通知回调已释放，悬浮窗边框恢复（语法：?. 安全调用）
+        } // 结束逐个释放遍历
+        Log.d(TAG, "Release all MouseToggles: $released") // 打印释放日志
+    } // 结束 handleMouseReleaseAll 函数
 
     /**
      * 左摇杆移动（WASD）时确保鼠标右键处于锁定状态
