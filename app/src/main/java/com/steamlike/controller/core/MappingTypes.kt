@@ -142,6 +142,15 @@ sealed class MappedAction { // 映射动作密封类（语法：sealed class 密
     data object MouseReleaseAll : MappedAction() // 释放鼠标所有长按动作
 
     /**
+     * 鼠标交互键动作
+     *
+     * 记录左右键当前的长按锁存状态后，临时释放已锁定的键，立即依次发送
+     * 「左键点击 → 右键点击」，最后把左右键恢复到记录时的锁存状态。
+     * 用于在保持原有锁定语义的前提下插入一组点击。
+     */
+    data object MouseClickSequence : MappedAction() // 鼠标交互键动作
+
+    /**
      * 鼠标滚轮上滚动作
      *
      * 将手柄按键映射为鼠标滚轮向上滚动（发送一次固定增量的滚轮事件）。
@@ -262,6 +271,7 @@ data class KeyMapping( // 按键映射定义（语法：data class 数据类）
         is MappedAction.MouseToggle -> "长按${action.button.toDisplayName()}" // 鼠标长按描述
         is MappedAction.MouseSwapToggle -> "长按交换" // 鼠标长按交换描述
         is MappedAction.MouseReleaseAll -> "释放鼠标长按" // 释放鼠标所有长按描述
+        is MappedAction.MouseClickSequence -> "交互键" // 鼠标交互键描述
         is MappedAction.MouseScrollUp -> "滚轮上滚" // 滚轮上滚描述
         is MappedAction.MouseScrollDown -> "滚轮下滚" // 滚轮下滚描述
         is MappedAction.ToggleOverlay -> "切换悬浮窗" // 切换悬浮窗描述

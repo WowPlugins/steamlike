@@ -392,6 +392,7 @@ class KeyboardMouseMapper( // 语法：class 类声明，定义键盘/鼠标映�
             is MappedAction.MouseToggle -> handleMouseToggle(action.button) // 鼠标长按切换动作（仅在按下时到达此处）
             is MappedAction.MouseSwapToggle -> handleMouseSwapToggle() // 鼠标长按交换动作：在左右键长按间交换
             is MappedAction.MouseReleaseAll -> handleMouseReleaseAll() // 释放鼠标所有长按动作：解除全部长按锁存
+            is MappedAction.MouseClickSequence -> handleMouseClickSequence() // 交互键动作：临时释放锁存→左键点击→右键点击→恢复锁存
             is MappedAction.SwitchLayer -> {} // SteamInput 已处理 // 切换层动作：由 SteamInput 内部处理
             is MappedAction.MouseMove, is MappedAction.LookAround -> {} // handleStick 处理 // 鼠标移动/视角动作：由 handleStick 处理
             is MappedAction.MouseScrollUp -> handleMouseScroll(SCROLL_DELTA) // 鼠标上滚动作：传入正增量
@@ -453,6 +454,7 @@ class KeyboardMouseMapper( // 语法：class 类声明，定义键盘/鼠标映�
             is MappedAction.MouseToggle -> handleMouseToggle(action.button) // 鼠标长按锁存：切换锁存状态
             is MappedAction.MouseSwapToggle -> handleMouseSwapToggle() // 鼠标长按交换：交换左右键锁存
             is MappedAction.MouseReleaseAll -> handleMouseReleaseAll() // 释放鼠标所有长按：解除全部锁存
+            is MappedAction.MouseClickSequence -> handleMouseClickSequence() // 交互键：临时释放锁存后左右键依次点击
             is MappedAction.MouseScrollUp -> handleMouseScroll(SCROLL_DELTA) // 滚轮上滚：发送一次上滚
             is MappedAction.MouseScrollDown -> handleMouseScroll(-SCROLL_DELTA) // 滚轮下滚：发送一次下滚
             is MappedAction.ToggleOverlay -> onToggleOverlay?.invoke() // 切换悬浮窗（语法：?. 安全调用）
@@ -757,6 +759,51 @@ class KeyboardMouseMapper( // 语法：class 类声明，定义键盘/鼠标映�
         } // 结束逐个释放遍历
         Log.d(TAG, "Release all MouseToggles: $released") // 打印释放日志
     } // 结束 handleMouseReleaseAll 函数
+
+    /**
+     * 设置某个鼠标按钮的长按锁存状态（幂等）
+     *
+     * 与当前状态一致时不发送任何事件；需要锁定时发送 MouseDown，
+     * 需要释放时发送 MouseUp，并同步全局锁存集合与悬浮窗边框回调。
+     *
+     * @param button 鼠标按钮
+     * @param locked 目标状态（true=锁定，false=释放）
+     */
+    private fun setMouseLockState(button: MouseButton, locked: Boolean) { // 语法：private fun 私有函数，设置鼠标长按锁存状态
+        if (toggledMouseButtons.contains(button) == locked) return // 状态一致，无需变更
+        if (locked) { // 需要锁定
+            injector.sendMouseDown(button) // 发送按下事件（保持不松开）
+            toggledMouseButtons.add(button) // 记入锁存集合
+            onMouseToggleChanged?.invoke(button, true) // 通知回调已锁定（语法：?. 安全调用）
+        } else { // 需要释放
+            injector.sendMouseUp(button) // 发送松开事件
+            toggledMouseButtons.remove(button) // 移出锁存集合
+            onMouseToggleChanged?.invoke(button, false) // 通知回调已释放
+        } // 结束状态分支
+    } // 结束 setMouseLockState 函数
+
+    /**
+     * 处理鼠标交互键动作
+     *
+     * 先记录左右键当前的长按锁存状态，临时释放已锁定的键，然后立即依次发送
+     * 左键点击、右键点击，最后把左右键恢复到记录时的长按锁存状态。整个序列同步执行，无延时。
+     */
+    private fun handleMouseClickSequence() { // 语法：private fun 私有函数，执行鼠标交互键序列
+        val leftLocked = toggledMouseButtons.contains(MouseButton.LEFT) // 记录左键锁存状态
+        val rightLocked = toggledMouseButtons.contains(MouseButton.RIGHT) // 记录右键锁存状态
+        setMouseLockState(MouseButton.LEFT, false) // 临时释放左键锁存（未锁定则无操作）
+        setMouseLockState(MouseButton.RIGHT, false) // 临时释放右键锁存（未锁定则无操作）
+        injector.sendMouseCenter() // 左键点击前：把鼠标光标移到屏幕正中央
+        injector.sendMouseDown(MouseButton.LEFT) // 左键点击：按下
+        injector.sendMouseUp(MouseButton.LEFT) // 左键点击：松开
+        injector.sendMouseCenter() // 右键点击前：把鼠标光标移到屏幕正中央
+        injector.sendMouseDown(MouseButton.RIGHT) // 右键点击：按下
+        injector.sendMouseUp(MouseButton.RIGHT) // 右键点击：松开
+        injector.sendMouseCenter() // 恢复锁存前：把鼠标光标移到屏幕正中央
+        setMouseLockState(MouseButton.LEFT, leftLocked) // 恢复左键原有锁存状态
+        setMouseLockState(MouseButton.RIGHT, rightLocked) // 恢复右键原有锁存状态
+        Log.d(TAG, "Interact key done: L=$leftLocked R=$rightLocked") // 打印完成日志
+    } // 结束 handleMouseClickSequence 函数
 
     /**
      * 左摇杆移动（WASD）时确保鼠标右键处于锁定状态
