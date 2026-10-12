@@ -82,6 +82,22 @@ class BridgeInputInjector(  // 语法：class 声明类；桥接输入注入器�
         }  // 结束 if 块
     }  // 结束 sendKeyUp 函数
 
+    /**
+     * 用原始 Windows VK 码发送一次按键点击（按下 + 立即释放）
+     *
+     * 绕过 Android KeyCode → VK 映射，直接发送 VK 码，用于 Android 未定义的按键
+     * （如 VK_F20=0x83、VK_F21=0x84）。
+     *
+     * @param vkCode Windows 虚拟键码
+     */
+    override fun sendVkKeyPress(vkCode: Int) {  // 语法：override 覆写；用原始 VK 码发送按键点击
+        if (vkCode == 0) return  // VK 码无效时不发送（语法：if 单行返回）
+        pressedKeys.add(vkCode)  // 记录该 VK 处于按下状态
+        server.sendKeyEvent(vkCode, isDown = true)  // 发送按下事件
+        pressedKeys.remove(vkCode)  // 立即移除按下状态
+        server.sendKeyEvent(vkCode, isDown = false)  // 发送释放事件
+    }  // 结束 sendVkKeyPress 函数
+
     override fun sendMouseDown(button: MouseButton) {  // 语法：override 覆写；发送鼠标按钮按下事件
         val btnId = when (button) {  // 语法：val + when 分支表达式；把鼠标按钮枚举映射为协议按钮 ID
             MouseButton.LEFT -> 0  // 左键映射为 ID 0

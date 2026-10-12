@@ -687,19 +687,9 @@ class KeyboardMouseMapper( // 语法：class 类声明，定义键盘/鼠标映�
      * @param mouseButton 鼠标按钮
      */
     private fun handleMouseToggle(mouseButton: MouseButton) { // 语法：private fun 私有函数，处理鼠标长按切换映射
-        if (toggledMouseButtons.contains(mouseButton)) { // 语法：if 分支，若该鼠标按钮已处于锁存状态（contains 集合包含判断）
-            // 再次按下 → 释放（左摇杆自动锁定过的右键也在此一并解锁）
-            injector.sendMouseUp(mouseButton) // 发送鼠标按钮松开事件
-            toggledMouseButtons.remove(mouseButton) // 从锁存记录中移除该鼠标按钮
-            onMouseToggleChanged?.invoke(mouseButton, false) // 通知回调当前为松开状态（语法：?. 安全调用）
-            Log.d(TAG, "Toggle MouseUp: $mouseButton") // 打印 toggle 松开日志（语法：字符串模板）
-        } else { // 语法：else 分支，第一次按下
-            // 第一次按下 → 按下
-            injector.sendMouseDown(mouseButton) // 发送鼠标按钮按下事件（保持不松开）
-            toggledMouseButtons.add(mouseButton) // 记录该鼠标按钮处于锁存状态（语法：Set.add 集合添加元素）
-            onMouseToggleChanged?.invoke(mouseButton, true) // 通知回调当前为按下状态（语法：?. 安全调用）
-            Log.d(TAG, "Toggle MouseDown: $mouseButton") // 打印 toggle 按下日志（语法：字符串模板）
-        } // 结束 if-else 分支
+        val locked = toggledMouseButtons.contains(mouseButton) // 当前是否已锁存（语法：contains 集合包含判断）
+        setMouseLockState(mouseButton, !locked) // 反转锁存状态（内部处理右键的 F20/F21 附带发送）
+        Log.d(TAG, if (locked) "Toggle MouseUp: $mouseButton" else "Toggle MouseDown: $mouseButton") // 打印 toggle 日志（语法：if 表达式 + 字符串模板）
     } // 结束 handleMouseToggle 函数
 
     /**
@@ -716,21 +706,13 @@ class KeyboardMouseMapper( // 语法：class 类声明，定义键盘/鼠标映�
     private fun handleMouseSwapToggle() { // 语法：private fun 私有函数，交换左右键的长按锁存状态
         when { // 语法：when 无参数分支表达式，按条件匹配
             toggledMouseButtons.contains(MouseButton.RIGHT) -> { // 右键长按中 → 换成长按左键
-                injector.sendMouseUp(MouseButton.RIGHT) // 释放右键
-                toggledMouseButtons.remove(MouseButton.RIGHT) // 移出右键锁存记录
-                onMouseToggleChanged?.invoke(MouseButton.RIGHT, false) // 通知右键已释放（语法：?. 安全调用）
-                injector.sendMouseDown(MouseButton.LEFT) // 按下并锁存左键
-                toggledMouseButtons.add(MouseButton.LEFT) // 记入左键锁存记录
-                onMouseToggleChanged?.invoke(MouseButton.LEFT, true) // 通知左键已锁存
+                setMouseLockState(MouseButton.RIGHT, false) // 释放右键（附带发送 F21）
+                setMouseLockState(MouseButton.LEFT, true) // 按下并锁存左键
                 Log.d(TAG, "Swap MouseToggle: RIGHT -> LEFT") // 打印交换日志
             } // 结束右键分支
             toggledMouseButtons.contains(MouseButton.LEFT) -> { // 左键长按中 → 换成长按右键
-                injector.sendMouseUp(MouseButton.LEFT) // 释放左键
-                toggledMouseButtons.remove(MouseButton.LEFT) // 移出左键锁存记录
-                onMouseToggleChanged?.invoke(MouseButton.LEFT, false) // 通知左键已释放
-                injector.sendMouseDown(MouseButton.RIGHT) // 按下并锁存右键
-                toggledMouseButtons.add(MouseButton.RIGHT) // 记入右键锁存记录
-                onMouseToggleChanged?.invoke(MouseButton.RIGHT, true) // 通知右键已锁存
+                setMouseLockState(MouseButton.LEFT, false) // 释放左键
+                setMouseLockState(MouseButton.RIGHT, true) // 按下并锁存右键（附带发送 F20）
                 Log.d(TAG, "Swap MouseToggle: LEFT -> RIGHT") // 打印交换日志
             } // 结束左键分支
             else -> { // 语法：else 兜底分支，左右键均未长按
@@ -751,11 +733,9 @@ class KeyboardMouseMapper( // 语法：class 类声明，定义键盘/鼠标映�
             Log.d(TAG, "Release all MouseToggles: none active, ignored") // 打印忽略日志
             return // 直接返回
         } // 结束空集合判断
-        val released = toggledMouseButtons.toList() // 复制当前锁存按钮列表（复制后清空，避免遍历中修改）
-        toggledMouseButtons.clear() // 清空全部长按锁存记录
+        val released = toggledMouseButtons.toList() // 复制当前锁存按钮列表（复制后逐个释放，避免遍历中修改）
         released.forEach { button -> // 逐个释放（语法：forEach 遍历 + lambda）
-            injector.sendMouseUp(button) // 发送鼠标按钮松开事件
-            onMouseToggleChanged?.invoke(button, false) // 通知回调已释放，悬浮窗边框恢复（语法：?. 安全调用）
+            setMouseLockState(button, false) // 释放该按钮（右键会附带发送 F21）
         } // 结束逐个释放遍历
         Log.d(TAG, "Release all MouseToggles: $released") // 打印释放日志
     } // 结束 handleMouseReleaseAll 函数
@@ -765,6 +745,7 @@ class KeyboardMouseMapper( // 语法：class 类声明，定义键盘/鼠标映�
      *
      * 与当前状态一致时不发送任何事件；需要锁定时发送 MouseDown，
      * 需要释放时发送 MouseUp，并同步全局锁存集合与悬浮窗边框回调。
+     * 针对右键：锁定后附带发送 F20，解锁后附带发送 F21（用于同步游戏内状态）。
      *
      * @param button 鼠标按钮
      * @param locked 目标状态（true=锁定，false=释放）
@@ -775,10 +756,12 @@ class KeyboardMouseMapper( // 语法：class 类声明，定义键盘/鼠标映�
             injector.sendMouseDown(button) // 发送按下事件（保持不松开）
             toggledMouseButtons.add(button) // 记入锁存集合
             onMouseToggleChanged?.invoke(button, true) // 通知回调已锁定（语法：?. 安全调用）
+            if (button == MouseButton.RIGHT) injector.sendVkKeyPress(VK_F11) // 右键锁定：附带发送 F11
         } else { // 需要释放
             injector.sendMouseUp(button) // 发送松开事件
             toggledMouseButtons.remove(button) // 移出锁存集合
             onMouseToggleChanged?.invoke(button, false) // 通知回调已释放
+            if (button == MouseButton.RIGHT) injector.sendVkKeyPress(VK_F12) // 右键解锁：附带发送 F12
         } // 结束状态分支
     } // 结束 setMouseLockState 函数
 
@@ -821,9 +804,7 @@ class KeyboardMouseMapper( // 语法：class 类声明，定义键盘/鼠标映�
         if (toggledMouseButtons.contains(MouseButton.RIGHT)) return // 右键已锁定：直接返回不重复锁定（语法：if 单行返回）
         if (pressedMouseButtons.containsValue(MouseButton.RIGHT)) return // 右键正被临时按住（MouseClick 动作）：不重复按下，避免其松开时打断锁定态（语法：containsValue 映射值包含判断）
         injector.sendMouseCenter() // 锁定前先把鼠标光标移到屏幕中央，避免锁定瞬间视角从偏移位置开始漂移
-        injector.sendMouseDown(MouseButton.RIGHT) // 发送鼠标右键按下事件（保持不松开）
-        toggledMouseButtons.add(MouseButton.RIGHT) // 记入全局锁存状态（与「鼠标长按」共用同一标志）
-        onMouseToggleChanged?.invoke(MouseButton.RIGHT, true) // 通知回调，悬浮窗边框红色高亮（语法：?. 安全调用）
+        setMouseLockState(MouseButton.RIGHT, true) // 锁存右键（内部附带发送 F20）
         Log.d(TAG, "Auto MouseDown: RIGHT (left stick move)") // 打印自动锁定日志
     } // 结束 ensureRightButtonLockedOnMove 函数
 
@@ -1009,5 +990,11 @@ class KeyboardMouseMapper( // 语法：class 类声明，定义键盘/鼠标映�
 
         /** 鼠标滚轮增量（每次按下发送的滚轮量） */
         private const val SCROLL_DELTA = 120f // 语法：const val 编译期常量，鼠标滚轮增量
+
+        /** 右键锁定时附带发送的按键（VK_F11） */
+        private const val VK_F11 = 0x7A // 语法：const val 编译期常量，Windows 虚拟键码 F11
+
+        /** 右键解锁时附带发送的按键（VK_F12） */
+        private const val VK_F12 = 0x7B // 语法：const val 编译期常量，Windows 虚拟键码 F12
     } // 结束伴生对象
 } // 结束 KeyboardMouseMapper 类

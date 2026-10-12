@@ -59,6 +59,16 @@ interface InputInjector {  // 语法：interface 声明接口；输入注入器�
     fun sendKeyUp(keyCode: Int)  // 语法：fun 抽象方法；释放键盘按键
 
     /**
+     * 发送 Windows 虚拟键（VK）点击（按下 + 立即释放）
+     *
+     * 直接使用 Windows VK 码，绕过 Android KeyCode → VK 的映射表，
+     * 用于 Android 未定义的按键（如 VK_F20=0x83、VK_F21=0x84）。
+     *
+     * @param vkCode Windows 虚拟键码
+     */
+    fun sendVkKeyPress(vkCode: Int)  // 语法：fun 抽象方法；用原始 VK 码发送一次按键点击
+
+    /**
      * 按键点击（按下 + 立即释放）
      *
      * 默认实现调用 [sendKeyDown] 后立即调用 [sendKeyUp]。
