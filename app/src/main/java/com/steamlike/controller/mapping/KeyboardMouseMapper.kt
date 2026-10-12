@@ -787,6 +787,7 @@ class KeyboardMouseMapper( // 语法：class 类声明，定义键盘/鼠标映�
      *
      * 先记录左右键当前的长按锁存状态，临时释放已锁定的键，然后立即依次发送
      * 左键点击、右键点击，最后把左右键恢复到记录时的长按锁存状态。整个序列同步执行，无延时。
+     * 在左键点击、右键点击、恢复锁存三处之前，都会先把鼠标光标移到屏幕正中央。
      */
     private fun handleMouseClickSequence() { // 语法：private fun 私有函数，执行鼠标交互键序列
         val leftLocked = toggledMouseButtons.contains(MouseButton.LEFT) // 记录左键锁存状态
