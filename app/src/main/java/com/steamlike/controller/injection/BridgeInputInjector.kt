@@ -86,7 +86,7 @@ class BridgeInputInjector(  // 语法：class 声明类；桥接输入注入器�
      * 用原始 Windows VK 码发送一次按键点击（按下 + 立即释放）
      *
      * 绕过 Android KeyCode → VK 映射，直接发送 VK 码，用于 Android 未定义的按键
-     * （如 VK_F20=0x83、VK_F21=0x84）。
+     * （如 VK_F11=0x7A、VK_F12=0x7B）。
      *
      * @param vkCode Windows 虚拟键码
      */

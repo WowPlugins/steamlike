@@ -688,7 +688,7 @@ class KeyboardMouseMapper( // 语法：class 类声明，定义键盘/鼠标映�
      */
     private fun handleMouseToggle(mouseButton: MouseButton) { // 语法：private fun 私有函数，处理鼠标长按切换映射
         val locked = toggledMouseButtons.contains(mouseButton) // 当前是否已锁存（语法：contains 集合包含判断）
-        setMouseLockState(mouseButton, !locked) // 反转锁存状态（内部处理右键的 F20/F21 附带发送）
+        setMouseLockState(mouseButton, !locked) // 反转锁存状态（右键内部改发 F11/F12）
         Log.d(TAG, if (locked) "Toggle MouseUp: $mouseButton" else "Toggle MouseDown: $mouseButton") // 打印 toggle 日志（语法：if 表达式 + 字符串模板）
     } // 结束 handleMouseToggle 函数
 
@@ -706,13 +706,13 @@ class KeyboardMouseMapper( // 语法：class 类声明，定义键盘/鼠标映�
     private fun handleMouseSwapToggle() { // 语法：private fun 私有函数，交换左右键的长按锁存状态
         when { // 语法：when 无参数分支表达式，按条件匹配
             toggledMouseButtons.contains(MouseButton.RIGHT) -> { // 右键长按中 → 换成长按左键
-                setMouseLockState(MouseButton.RIGHT, false) // 释放右键（附带发送 F21）
+                setMouseLockState(MouseButton.RIGHT, false) // 释放右键（内部发送 F12 解锁）
                 setMouseLockState(MouseButton.LEFT, true) // 按下并锁存左键
                 Log.d(TAG, "Swap MouseToggle: RIGHT -> LEFT") // 打印交换日志
             } // 结束右键分支
             toggledMouseButtons.contains(MouseButton.LEFT) -> { // 左键长按中 → 换成长按右键
                 setMouseLockState(MouseButton.LEFT, false) // 释放左键
-                setMouseLockState(MouseButton.RIGHT, true) // 按下并锁存右键（附带发送 F20）
+                setMouseLockState(MouseButton.RIGHT, true) // 锁存右键（内部发送 F11 锁定）
                 Log.d(TAG, "Swap MouseToggle: LEFT -> RIGHT") // 打印交换日志
             } // 结束左键分支
             else -> { // 语法：else 兜底分支，左右键均未长按
@@ -735,7 +735,7 @@ class KeyboardMouseMapper( // 语法：class 类声明，定义键盘/鼠标映�
         } // 结束空集合判断
         val released = toggledMouseButtons.toList() // 复制当前锁存按钮列表（复制后逐个释放，避免遍历中修改）
         released.forEach { button -> // 逐个释放（语法：forEach 遍历 + lambda）
-            setMouseLockState(button, false) // 释放该按钮（右键会附带发送 F21）
+            setMouseLockState(button, false) // 释放该按钮（右键会改发 F12 解锁）
         } // 结束逐个释放遍历
         Log.d(TAG, "Release all MouseToggles: $released") // 打印释放日志
     } // 结束 handleMouseReleaseAll 函数
@@ -743,25 +743,25 @@ class KeyboardMouseMapper( // 语法：class 类声明，定义键盘/鼠标映�
     /**
      * 设置某个鼠标按钮的长按锁存状态（幂等）
      *
-     * 与当前状态一致时不发送任何事件；需要锁定时发送 MouseDown，
-     * 需要释放时发送 MouseUp，并同步全局锁存集合与悬浮窗边框回调。
-     * 针对右键：锁定后附带发送 F20，解锁后附带发送 F21（用于同步游戏内状态）。
+     * 与当前状态一致时不发送任何事件，并同步全局锁存集合与悬浮窗边框回调。
+     * - 左键：锁定时发送 MouseDown，释放时发送 MouseUp
+     * - 右键：不发送真实鼠标右键事件，改为锁定发送 F11、解锁发送 F12
+     *   （由游戏内绑定 F11/F12 来实现右键锁定/解锁）
      *
      * @param button 鼠标按钮
      * @param locked 目标状态（true=锁定，false=释放）
      */
     private fun setMouseLockState(button: MouseButton, locked: Boolean) { // 语法：private fun 私有函数，设置鼠标长按锁存状态
         if (toggledMouseButtons.contains(button) == locked) return // 状态一致，无需变更
+        val isRight = button == MouseButton.RIGHT // 是否为右键（右键用 F11/F12 替代真实鼠标事件）
         if (locked) { // 需要锁定
-            injector.sendMouseDown(button) // 发送按下事件（保持不松开）
+            if (isRight) injector.sendVkKeyPress(VK_F11) else injector.sendMouseDown(button) // 右键发 F11 锁定，其它键发送鼠标按下
             toggledMouseButtons.add(button) // 记入锁存集合
             onMouseToggleChanged?.invoke(button, true) // 通知回调已锁定（语法：?. 安全调用）
-            if (button == MouseButton.RIGHT) injector.sendVkKeyPress(VK_F11) // 右键锁定：附带发送 F11
         } else { // 需要释放
-            injector.sendMouseUp(button) // 发送松开事件
+            if (isRight) injector.sendVkKeyPress(VK_F12) else injector.sendMouseUp(button) // 右键发 F12 解锁，其它键发送鼠标松开
             toggledMouseButtons.remove(button) // 移出锁存集合
             onMouseToggleChanged?.invoke(button, false) // 通知回调已释放
-            if (button == MouseButton.RIGHT) injector.sendVkKeyPress(VK_F12) // 右键解锁：附带发送 F12
         } // 结束状态分支
     } // 结束 setMouseLockState 函数
 
@@ -804,7 +804,7 @@ class KeyboardMouseMapper( // 语法：class 类声明，定义键盘/鼠标映�
         if (toggledMouseButtons.contains(MouseButton.RIGHT)) return // 右键已锁定：直接返回不重复锁定（语法：if 单行返回）
         if (pressedMouseButtons.containsValue(MouseButton.RIGHT)) return // 右键正被临时按住（MouseClick 动作）：不重复按下，避免其松开时打断锁定态（语法：containsValue 映射值包含判断）
         injector.sendMouseCenter() // 锁定前先把鼠标光标移到屏幕中央，避免锁定瞬间视角从偏移位置开始漂移
-        setMouseLockState(MouseButton.RIGHT, true) // 锁存右键（内部附带发送 F20）
+        setMouseLockState(MouseButton.RIGHT, true) // 锁存右键（内部发送 F11 锁定，不发真实鼠标右键按下）
         Log.d(TAG, "Auto MouseDown: RIGHT (left stick move)") // 打印自动锁定日志
     } // 结束 ensureRightButtonLockedOnMove 函数
 
