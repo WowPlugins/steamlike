@@ -6,8 +6,9 @@ import java.io.OutputStream  // 导入输出流类（向客户端写数据）
 import java.net.InetSocketAddress  // 导入网络地址类（绑定监听地址）
 import java.net.ServerSocket  // 导入 TCP 服务器套接字类
 import java.net.Socket  // 导入 TCP 套接字类（客户端连接）
-import java.util.concurrent.ConcurrentLinkedQueue  // 导入并发无锁队列类（消息队列）
 import java.util.concurrent.CopyOnWriteArrayList  // 导入写时复制列表类（并发安全的客户端列表）
+import java.util.concurrent.LinkedBlockingQueue  // 导入阻塞队列类（消息队列，poll 阻塞等待以避免空转轮询）
+import java.util.concurrent.TimeUnit  // 导入时间单位类（poll 超时参数）
 import java.util.concurrent.atomic.AtomicBoolean  // 导入原子布尔类（线程安全标志）
 import java.util.concurrent.atomic.AtomicInteger  // 导入原子整数类（自增 ID）
 
@@ -93,7 +94,7 @@ class InputBridgeServer(  // 语法：class 声明类；InputBridge TCP 服务�
     private var serverSocket: ServerSocket? = null  // 语法：private var + ?可空；TCP 服务器套接字
     private val isRunning = AtomicBoolean(false)  // 语法：val + AtomicBoolean 原子类型；服务器运行标志（线程安全）
     private val clients = CopyOnWriteArrayList<ClientConnection>()  // 语法：val + 泛型；已连接客户端列表（并发安全）
-    private val messageQueue = ConcurrentLinkedQueue<ByteArray>()  // 语法：val + 泛型；待发送消息队列（并发安全）
+    private val messageQueue = LinkedBlockingQueue<ByteArray>()  // 语法：val + 泛型；待发送消息队列（阻塞队列，poll 阻塞等待）
 
     /** 服务器状态回调 */
     var onClientConnected: ((String) -> Unit)? = null  // 语法：var + lambda 类型 + ?可空；客户端连接回调
@@ -301,32 +302,42 @@ class InputBridgeServer(  // 语法：class 声明类；InputBridge TCP 服务�
 
     /**
      * 消息分发循环：将队列中的消息发送给所有已连接的客户端
+     *
+     * 用 [LinkedBlockingQueue] 阻塞等待替代空转轮询（原来的 `Thread.sleep(1)` 会持续
+     * 唤醒 CPU，与模拟器争抢核心）。取到首包后一次性抽干队列，把积压的定长包合并成
+     * 单次 write + flush，减少 TCP 系统调用次数。
      */
     private fun dispatchLoop() {  // 语法：private fun 私有函数；消息分发循环
         while (isRunning.get()) {  // 语法：while 循环；运行期间持续分发消息
             try {  // 尝试处理队列
-                val packet = messageQueue.poll()  // 语法：val + poll 方法；取出队列头部消息（无则返回 null）
-                if (packet != null) {  // 语法：if 判空；有消息时
-                    // 发送给所有客户端
-                    val deadClients = mutableListOf<ClientConnection>()  // 语法：val + 泛型；记录发送失败的客户端
-                    for (client in clients) {  // 语法：for 循环；遍历所有客户端
-                        try {  // 尝试发送
-                            client.send(packet)  // 向该客户端发送数据包
-                        } catch (e: IOException) {  // 语法：catch 捕获 IO 异常
-                            deadClients.add(client)  // 发送失败则记入待清理列表
-                        }  // 结束 try-catch
-                    }  // 结束 for 循环
-                    // 清理断开的客户端
-                    if (deadClients.isNotEmpty()) {  // 语法：if 条件判断；存在失败客户端时
-                        deadClients.forEach { c ->  // 语法：forEach + 显式参数 c；遍历失败客户端
-                            c.close()  // 关闭该客户端
-                            clients.remove(c)  // 从列表移除
-                        }  // 结束 forEach lambda
-                    }  // 结束 if 块
-                } else {  // 语法：else 分支；队列为空时
-                    // 队列为空，短暂休眠避免忙等待
-                    Thread.sleep(1)  // 休眠 1ms 让出 CPU（避免忙等待）
-                }  // 结束 if-else 块
+                // 阻塞等待首个数据包（最长 200ms），队列为空时不占用 CPU
+                val first = messageQueue.poll(200, TimeUnit.MILLISECONDS) ?: continue  // 语法：?: 空值合并 + continue；超时无包则回到循环条件判断
+                // 抽干当前队列中已积压的包（通常 1~2 个），合并为一次发送
+                val batch = ArrayList<ByteArray>()  // 语法：val + ArrayList；本批待发送的数据包
+                batch.add(first)  // 先加入首包
+                messageQueue.drainTo(batch)  // 一次性取走队列中剩余的全部包
+                val merged = ByteArray(batch.size * PACKET_SIZE)  // 合并缓冲区（所有包均为定长 PACKET_SIZE）
+                var offset = 0  // 写入偏移量
+                for (p in batch) {  // 语法：for 循环；逐个拷贝到合并缓冲区
+                    System.arraycopy(p, 0, merged, offset, p.size)  // 语法：System.arraycopy；数组拷贝
+                    offset += p.size  // 累加偏移
+                }  // 结束 for 循环
+                // 发送给所有客户端（合并后单次 write + flush）
+                val deadClients = mutableListOf<ClientConnection>()  // 语法：val + 泛型；记录发送失败的客户端
+                for (client in clients) {  // 语法：for 循环；遍历所有客户端
+                    try {  // 尝试发送
+                        client.send(merged)  // 向该客户端发送合并后的数据
+                    } catch (e: IOException) {  // 语法：catch 捕获 IO 异常
+                        deadClients.add(client)  // 发送失败则记入待清理列表
+                    }  // 结束 try-catch
+                }  // 结束 for 循环
+                // 清理断开的客户端
+                if (deadClients.isNotEmpty()) {  // 语法：if 条件判断；存在失败客户端时
+                    deadClients.forEach { c ->  // 语法：forEach + 显式参数 c；遍历失败客户端
+                        c.close()  // 关闭该客户端
+                        clients.remove(c)  // 从列表移除
+                    }  // 结束 forEach lambda
+                }  // 结束 if 块
             } catch (e: InterruptedException) {  // 语法：catch 捕获中断异常；线程被中断时
                 break  // 退出分发循环
             } catch (e: Exception) {  // 语法：catch 捕获其他异常

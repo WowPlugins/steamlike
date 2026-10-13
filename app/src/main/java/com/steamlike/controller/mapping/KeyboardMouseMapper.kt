@@ -981,12 +981,13 @@ class KeyboardMouseMapper( // 语法：class 类声明，定义键盘/鼠标映�
         private const val LOOK_SMOOTH_TAU_MAX = 0.048f // 语法：const val 编译期常量，EMA 平滑时间常数上限（秒）
 
         /**
-         * 右摇杆发送循环 tick 间隔（毫秒）≈ 125Hz
+         * 右摇杆发送循环 tick 间隔（毫秒）≈ 60Hz
          *
-         * 接近真实鼠标的回报频率（多数鼠标 125~1000Hz），
-         * 每 tick 位移 1~4px，配合余量累积实现平滑连续移动。
+         * 与游戏帧率对齐：更高的发送频率只会增加注入与模拟器侧处理开销、
+         * 与渲染争抢 CPU，对实际观感无益。每 tick 位移若干像素，配合
+         * 余量累积仍能保持连续移动（位移按实际 dt 积分，速度与频率无关）。
          */
-        private const val LOOK_TICK_MS = 8L // 语法：const val 编译期常量，tick 间隔毫秒（8L=Long 字面量，约 125Hz）
+        private const val LOOK_TICK_MS = 16L // 语法：const val 编译期常量，tick 间隔毫秒（16L=Long 字面量，约 60Hz，与游戏帧率对齐以减少无效注入）
 
         /** 鼠标滚轮增量（每次按下发送的滚轮量） */
         private const val SCROLL_DELTA = 120f // 语法：const val 编译期常量，鼠标滚轮增量
