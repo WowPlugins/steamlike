@@ -581,6 +581,47 @@ class MainActivity : AppCompatActivity() { // 声明主界面 Activity，继承 
         )) // 结束按钮创建
         container.addView(longPressCard) // 把长按映射卡片加入内容容器
 
+        // ===== 鼠标右键模式卡片 =====
+        val rightModeCard = UiKit.card(this) // 创建“鼠标右键模式”卡片
+        rightModeCard.addView(UiKit.sectionTitle(this, "鼠标右键模式")) // 添加卡片标题
+        rightModeCard.addView(UiKit.spacer(this, 4)) // 添加 4dp 间距
+        rightModeCard.addView(UiKit.caption( // 添加设置说明文字
+            this, // 上下文参数
+            ("鼠标右键长按（锁定视角）与解锁动作的发送方式：\n" // 说明第一段
+                + "• 开启：发送 F11（锁定）/ F12（解锁）按键，由游戏内绑定接收\n" // 说明第二段
+                + "• 关闭：直接发送真实鼠标右键按下 / 松开"), // 说明第三段
+            0xFF999999.toInt(), 11f // 灰色文字、11sp 字号
+        )) // 结束 caption 调用
+        rightModeCard.addView(UiKit.spacer(this, 8)) // 添加 8dp 间距
+
+        // 右键发送方式开关（默认发送 F11/F12）
+        val rightFunctionKeysSwitch = UiKit.switchRow( // 创建开关行（语法：return 返回 Switch 控件）
+            this, "右键锁定 / 解锁发送 F11 / F12", currentSettings.rightButtonUseFunctionKeys // 标题与当前状态
+        ) {} // 空回调，保存时统一读取状态
+        rightModeCard.addView(rightFunctionKeysSwitch) // 把开关加入卡片
+        rightModeCard.addView(UiKit.spacer(this, 6)) // 添加 6dp 间距
+
+        // 保存按钮
+        rightModeCard.addView(UiKit.button( // 添加“保存右键模式”按钮
+            this, // 上下文参数
+            "保存右键模式", // 按钮文字
+            onClick = { // 点击回调（语法：lambda）
+                if (!Settings.canDrawOverlays(this@MainActivity)) { // 未授予悬浮窗权限时进入（语法：! 取反）
+                    toastLog("请先授予悬浮窗权限并启动服务", long = true) // 提示先授权
+                } else { // 已授权时进入
+                    ensureServiceRunning() // 确保映射服务已启动
+                    val intent = Intent(this@MainActivity, ControllerOverlayService::class.java).apply { // 构建更新设置 Intent 并进入 apply 作用域
+                        action = ControllerOverlayService.ACTION_UPDATE_SETTINGS // 设置动作：更新全局设置
+                        putExtra(ControllerOverlayService.EXTRA_RIGHT_BUTTON_FUNCTION_KEYS, rightFunctionKeysSwitch.isChecked) // 携带右键 F11/F12 模式开关状态
+                    } // 结束 Intent apply 块
+                    ContextCompat.startForegroundService(this@MainActivity, intent) // 启动前台服务执行设置更新
+                    toastLog("正在保存右键模式...") // 弹出保存提示
+                } // 结束 else 分支
+            }, // 结束点击回调
+            style = UiKit.Style.PRIMARY // 按钮使用主色调样式
+        )) // 结束按钮创建
+        container.addView(rightModeCard) // 把鼠标右键模式卡片加入内容容器
+
         // ===== Windows 客户端卡片 =====
         val winCard = UiKit.card(this) // 创建“Windows 客户端”卡片
         winCard.addView(UiKit.sectionTitle(this, "Windows 客户端")) // 添加卡片标题

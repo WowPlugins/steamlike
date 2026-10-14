@@ -745,21 +745,22 @@ class KeyboardMouseMapper( // 语法：class 类声明，定义键盘/鼠标映�
      *
      * 与当前状态一致时不发送任何事件，并同步全局锁存集合与悬浮窗边框回调。
      * - 左键：锁定时发送 MouseDown，释放时发送 MouseUp
-     * - 右键：不发送真实鼠标右键事件，改为锁定发送 F11、解锁发送 F12
-     *   （由游戏内绑定 F11/F12 来实现右键锁定/解锁）
+     * - 右键：默认发送 F11（锁定）/ F12（解锁），由游戏内绑定实现右键锁定/解锁；
+     *   关闭「右键 F11/F12 模式」开关后，改为发送真实鼠标右键按下/松开
      *
      * @param button 鼠标按钮
      * @param locked 目标状态（true=锁定，false=释放）
      */
     private fun setMouseLockState(button: MouseButton, locked: Boolean) { // 语法：private fun 私有函数，设置鼠标长按锁存状态
         if (toggledMouseButtons.contains(button) == locked) return // 状态一致，无需变更
-        val isRight = button == MouseButton.RIGHT // 是否为右键（右键用 F11/F12 替代真实鼠标事件）
+        // 右键是否用 F11/F12 替代真实鼠标事件（默认开启，可在主界面「鼠标右键模式」中关闭）
+        val useFunctionKeys = button == MouseButton.RIGHT && steamInput.profile.globalSettings.rightButtonUseFunctionKeys // 语法：&& 逻辑与；仅右键且开关开启时为 true
         if (locked) { // 需要锁定
-            if (isRight) injector.sendVkKeyPress(VK_F11) else injector.sendMouseDown(button) // 右键发 F11 锁定，其它键发送鼠标按下
+            if (useFunctionKeys) injector.sendVkKeyPress(VK_F11) else injector.sendMouseDown(button) // 锁定：发 F11 或真实鼠标按下
             toggledMouseButtons.add(button) // 记入锁存集合
             onMouseToggleChanged?.invoke(button, true) // 通知回调已锁定（语法：?. 安全调用）
         } else { // 需要释放
-            if (isRight) injector.sendVkKeyPress(VK_F12) else injector.sendMouseUp(button) // 右键发 F12 解锁，其它键发送鼠标松开
+            if (useFunctionKeys) injector.sendVkKeyPress(VK_F12) else injector.sendMouseUp(button) // 解锁：发 F12 或真实鼠标松开
             toggledMouseButtons.remove(button) // 移出锁存集合
             onMouseToggleChanged?.invoke(button, false) // 通知回调已释放
         } // 结束状态分支

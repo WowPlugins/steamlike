@@ -445,7 +445,8 @@ data class GlobalSettings( // 全局设置（语法：data class 数据类）
     val lookSmoothing: Float = 0.5f, // 视角平滑系数
     val lookAcceleration: Float = 1.5f, // 视角加速曲线指数
     val longPressThresholdMs: Int = 500, // 长按判定阈值（毫秒）
-    val longPressFallbackToShort: Boolean = false // 长按未配置动作时是否回退执行短按动作
+    val longPressFallbackToShort: Boolean = false, // 长按未配置动作时是否回退执行短按动作
+    val rightButtonUseFunctionKeys: Boolean = true // 右键锁定/解锁是否发送 F11/F12（false=发送真实鼠标右键按下/松开）
 ) // 结束 GlobalSettings 数据类
 
 /**
