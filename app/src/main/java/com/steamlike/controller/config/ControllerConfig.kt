@@ -103,6 +103,9 @@ object ControllerConfig { // 单例对象：配置的 JSON 序列化/反序列�
         json.put("captureEnabled", cfg.captureEnabled) // 写入捕获总开关
         json.put("launcherPackage", cfg.launcherPackage) // 写入拉起应用包名
         json.put("gameExePath", cfg.gameExePath) // 写入游戏 EXE 路径
+        val exeHistory = JSONArray() // 创建游戏 EXE 历史路径数组
+        cfg.gameExeHistory.forEach { exeHistory.put(it) } // 遍历写入历史路径（语法：forEach + it lambda 参数）
+        json.put("gameExeHistory", exeHistory) // 写入历史路径数组
         return json // 返回 JSON 对象
     } // 结束 appConfigToJson 函数
 
@@ -122,7 +125,12 @@ object ControllerConfig { // 单例对象：配置的 JSON 序列化/反序列�
             } ?: AppConfig.DEFAULT_WHITELIST, // 数组为空时回退默认白名单（语法：?:=空值合并）
             captureEnabled = json.optBoolean("captureEnabled", true), // 读取捕获总开关，默认开启
             launcherPackage = json.optString("launcherPackage", AppConfig.DEFAULT_LAUNCHER), // 读取拉起应用包名，默认 Winlator
-            gameExePath = json.optString("gameExePath", "") // 读取游戏 EXE 路径，默认空
+            gameExePath = json.optString("gameExePath", ""), // 读取游戏 EXE 路径，默认空
+            gameExeHistory = json.optJSONArray("gameExeHistory")?.let { arr -> // 读取历史路径数组（语法：?.let 安全调用）
+                (0 until arr.length()).map { arr.getString(it) } // 遍历索引取出路径列表
+                    .filter { it.isNotBlank() } // 过滤空白项
+                    .distinct() // 去重
+            } ?: emptyList() // 缺失时用空列表（语法：?:=空值合并）
         ) // 结束 AppConfig 构造
     } // 结束 parseAppConfig 函数
 

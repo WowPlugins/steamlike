@@ -175,6 +175,8 @@ class ControllerOverlayService : Service() {  // class=类声明；继承 Servic
         // ===== 悬浮窗配色（半透明，尽量透出背面画面）=====
         /** 展开面板背景（深色半透明，圆角） */
         private const val COLOR_PANEL = 0x991C1C1C.toInt()  // const val=编译期常量；展开面板背景色（深色半透明）
+        /** 收起胶囊长按展开的判定时长（毫秒） */
+        private const val COLLAPSED_LONG_PRESS_MS = 400L  // const val=编译期常量；收起态长按多久触发展开
         /** 层按钮正常态背景 */
         private const val COLOR_LAYER_NORMAL = 0x66333333.toInt()  // const val=编译期常量；层按钮正常态背景色
         /** 层按钮激活态背景（绿色） */
@@ -2383,7 +2385,9 @@ class ControllerOverlayService : Service() {  // class=类声明；继承 Servic
      * 为悬浮窗常驻容器设置拖动和点击监听
      *
      * - 拖动: 移动悬浮窗位置（收起和展开状态都支持）
-     * - 点击: 收起状态下未移动的点击触发展开；展开状态下不拦截按钮点击
+     * - 点击（收起状态、未拖动、未长按）: 切换手柄捕获状态（暂停/恢复）
+     * - 长按（收起状态）: 展开悬浮窗
+     * - 展开状态不拦截，交由内部按钮处理
      *
      * @param view 悬浮窗常驻容器（FrameLayout）
      */
@@ -2393,6 +2397,8 @@ class ControllerOverlayService : Service() {  // class=类声明；继承 Servic
         var initialTouchX = 0f  // var=可变变量；记录按下时手指原始 X
         var initialTouchY = 0f  // var=可变变量；记录按下时手指原始 Y
         var hasMoved = false  // var=可变变量；标记本次触摸是否发生过拖动
+        var longPressFired = false  // var=可变变量；标记长按展开是否已触发
+        var longPressRunnable: Runnable? = null  // var=可变变量；长按判定定时任务（可取消）
 
         view.setOnTouchListener { _, event ->  // 设置触摸监听（lambda）；忽略 view 参数，接收 MotionEvent
             // 展开/映射面板状态：不拦截触摸，交由内部 ScrollView 处理内容滚动与按钮点击
@@ -2405,11 +2411,22 @@ class ControllerOverlayService : Service() {  // class=类声明；继承 Servic
                     initialTouchX = event.rawX  // 记录手指原始 X
                     initialTouchY = event.rawY  // 记录手指原始 Y
                     hasMoved = false  // 重置拖动标记
+                    longPressFired = false  // 重置长按标记
+                    // 启动长按判定：收起态下按住超过阈值即展开（无需等抬手）
+                    longPressRunnable = Runnable {  // 构造长按任务（语法：Runnable{}=函数式接口）
+                        if (!hasMoved && !isExpanded) {  // if 判断；未拖动且仍处于收起态时
+                            longPressFired = true  // 标记已触发长按展开
+                            showExpandedView()  // 展开悬浮窗
+                        }  // 结束条件判断
+                    }.also { view.postDelayed(it, COLLAPSED_LONG_PRESS_MS) }  // 延迟阈值毫秒后执行（语法：also=作用域函数）
                 }  // 结束 ACTION_DOWN 分支
                 MotionEvent.ACTION_MOVE -> {  // 手指移动分支
                     val dx = event.rawX - initialTouchX  // val=只读变量；计算横向位移
                     val dy = event.rawY - initialTouchY  // val=只读变量；计算纵向位移
                     if (Math.abs(dx) > 5 || Math.abs(dy) > 5) {  // if=条件判断；位移超过 5px 视为拖动
+                        if (!hasMoved) {  // 首次判定为拖动时进入
+                            longPressRunnable?.let { view.removeCallbacks(it) }  // 取消长按判定，避免拖动途中误展开
+                        }  // 结束首次拖动判断
                         hasMoved = true  // 标记已拖动
                         overlayParams?.let { params ->  // ?.=安全调用；let=作用域函数（lambda 内 it/显式参数）；参数非空时执行拖动
                             params.x = initialX + dx.toInt()  // 更新悬浮窗 X 位置
@@ -2419,12 +2436,16 @@ class ControllerOverlayService : Service() {  // class=类声明；继承 Servic
                     }  // 结束 if 分支
                 }  // 结束 ACTION_MOVE 分支
                 MotionEvent.ACTION_UP -> {  // 手指抬起分支
-                    // 收起状态下，未移动的点击 = 展开
-                    if (!hasMoved && !isExpanded) {  // if=条件判断；未拖动且处于收起态时视为点击
-                        showExpandedView()  // 展开悬浮窗
+                    longPressRunnable?.let { view.removeCallbacks(it) }  // 取消未触发的长按判定（语法：?.let 安全调用）
+                    // 收起状态下，未拖动且未长按的点击 = 切换手柄捕获状态
+                    if (!hasMoved && !longPressFired && !isExpanded) {  // if 判断；未拖动、未长按且处于收起态时视为点击
+                        toggleCaptureFromButton()  // 切换捕获状态（与悬浮窗"暂停/恢复捕获"按钮行为一致）
                         return@setOnTouchListener true  // 消费事件，阻止其他处理
                     }  // 结束 if 分支
                 }  // 结束 ACTION_UP 分支
+                MotionEvent.ACTION_CANCEL -> {  // 触摸被系统取消分支
+                    longPressRunnable?.let { view.removeCallbacks(it) }  // 取消未触发的长按判定
+                }  // 结束 ACTION_CANCEL 分支
             }  // 结束 when 分支
             // 移动了则消费事件（阻止按钮误触）；未移动则返回 false 让按钮处理
             hasMoved  // lambda 返回值：已移动则 true（消费），否则 false

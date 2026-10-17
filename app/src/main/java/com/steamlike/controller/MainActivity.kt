@@ -19,6 +19,7 @@ import android.provider.Settings // 导入 Settings，系统设置（悬浮窗�
 import android.util.Log // 导入 Log，日志输出
 import android.view.View // 导入 View 基类（控制控件可见性）
 import android.view.WindowManager // 导入 WindowManager，窗口布局参数
+import android.widget.AdapterView // 导入 AdapterView 适配器视图基类（下拉选择监听）
 import android.widget.ArrayAdapter // 导入 ArrayAdapter 数组适配器（下拉框选项）
 import android.widget.Button // 导入 Button 按钮控件
 import android.widget.EditText // 导入 EditText 输入框控件
@@ -68,6 +69,8 @@ class MainActivity : AppCompatActivity() { // 声明主界面 Activity，继承 
     private lateinit var launcherEditText: EditText // 悬浮窗“游戏”按钮拉起应用包名输入框
     /** 游戏 EXE 路径显示文本 */
     private lateinit var gameExeText: TextView // 游戏 EXE 路径显示文本
+    /** 游戏 EXE 历史路径下拉框（选择历史路径直接切换） */
+    private var gameExeSpinner: Spinner? = null // var=可变变量；?=可空类型；历史路径下拉控件引用
     /** 抑制捕获开关监听标志（程序化同步状态时避免循环触发） */
     private var suppressCaptureListener = false // 抑制捕获开关监听标志（语法：var 可变变量）
     /** TCP监听地址输入框 */
@@ -637,6 +640,25 @@ class MainActivity : AppCompatActivity() { // 声明主界面 Activity，继承 
         ) // 结束 caption 调用
         winCard.addView(gameExeText) // 把路径文本加入卡片
         winCard.addView(UiKit.spacer(this, 6)) // 添加 6dp 间距
+        // 历史路径下拉：直接选择之前用过的路径（无需再走文件选择器）
+        val exeSpinner = Spinner(this).apply { // 创建历史路径下拉框并配置（语法：apply{}=作用域函数）
+            onItemSelectedListener = object : AdapterView.OnItemSelectedListener { // 设置选择监听（语法：object : 接口匿名实现）
+                override fun onItemSelected(parent: AdapterView<*>?, v: View?, position: Int, id: Long) { // 选中某项时
+                    val target = parent?.getItemAtPosition(position) as? String ?: return // 取选中路径（语法：as?=安全类型转换）
+                    val cur = AppConfigStore.load(this@MainActivity).gameExePath // 读取当前游戏路径
+                    if (target == cur) return // 与当前路径一致则无需处理
+                    AppConfigStore.save(this@MainActivity, // 保存选中的历史路径
+                        AppConfigStore.load(this@MainActivity).copy(gameExePath = target)) // 复制配置并更新游戏路径
+                    if (::gameExeText.isInitialized) gameExeText.text = target // 同步界面显示文本
+                    toastLog("已选择历史路径: $target") // 弹出切换提示（语法：字符串模板）
+                } // 结束 onItemSelected 方法
+                override fun onNothingSelected(parent: AdapterView<*>?) {} // 无选中项时不处理（语法：空函数体）
+            } // 结束匿名监听对象
+        } // 结束 Spinner apply 块
+        gameExeSpinner = exeSpinner // 记录控件引用供后续刷新
+        winCard.addView(exeSpinner) // 把历史路径下拉框加入卡片
+        refreshGameExeSpinner() // 初始填充历史路径（无历史时自动隐藏）
+        winCard.addView(UiKit.spacer(this, 6)) // 添加 6dp 间距
         winCard.addView(UiKit.button(this, "选择游戏 EXE 路径", { // 创建“选择游戏 EXE”按钮（语法：lambda 点击回调）
             // 弹出系统文件选择器，直接定位到 Download 目录
             openExeLauncher.launch(buildOpenExeIntent()) // 启动文件选择器
@@ -851,13 +873,38 @@ class MainActivity : AppCompatActivity() { // 声明主界面 Activity，继承 
         val rel = androidPath.removePrefix(downloadDir).trimStart('/', '\\') // 去掉 Download 前缀和开头分隔符（语法：链式调用）
         val winPath = "D:\\" + rel.replace('/', '\\') // 转换为 Winlator D 盘路径（语法：字符串拼接）
 
-        val cfg = AppConfigStore.load(this).copy(gameExePath = winPath) // 复制配置并更新游戏路径（语法：data class 的 copy 方法）
+        val old = AppConfigStore.load(this) // 读取现有运行时配置
+        // 更新历史路径：新路径置顶、去重、最多保留 10 条
+        val newHistory = (listOf(winPath) + old.gameExeHistory.filter { it != winPath }).take(10) // 语法：listOf 拼接 + filter 过滤 + take 截取前 10
+        val cfg = old.copy(gameExePath = winPath, gameExeHistory = newHistory) // 复制配置并更新游戏路径与历史（语法：data class 的 copy 方法）
         AppConfigStore.save(this, cfg) // 持久化配置
         if (::gameExeText.isInitialized) { // 若 gameExeText 已初始化（语法：:: 属性引用 + isInitialized 判断）
             gameExeText.text = winPath // 更新界面显示的路径
         } // 结束初始化判断
+        refreshGameExeSpinner() // 刷新历史路径下拉框内容
         toastLog("游戏路径已保存（Winlator D 盘）: $winPath") // 弹出保存成功提示（语法：字符串模板）
     } // 结束 handleExeSelection 函数
+
+    /**
+     * 刷新游戏 EXE 历史路径下拉框
+     *
+     * 读取配置中的历史路径重建下拉内容，并选中当前路径；
+     * 历史为空时隐藏该下拉框。
+     */
+    private fun refreshGameExeSpinner() { // private=私有；fun=函数声明；刷新游戏 EXE 历史下拉
+        val spinner = gameExeSpinner ?: return // 控件未创建则直接返回（语法：?:=空值合并）
+        val cfg = AppConfigStore.load(this) // 读取运行时配置
+        val history = cfg.gameExeHistory // 取历史路径列表
+        if (history.isEmpty()) { // 无历史路径时进入（语法：if 判断）
+            spinner.visibility = View.GONE // 隐藏下拉框
+            return // 提前返回
+        } // 结束空判断
+        spinner.visibility = View.VISIBLE // 显示下拉框
+        spinner.adapter = ArrayAdapter(this, android.R.layout.simple_spinner_item, history).also { // 设置适配器（语法：also=作用域函数）
+            it.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item) // 设置下拉展开项布局
+        } // 结束 also 块
+        spinner.setSelection(history.indexOf(cfg.gameExePath).coerceAtLeast(0)) // 选中当前路径（语法：indexOf=查找索引；coerceAtLeast=下限保护）
+    } // 结束 refreshGameExeSpinner 函数
 
     /**
      * 解析 SAF content:// URI 为 Android 文件系统绝对路径
