@@ -150,6 +150,10 @@ class ControllerOverlayService : Service() {  // class=类声明；继承 Servic
         const val EXTRA_LONG_PRESS_FALLBACK = "long_press_fallback"  // const val=编译期常量；长按回退开关的 extra 键
         /** Intent extra: 右键锁定/解锁是否发送 F11/F12 (Boolean) */
         const val EXTRA_RIGHT_BUTTON_FUNCTION_KEYS = "right_button_function_keys"  // const val=编译期常量；右键 F11/F12 模式开关的 extra 键
+        /** Intent extra: 左摇杆移动时是否自动锁定鼠标右键 (Boolean) */
+        const val EXTRA_WASD_AUTO_RIGHT_LOCK = "wasd_auto_right_lock"  // const val=编译期常量；WASD 自动锁定右键开关的 extra 键
+        /** Intent extra: 自动锁定右键前是否先把鼠标移到屏幕中央 (Boolean) */
+        const val EXTRA_WASD_AUTO_CENTER_MOUSE = "wasd_auto_center_mouse"  // const val=编译期常量；WASD 自动锁定前鼠标居中开关的 extra 键
 
         /** 广播: 客户端连接状态变化 */
         const val ACTION_CLIENT_STATUS = "CLIENT_STATUS"  // const val=编译期常量；客户端连接状态广播 action
@@ -787,7 +791,9 @@ class ControllerOverlayService : Service() {  // class=类声明；继承 Servic
             lookAcceleration = intent.getFloatExtra(EXTRA_LOOK_ACCELERATION, old.lookAcceleration),  // 命名参数；读取加速指数
             longPressThresholdMs = intent.getIntExtra(EXTRA_LONG_PRESS_THRESHOLD_MS, old.longPressThresholdMs),  // 命名参数；读取长按阈值
             longPressFallbackToShort = intent.getBooleanExtra(EXTRA_LONG_PRESS_FALLBACK, old.longPressFallbackToShort),  // 命名参数；读取长按回退开关
-            rightButtonUseFunctionKeys = intent.getBooleanExtra(EXTRA_RIGHT_BUTTON_FUNCTION_KEYS, old.rightButtonUseFunctionKeys)  // 命名参数；读取右键 F11/F12 模式开关
+            rightButtonUseFunctionKeys = intent.getBooleanExtra(EXTRA_RIGHT_BUTTON_FUNCTION_KEYS, old.rightButtonUseFunctionKeys),  // 命名参数；读取右键 F11/F12 模式开关
+            wasdAutoRightLock = intent.getBooleanExtra(EXTRA_WASD_AUTO_RIGHT_LOCK, old.wasdAutoRightLock),  // 命名参数；读取 WASD 自动锁定右键开关
+            wasdAutoCenterMouse = intent.getBooleanExtra(EXTRA_WASD_AUTO_CENTER_MOUSE, old.wasdAutoCenterMouse)  // 命名参数；读取 WASD 自动锁定前的鼠标居中开关
         )  // 结束 GlobalSettings 构造
         // 更新运行时 profile（loadProfile 会重置操作层状态，设置更新时合理）
         si.loadProfile(si.profile.copy(globalSettings = newSettings))  // copy()=复制对象并修改指定属性；应用新设置

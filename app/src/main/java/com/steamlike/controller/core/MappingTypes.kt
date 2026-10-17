@@ -437,6 +437,8 @@ data class OperationLayer( // 操作层定义（语法：data class 数据类）
  * @param lookAcceleration 视角加速曲线指数（0.5~3.0），1.0=线性，>1轻推更慢重推更快，<1相反。默认 1.5
  * @param longPressThresholdMs 长按判定阈值（毫秒），按住时长达到该值视为长按。默认 500
  * @param longPressFallbackToShort 长按未配置动作时，是否在松开时回退执行短按动作。默认 false
+ * @param wasdAutoRightLock 左摇杆移动（WASD）时是否自动锁定鼠标右键。默认 true
+ * @param wasdAutoCenterMouse 自动锁定右键前是否先把鼠标移到屏幕正中央。默认 true
  */
 data class GlobalSettings( // 全局设置（语法：data class 数据类）
     val deadzone: Float = 0.15f, // 摇杆死区（语法：默认参数 = 0.15f）
@@ -446,7 +448,9 @@ data class GlobalSettings( // 全局设置（语法：data class 数据类）
     val lookAcceleration: Float = 1.5f, // 视角加速曲线指数
     val longPressThresholdMs: Int = 500, // 长按判定阈值（毫秒）
     val longPressFallbackToShort: Boolean = false, // 长按未配置动作时是否回退执行短按动作
-    val rightButtonUseFunctionKeys: Boolean = true // 右键锁定/解锁是否发送 F11/F12（false=发送真实鼠标右键按下/松开）
+    val rightButtonUseFunctionKeys: Boolean = true, // 右键锁定/解锁是否发送 F11/F12（false=发送真实鼠标右键按下/松开）
+    val wasdAutoRightLock: Boolean = true, // 左摇杆移动时是否自动锁定鼠标右键（默认开启）
+    val wasdAutoCenterMouse: Boolean = true // 自动锁定右键前是否先把鼠标移到屏幕正中央（默认开启）
 ) // 结束 GlobalSettings 数据类
 
 /**

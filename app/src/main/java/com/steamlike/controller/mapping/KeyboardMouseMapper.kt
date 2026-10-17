@@ -804,7 +804,7 @@ class KeyboardMouseMapper( // 语法：class 类声明，定义键盘/鼠标映�
         if (toggledMouseButtons.contains(MouseButton.LEFT)) return // 左键长按锁存时不做自动锁定右键（避免与左键锁存冲突）
         if (toggledMouseButtons.contains(MouseButton.RIGHT)) return // 右键已锁定：直接返回不重复锁定（语法：if 单行返回）
         if (pressedMouseButtons.containsValue(MouseButton.RIGHT)) return // 右键正被临时按住（MouseClick 动作）：不重复按下，避免其松开时打断锁定态（语法：containsValue 映射值包含判断）
-        injector.sendMouseCenter() // 锁定前先把鼠标光标移到屏幕中央，避免锁定瞬间视角从偏移位置开始漂移
+        if (steamInput.profile.globalSettings.wasdAutoCenterMouse) injector.sendMouseCenter() // 开关开启时把鼠标光标移到屏幕中央，避免锁定瞬间视角从偏移位置开始漂移（语法：if 单行语句）
         setMouseLockState(MouseButton.RIGHT, true) // 锁存右键（内部发送 F11 锁定，不发真实鼠标右键按下）
         Log.d(TAG, "Auto MouseDown: RIGHT (left stick move)") // 打印自动锁定日志
     } // 结束 ensureRightButtonLockedOnMove 函数
@@ -852,9 +852,9 @@ class KeyboardMouseMapper( // 语法：class 类声明，定义键盘/鼠标映�
                 if (y > threshold) newKeys.add(KeyEvent.KEYCODE_S) // 摇杆下偏：加入 S 键（语法：if 单行语句）
                 else if (y < -threshold) newKeys.add(KeyEvent.KEYCODE_W) // 摇杆上偏：加入 W 键（语法：else if）
 
-                // WASD 触发（正在移动）→ 确保鼠标右键已锁定；摇杆回中（无方向键）不做处理，
+                // WASD 触发（正在移动）→ 开启「WASD 自动锁定」时确保鼠标右键已锁定；摇杆回中（无方向键）不做处理，
                 // 锁定态保持到用户按「鼠标长按」映射键解锁。
-                if (newKeys.isNotEmpty()) ensureRightButtonLockedOnMove() // 有方向键触发时检查并自动锁定右键（语法：isNotEmpty() 集合非空判断）
+                if (newKeys.isNotEmpty() && steamInput.profile.globalSettings.wasdAutoRightLock) ensureRightButtonLockedOnMove() // 开关开启且有方向键触发时检查并自动锁定右键（语法：&& 逻辑与 + isNotEmpty() 集合非空判断）
 
                 // 释放不再按下的方向键
                 for (key in leftStickPressedKeys) { // 遍历旧集合中的方向键（语法：for(x in y) 遍历）
