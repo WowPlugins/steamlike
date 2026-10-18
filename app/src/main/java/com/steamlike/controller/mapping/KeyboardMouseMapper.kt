@@ -445,7 +445,7 @@ class KeyboardMouseMapper( // 语法：class 类声明，定义键盘/鼠标映�
     /**
      * 按下注入一个「可保持」动作（记录状态，供 [releaseButtonInjection] 释放）
      *
-     * @param subCommands 子命令键码列表（短按动作沿用原映射的子命令；长按动作为空）
+     * @param subCommands 子命令键码列表（短按动作沿用 [KeyMapping.subCommands]；长按动作沿用 [KeyMapping.longPressSubCommands]）
      */
     private fun injectActionDown(button: ControllerButton, action: MappedAction, subCommands: List<Int> = emptyList()) { // 语法：private fun 私有函数，注入动作按下
         when (action) { // 按动作类型分发（语法：when 分支）
@@ -521,10 +521,10 @@ class KeyboardMouseMapper( // 语法：class 类声明，定义键盘/鼠标映�
         val pending = deferredPresses[button] ?: return // 取出延迟按下上下文，已松开则返回（语法：?: 空值合并）
         val longAction = pending.mapping.longPressAction ?: return // 无长按动作（回退模式）则不注入
         if (isHoldableAction(longAction)) { // 保持型动作
-            injectActionDown(button, longAction) // 注入按下（记录状态）
+            injectActionDown(button, longAction, pending.mapping.longPressSubCommands) // 注入按下（带长按子命令）并记录状态
             longHoldActive.add(button) // 记入保持型长按集合
         } else { // 瞬时型动作
-            injectInstantAction(longAction) // 触发一次
+            injectInstantAction(longAction) // 触发一次（瞬时动作用不到子命令）
             longInstantFired.add(button) // 记入瞬时长按集合
         } // 结束类型判断
         Log.d(TAG, "LongPress fired: $button → $longAction") // 打印长按触发日志（语法：字符串模板 "$var"）
@@ -547,7 +547,7 @@ class KeyboardMouseMapper( // 语法：class 类声明，定义键盘/鼠标映�
             if (longHoldActive.remove(button)) { // 保持型长按已按下 → 释放
                 releaseButtonInjection(button) // 释放长按注入的按键
             } else if (!longInstantFired.remove(button)) { // 瞬时型尚未触发（阈值回调与松开竞态）→ 补发一次
-                tapAction(button, longAction) // 补发执行长按动作（保持型点按/触发型触发）
+                tapAction(button, longAction, pending.mapping.longPressSubCommands) // 补发执行长按动作（带长按子命令）
             } // 结束长按类型判断
         } else if (steamInput.profile.globalSettings.longPressFallbackToShort) { // 长按未配置动作：回退开关开启
             tapAction(button, pending.mapping.action, pending.mapping.subCommands) // 松开时执行短按动作（保持型点按/触发型触发）

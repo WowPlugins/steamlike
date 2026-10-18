@@ -770,6 +770,9 @@ class LayerEditActivity : AppCompatActivity() { // 定义操作层编辑 Activit
         val layoutSubCommands = dialogView.findViewById<LinearLayout>(R.id.layout_sub_commands) // 获取子命令区域父容器
         val layoutSubCommandList = dialogView.findViewById<LinearLayout>(R.id.layout_sub_command_list) // 获取子命令列表容器
         val btnAddSubCommand = dialogView.findViewById<Button>(R.id.btn_add_sub_command) // 获取「添加子命令」按钮
+        val layoutLongPressSubCommands = dialogView.findViewById<LinearLayout>(R.id.layout_long_press_sub_commands) // 获取长按子命令区域父容器
+        val layoutLongPressSubCommandList = dialogView.findViewById<LinearLayout>(R.id.layout_long_press_sub_command_list) // 获取长按子命令列表容器
+        val btnAddLongPressSubCommand = dialogView.findViewById<Button>(R.id.btn_add_long_press_sub_command) // 获取「添加长按子命令」按钮
 
         // 显示正在编辑的按键名称
         tvButtonName.text = "编辑按键: ${buttonDisplayName(button)}" // 设置标题显示正在编辑的按键名（语法：字符串模板）
@@ -889,6 +892,24 @@ class LayerEditActivity : AppCompatActivity() { // 定义操作层编辑 Activit
         } // 结束已有子命令遍历
         updateAddSubCommandButton(btnAddSubCommand, subCommandSpinners.size) // 更新「添加子命令」按钮的文字与可用状态
 
+        // ===== 长按子命令管理 =====
+        // 长按子命令作用于长按动作（见 KeyMapping.longPressSubCommands），与短按子命令互不影响
+        val longPressSubCommandSpinners = mutableListOf<Spinner>() // 创建长按子命令下拉框列表，用于动态跟踪所有长按子命令行
+
+        // 长按子命令区可见性判定：与短按一致，仅键盘按键(1)/鼠标点击(2)/鼠标长按(3)/数字小键盘(11) 显示
+        fun longPressSubVisible(actionType: Int): Boolean = // 局部函数：按长按动作类型判断长按子命令区是否显示
+            actionType == 1 || actionType == 2 || actionType == 3 || actionType == 11 // 上述类型显示，其余隐藏
+
+        // 预填充已有长按子命令
+        existingMapping?.longPressSubCommands?.forEach { keyCode -> // 遍历已有映射的长按子命令列表（语法：?.=安全调用，forEach=遍历 lambda）
+            val spinner = addSubCommandSpinner(layoutLongPressSubCommandList, btnAddLongPressSubCommand, longPressSubCommandSpinners, "添加长按子命令") // 动态添加一个长按子命令下拉框
+            val pos = keyboardKeyOptions.indexOfFirst { it.second == keyCode } // 查找长按子命令 KeyCode 对应的选项下标
+            if (pos >= 0) spinner.setSelection(pos + 1) // 找到则选中（加 1 跳过「无」选项）
+        } // 结束已有长按子命令遍历
+        updateAddSubCommandButton(btnAddLongPressSubCommand, longPressSubCommandSpinners.size, "添加长按子命令") // 更新「添加长按子命令」按钮状态
+        // 长按子命令区初始可见性（长按类型 Spinner 的初始选中项在监听器注册前设置，故此处显式设置一次）
+        layoutLongPressSubCommands.visibility = if (longPressSubVisible(initialLongPressType)) View.VISIBLE else View.GONE // 按初始长按类型设置可见性
+
         // 子命令区域可见性（未设置/切换操作层/滚轮/悬浮窗/键盘/捕获时隐藏；切层+按键类型支持子命令故显示）
         layoutSubCommands.visibility = // 设置子命令区域可见性（跨行赋值）
             if (initialActionType == 0 || initialActionType == 4 || // 若初始类型为未设置(0)或切换层(4)（跨行条件）
@@ -932,6 +953,8 @@ class LayerEditActivity : AppCompatActivity() { // 定义操作层编辑 Activit
             override fun onItemSelected(parent: AdapterView<*>?, view: View?, position: Int, id: Long) { // 覆写：长按类型切换时回调
                 val actionType = longPressTypeIndices[position] // 位置还原为动作类型索引（语法：列表下标访问）
                 setupActionValueSpinner(spinnerLongPressValue, tvLongPressLabel, actionType) // 按新类型重建长按动作值选项
+                // 长按子命令区可见性：仅键盘/鼠标点击/鼠标长按/数字小键盘类型显示（其余类型子命令无效）
+                layoutLongPressSubCommands.visibility = if (longPressSubVisible(actionType)) View.VISIBLE else View.GONE // 按新长按类型设置可见性
                 // 与已有长按动作类型一致时恢复选中值（打开对话框/attach 触发时显示当前长按动作）
                 if (actionType == actionTypeIndexOf(existingMapping?.longPressAction)) { // 类型匹配判断（语法：== 相等比较）
                     restoreLongPressValueSelection() // 恢复长按动作值选中项
@@ -948,6 +971,14 @@ class LayerEditActivity : AppCompatActivity() { // 定义操作层编辑 Activit
                 updateAddSubCommandButton(btnAddSubCommand, subCommandSpinners.size) // 更新添加按钮状态
             } // 结束数量上限判断
         } // 结束「添加子命令」按钮监听 lambda
+
+        // 添加长按子命令按钮点击事件
+        btnAddLongPressSubCommand.setOnClickListener { // 设置「添加长按子命令」按钮点击监听
+            if (longPressSubCommandSpinners.size < KeyMapping.MAX_SUB_COMMANDS) { // 未达到子命令数量上限时才允许添加
+                addSubCommandSpinner(layoutLongPressSubCommandList, btnAddLongPressSubCommand, longPressSubCommandSpinners, "添加长按子命令") // 动态添加一个长按子命令下拉框
+                updateAddSubCommandButton(btnAddLongPressSubCommand, longPressSubCommandSpinners.size, "添加长按子命令") // 更新添加按钮状态
+            } // 结束数量上限判断
+        } // 结束「添加长按子命令」按钮监听 lambda
 
         // ===== 显示对话框 =====
         AlertDialog.Builder(this) // 构建对话框（语法：AlertDialog.Builder=对话框构建器，链式调用）
@@ -966,14 +997,15 @@ class LayerEditActivity : AppCompatActivity() { // 定义操作层编辑 Activit
                         spinnerExtraKey.selectedItemPosition // 附加按键下拉框当前选中位置（仅切层+按键类型生效）
                     ) // 结束 buildAction 调用
                     // 收集子命令（跳过"无"选项）
-                    val subCommands = collectSubCommands(subCommandSpinners) // 收集所有已选子命令 KeyCode
+                    val subCommands = collectSubCommands(subCommandSpinners) // 收集所有已选短按子命令 KeyCode
+                    val longPressSubCommands = collectSubCommands(longPressSubCommandSpinners) // 收集所有已选长按子命令 KeyCode
                     // 长按动作：位置还原为动作类型索引，0=未设置（不启用长按判定）
                     val longPressType = longPressTypeIndices[spinnerLongPressType.selectedItemPosition] // 长按动作类型索引
                     val longPressAction = if (longPressType == 0) null // 未设置 → 不启用长按判定（语法：if 表达式）
                         else buildAction(longPressType - 1, spinnerLongPressValue.selectedItemPosition) // 否则构建长按动作
 
-                    // 创建新的按键映射（含可选长按动作）
-                    val newMapping = KeyMapping(action, subCommands, longPressAction) // 构建新的按键映射对象（语法：三参构造）
+                    // 创建新的按键映射（含可选长按动作与其子命令）
+                    val newMapping = KeyMapping(action, subCommands, longPressAction, longPressSubCommands) // 构建新的按键映射对象（语法：四参构造）
 
                     // 写入当前操作层的 buttonMappings（MutableMap，可直接修改）
                     layer.buttonMappings[button] = newMapping // 将新映射写入当前层的映射表
@@ -1770,12 +1802,14 @@ class LayerEditActivity : AppCompatActivity() { // 定义操作层编辑 Activit
      * @param container 子命令行的父容器
      * @param addButton 添加子命令按钮（用于更新其状态）
      * @param spinners 子命令 Spinner 列表（用于跟踪所有行）
+     * @param label 添加按钮文字中使用的名称（长按子命令区传不同名称，默认「添加子命令」）
      * @return 新创建的 Spinner
      */
     private fun addSubCommandSpinner( // 私有函数：添加一个子命令选择行（跨行参数列表）
         container: LinearLayout, // 参数：子命令行父容器
         addButton: Button, // 参数：「添加子命令」按钮（用于更新其状态）
-        spinners: MutableList<Spinner> // 参数：子命令下拉框列表（用于跟踪所有行）
+        spinners: MutableList<Spinner>, // 参数：子命令下拉框列表（用于跟踪所有行）
+        label: String = "添加子命令" // 参数：添加按钮文字名称（默认值保持短按区原有文字）
     ): Spinner { // 函数返回新创建的 Spinner
         // 创建水平行容器
         val row = LinearLayout(this).apply { // 创建水平布局行，apply 块内配置（语法：apply{}=作用域函数）
@@ -1806,7 +1840,7 @@ class LayerEditActivity : AppCompatActivity() { // 定义操作层编辑 Activit
             setOnClickListener { // 设置点击监听（语法：setOnClickListener{}=点击监听 lambda）
                 spinners.remove(spinner) // 从跟踪列表移除该子命令
                 container.removeView(row) // 从容器移除整行
-                updateAddSubCommandButton(addButton, spinners.size) // 更新「添加子命令」按钮状态
+                updateAddSubCommandButton(addButton, spinners.size, label) // 更新「添加子命令」按钮状态
             } // 结束删除按钮点击监听
         } // 结束 apply 块
         row.addView(removeButton) // 把删除按钮加入行容器
@@ -1823,8 +1857,9 @@ class LayerEditActivity : AppCompatActivity() { // 定义操作层编辑 Activit
      *
      * @param button 添加子命令按钮
      * @param count 当前子命令数量
+     * @param label 按钮文字中使用的名称（默认「添加子命令」，长按子命令区传「添加长按子命令」）
      */
-    private fun updateAddSubCommandButton(button: Button, count: Int) { // 私有函数：更新「添加子命令」按钮状态和文字
+    private fun updateAddSubCommandButton(button: Button, count: Int, label: String = "添加子命令") { // 私有函数：更新「添加子命令」按钮状态和文字
         if (count >= KeyMapping.MAX_SUB_COMMANDS) { // 若子命令数已达上限
             // 已满，禁用按钮
             button.isEnabled = false // 禁用添加按钮
@@ -1832,7 +1867,7 @@ class LayerEditActivity : AppCompatActivity() { // 定义操作层编辑 Activit
         } else { // 否则（未满）
             // 未满，启用按钮并显示计数
             button.isEnabled = true // 启用添加按钮
-            button.text = "+ 添加子命令 ($count/${KeyMapping.MAX_SUB_COMMANDS})" // 显示「+ 添加子命令 (当前/上限)」（语法：字符串模板）
+            button.text = "+ $label ($count/${KeyMapping.MAX_SUB_COMMANDS})" // 显示「+ 名称 (当前/上限)」（语法：字符串模板）
         } // 结束数量判断 if-else 块
     } // 结束 updateAddSubCommandButton 函数
 

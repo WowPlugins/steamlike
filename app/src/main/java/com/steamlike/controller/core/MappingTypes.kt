@@ -226,17 +226,22 @@ sealed class MappedAction { // 映射动作密封类（语法：sealed class 密
  *   也会进入判定，长按松开时回退执行短按动作
  *
  * @param action 主动作（短按动作）
- * @param subCommands 子命令列表（最多 3 个 Android [KeyEvent.KEYCODE_*] 常量）
+ * @param subCommands 子命令列表（最多 3 个 Android [KeyEvent.KEYCODE_*] 常量），作用于短按动作
  * @param longPressAction 长按动作（null=不启用长按判定）
+ * @param longPressSubCommands 长按动作的子命令列表（最多 3 个），仅长按动作为键盘/数字小键盘时生效
  */
 data class KeyMapping( // 按键映射定义（语法：data class 数据类）
     val action: MappedAction, // 主动作（短按动作）
-    val subCommands: List<Int> = emptyList(), // 子命令列表（语法：默认参数 = emptyList()）
-    val longPressAction: MappedAction? = null // 长按动作（语法：可空类型 + 默认参数 = null）
+    val subCommands: List<Int> = emptyList(), // 短按子命令列表（语法：默认参数 = emptyList()）
+    val longPressAction: MappedAction? = null, // 长按动作（语法：可空类型 + 默认参数 = null）
+    val longPressSubCommands: List<Int> = emptyList() // 长按子命令列表（作用于长按动作）
 ) { // 数据类主体开始
     init { // 初始化块校验（语法：init 初始化块）
         require(subCommands.size <= MAX_SUB_COMMANDS) { // 校验子命令数量不超上限（语法：require 前置条件检查）
             "子命令最多 $MAX_SUB_COMMANDS 个，当前 ${subCommands.size} 个" // 错误消息（语法：字符串模板 $var 与 ${expr}）
+        } // 结束 require
+        require(longPressSubCommands.size <= MAX_SUB_COMMANDS) { // 校验长按子命令数量不超上限
+            "长按子命令最多 $MAX_SUB_COMMANDS 个，当前 ${longPressSubCommands.size} 个" // 错误消息
         } // 结束 require
     } // 结束 init 块
 
@@ -246,16 +251,23 @@ data class KeyMapping( // 按键映射定义（语法：data class 数据类）
      * 示例: "Alt+3"、"Ctrl+Shift+3"、"鼠标左键"、"切换到 Layer1"
      */
     fun describe(): String { // 转为可读描述（语法：fun 成员函数声明）
-        val parts = mutableListOf<String>() // 描述片段列表（语法：mutableListOf + <String> 泛型）
-        parts.add(actionLabel(action)) // 加入短按动作描述
-        subCommands.forEach { parts.add(keyCodeToName(it)) } // 追加各子命令名（语法：forEach lambda + it 默认参数名）
-        var text = parts.joinToString("+") // 用 + 拼接为最终描述
+        var text = composeLabel(action, subCommands) // 拼出短按动作描述（如 "Alt+3"）
         val lp = longPressAction // 取长按动作（局部变量便于智能转换）
         if (lp != null) { // 若配置了长按动作则追加显示
-            text += " / 长按:${actionLabel(lp)}" // 追加长按动作描述（语法：+= 字符串拼接）
+            text += " / 长按:${composeLabel(lp, longPressSubCommands)}" // 追加长按动作描述（含长按子命令，语法：+= 字符串拼接）
         } // 结束长按描述判断
         return text // 返回完整描述
     } // 结束 describe 函数
+
+    /**
+     * 把一个动作与它的子命令拼成可读片段（如 "Alt+3"、"Ctrl+Shift+3"）
+     */
+    private fun composeLabel(action: MappedAction, subCommands: List<Int>): String { // 私有函数：动作 + 子命令拼接
+        val parts = mutableListOf<String>() // 描述片段列表（语法：mutableListOf + <String> 泛型）
+        parts.add(actionLabel(action)) // 首个片段为动作名
+        subCommands.forEach { parts.add(keyCodeToName(it)) } // 追加各子命令名（语法：forEach lambda + it 默认参数名）
+        return parts.joinToString("+") // 用 + 拼接为最终描述（语法：joinToString 集合拼接）
+    } // 结束 composeLabel 函数
 
     /**
      * 将单个动作转换为可读名称片段（供 [describe] 复用）

@@ -11,7 +11,7 @@ android {  // 语法：android{} 块，Android 应用模块的配置入口
         minSdk = 24  // 语法：minSdk 最低支持 Android 版本（Android 7.0）
         targetSdk = 37  // 语法：targetSdk 目标 Android 版本（37，决定系统兼容行为）
         versionCode = 1  // 内部版本号（整数，用于版本比较/升级判断）
-        versionName = "0.1.31"  // 对外显示的版本名称
+        versionName = "0.1.32"  // 对外显示的版本名称
     }  // 结束 defaultConfig 块
 
     buildTypes {  // 语法：buildTypes{} 块，配置各构建类型（debug/release 等）
@@ -86,6 +86,17 @@ tasks.register("compileWindowsExe") {  // 语法：tasks.register("任务名"){.
         .map { File(it, "cargo.exe") }  // 语法：map{...} 将每个目录路径转换为 File(目录, "cargo.exe")
         .firstOrNull { it.exists() }  // 取第一个真实存在的 cargo.exe，全部不存在则返回 null
     val cargoPath = cargoCandidates.map { File(it) }.firstOrNull { it.exists() } ?: pathCargo  // 先在候选路径中找存在的 cargo，找不到再回退到 PATH 中的；整体仍可能为 null
+
+    // ===== 按需编译声明（增量构建）=====
+    // 声明输入（Rust 源码 + 清单 + 脚本源）与输出（exe + 脚本副本）后，
+    // Gradle 会在输入与输出都未变化时把任务标记为 UP-TO-DATE 并直接跳过，
+    // 从而避免每次编译 APK 都重新执行 cargo 编译。
+    inputs.dir(rustProjectDir.resolve("src"))  // 输入：Rust 源码目录（.rs 文件内容变化才需重编）
+    inputs.file(manifestFile)  // 输入：Cargo.toml（依赖/特性变化会影响产物）
+    inputs.file(rustProjectDir.resolve("Cargo.lock"))  // 输入：Cargo.lock（依赖版本锁定变化会影响产物）
+    inputs.file(rootProject.file("windows/control.bat"))  // 输入：control.bat 脚本源
+    inputs.file(rootProject.file("windows/control.ps1"))  // 输入：control.ps1 脚本源
+    outputs.files(outputExe, assetsExe, assetsControl, assetsPs1Control)  // 输出：exe 归档与 assets 副本 + 两个脚本副本
 
     doLast {  // 语法：doLast{} 块，任务执行阶段的末尾执行其中代码（真正干活的动作）
         // 1. 编译 exe（cargo 可用时）

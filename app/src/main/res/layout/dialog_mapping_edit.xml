@@ -129,6 +129,52 @@
             android:paddingHorizontal="10dp"
             android:paddingBottom="14dp" />
 
+        <!-- ===== 长按子命令区域 ===== -->
+        <!-- 作用于「长按动作」，与短按子命令区域同构；仅长按动作为键盘按键/数字小键盘等可组合类型时显示 -->
+        <!-- 语法：LinearLayout 线性布局；长按子命令区域容器
+             id=@+id/layout_long_press_sub_commands：新建长按子命令容器 id（代码中控制显隐）；layout_width=match_parent：与父容器同宽；
+             layout_height=wrap_content：高度自适应；orientation=vertical：垂直排列 -->
+        <LinearLayout
+            android:id="@+id/layout_long_press_sub_commands"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical">
+
+            <!-- 语法：TextView 文本控件；长按子命令说明标题
+                 text=长按子命令（最多3个，组合键）:：标题文字；textStyle=bold：加粗；textColor=#FFDDDDDD：浅灰；
+                 paddingTop=8dp：顶部内边距；paddingBottom=8dp：底部内边距 -->
+            <TextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="长按子命令（最多3个，组合键）:"
+                android:textStyle="bold"
+                android:textColor="#FFDDDDDD"
+                android:paddingTop="8dp"
+                android:paddingBottom="8dp" />
+
+            <!-- 语法：LinearLayout 线性布局；长按子命令动态容器
+                 id=@+id/layout_long_press_sub_command_list：新建长按子命令列表容器 id（代码中动态添加 Spinner）；
+                 layout_width=match_parent：与父容器同宽；layout_height=wrap_content：高度自适应；
+                 orientation=vertical：垂直排列（自闭合标签） -->
+            <LinearLayout
+                android:id="@+id/layout_long_press_sub_command_list"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical" />
+
+            <!-- 语法：Button 按钮控件；"添加长按子命令" 按钮
+                 id=@+id/btn_add_long_press_sub_command：新建添加长按子命令按钮 id；layout_width=match_parent：与父容器同宽；
+                 layout_height=wrap_content：高度自适应；text=+ 添加长按子命令：按钮文字；textColor=#FFFFFFFF：白色；
+                 background=@drawable/bg_button：普通按钮圆角样式 -->
+            <Button
+                android:id="@+id/btn_add_long_press_sub_command"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="+ 添加长按子命令"
+                android:textColor="#FFFFFFFF"
+                android:background="@drawable/bg_button" />
+        </LinearLayout>  <!-- 结束长按子命令区域 -->
+
         <!-- ===== 「切层+按键」类型的附加按键区域 ===== -->
         <!-- 仅当动作类型选择「切换层+按键」时显示；用于选择切层的同时注入的键盘按键 -->
         <!-- 语法：LinearLayout 线性布局；附加按键区域容器
