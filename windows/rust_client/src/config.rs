@@ -39,6 +39,9 @@ pub struct ClientConfig {
     pub long_press_ms: u32,
     /// 右键锁定方式：true = F11/F12，false = 真实鼠标右键长按（默认 F11/F12）
     pub right_button_fkeys: bool,
+    /// 拦截路径中 WASD 触发时的居中落点：true = 屏幕中央正下方、屏幕下边缘之外 1/10 屏高处，
+    /// false = 屏幕正中央（默认屏幕外下方）
+    pub cursor_park_offscreen: bool,
 }
 
 impl Default for ClientConfig {
@@ -55,6 +58,7 @@ impl Default for ClientConfig {
             swap_vk: 0x31,
             long_press_ms: 500,
             right_button_fkeys: true,
+            cursor_park_offscreen: true,
         }
     }
 }

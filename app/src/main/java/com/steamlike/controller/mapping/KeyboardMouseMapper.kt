@@ -771,20 +771,21 @@ class KeyboardMouseMapper( // 语法：class 类声明，定义键盘/鼠标映�
      *
      * 先记录左右键当前的长按锁存状态，临时释放已锁定的键，然后立即依次发送
      * 左键点击、右键点击，最后把左右键恢复到记录时的长按锁存状态。整个序列同步执行，无延时。
-     * 在左键点击、右键点击、恢复锁存三处之前，都会先把鼠标光标移到屏幕正中央。
+     * 在左键点击、右键点击、恢复锁存三处之前，都会先把鼠标光标移到屏幕正中央
+     * （固定用正中央，不受「居中落点」开关影响）。
      */
     private fun handleMouseClickSequence() { // 语法：private fun 私有函数，执行鼠标交互键序列
         val leftLocked = toggledMouseButtons.contains(MouseButton.LEFT) // 记录左键锁存状态
         val rightLocked = toggledMouseButtons.contains(MouseButton.RIGHT) // 记录右键锁存状态
         setMouseLockState(MouseButton.LEFT, false) // 临时释放左键锁存（未锁定则无操作）
         setMouseLockState(MouseButton.RIGHT, false) // 临时释放右键锁存（未锁定则无操作）
-        injector.sendMouseCenter() // 左键点击前：把鼠标光标移到屏幕正中央
+        injector.sendMouseCenterExact() // 左键点击前：把鼠标光标移到屏幕正中央（交互键固定用正中央，不受居中落点开关影响）
         injector.sendMouseDown(MouseButton.LEFT) // 左键点击：按下
         injector.sendMouseUp(MouseButton.LEFT) // 左键点击：松开
-        injector.sendMouseCenter() // 右键点击前：把鼠标光标移到屏幕正中央
+        injector.sendMouseCenterExact() // 右键点击前：把鼠标光标移到屏幕正中央（交互键固定用正中央，不受居中落点开关影响）
         injector.sendMouseDown(MouseButton.RIGHT) // 右键点击：按下
         injector.sendMouseUp(MouseButton.RIGHT) // 右键点击：松开
-        injector.sendMouseCenter() // 恢复锁存前：把鼠标光标移到屏幕正中央
+        injector.sendMouseCenterExact() // 恢复锁存前：把鼠标光标移到屏幕正中央（交互键固定用正中央，不受居中落点开关影响）
         setMouseLockState(MouseButton.LEFT, leftLocked) // 恢复左键原有锁存状态
         setMouseLockState(MouseButton.RIGHT, rightLocked) // 恢复右键原有锁存状态
         Log.d(TAG, "Interact key done: L=$leftLocked R=$rightLocked") // 打印完成日志
@@ -804,7 +805,8 @@ class KeyboardMouseMapper( // 语法：class 类声明，定义键盘/鼠标映�
         if (toggledMouseButtons.contains(MouseButton.LEFT)) return // 左键长按锁存时不做自动锁定右键（避免与左键锁存冲突）
         if (toggledMouseButtons.contains(MouseButton.RIGHT)) return // 右键已锁定：直接返回不重复锁定（语法：if 单行返回）
         if (pressedMouseButtons.containsValue(MouseButton.RIGHT)) return // 右键正被临时按住（MouseClick 动作）：不重复按下，避免其松开时打断锁定态（语法：containsValue 映射值包含判断）
-        if (steamInput.profile.globalSettings.wasdAutoCenterMouse) injector.sendMouseCenter() // 开关开启时把鼠标光标移到屏幕中央，避免锁定瞬间视角从偏移位置开始漂移（语法：if 单行语句）
+        // 开关开启时把鼠标光标归位（落点由「居中落点」开关决定：屏幕外下方 / 屏幕正中央）
+        if (steamInput.profile.globalSettings.wasdAutoCenterMouse) injector.sendMouseCenter(steamInput.profile.globalSettings.cursorParkOffscreen) // 避免锁定瞬间视角从偏移位置开始漂移（语法：if 单行语句）
         setMouseLockState(MouseButton.RIGHT, true) // 锁存右键（内部发送 F11 锁定，不发真实鼠标右键按下）
         Log.d(TAG, "Auto MouseDown: RIGHT (left stick move)") // 打印自动锁定日志
     } // 结束 ensureRightButtonLockedOnMove 函数

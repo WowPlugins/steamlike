@@ -91,12 +91,16 @@ fn apply_runtime(cfg: &config::ClientConfig) {
     RT.swap_vk.store(cfg.swap_vk, Ordering::SeqCst);
     RT.long_press_ms
         .store(cfg.long_press_ms.max(50), Ordering::SeqCst);
+    RT.cursor_park_offscreen
+        .store(cfg.cursor_park_offscreen, Ordering::SeqCst);
     *BRIDGE_TARGET.lock().unwrap() = (cfg.server_ip.clone(), cfg.server_port);
     WANT_CONNECT.store(cfg.auto_connect, Ordering::SeqCst);
 }
 
 /// 按界面开关决定游戏路径并启动（不等待退出）
-fn launch_game(cfg: &config::ClientConfig) {
+///
+/// 供启动流程与界面「立即启动魔兽」按钮共用。
+pub(crate) fn launch_game(cfg: &config::ClientConfig) {
     let Some(path) = config::resolve_wow_path(cfg) else {
         return;
     };

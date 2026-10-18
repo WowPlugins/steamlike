@@ -166,6 +166,26 @@ pub fn center_cursor() {
     }
 }
 
+/// 把鼠标光标停放到「屏幕中央正下方、屏幕下边缘之外 1/10 屏高处」
+///
+/// 视角锁定前把光标停到屏幕外，可避免它停在界面元素上弹出 tooltip。
+pub fn park_cursor_offscreen() {
+    unsafe {
+        let cx = GetSystemMetrics(SM_CXSCREEN) / 2;
+        let cy = GetSystemMetrics(SM_CYSCREEN);
+        let _ = SetCursorPos(cx, cy + cy / 10);
+    }
+}
+
+/// 按「居中落点」开关把光标归位：true = 屏幕外下方，false = 屏幕正中央
+pub fn position_cursor(offscreen: bool) {
+    if offscreen {
+        park_cursor_offscreen();
+    } else {
+        center_cursor();
+    }
+}
+
 /// 一次性释放本程序注入过的全部按键与鼠标按钮
 pub fn release_all() {
     let mut inputs: Vec<INPUT> = Vec::new();

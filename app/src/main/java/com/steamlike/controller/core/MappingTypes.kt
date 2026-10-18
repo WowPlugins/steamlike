@@ -439,6 +439,7 @@ data class OperationLayer( // 操作层定义（语法：data class 数据类）
  * @param longPressFallbackToShort 长按未配置动作时，是否在松开时回退执行短按动作。默认 false
  * @param wasdAutoRightLock 左摇杆移动（WASD）时是否自动锁定鼠标右键。默认 true
  * @param wasdAutoCenterMouse 自动锁定右键前是否先把鼠标移到屏幕正中央。默认 true
+ * @param cursorParkOffscreen 「居中」时的落点：true=屏幕中央正下方、屏幕下边缘之外 1/10 屏高处，false=屏幕正中央。默认 true
  */
 data class GlobalSettings( // 全局设置（语法：data class 数据类）
     val deadzone: Float = 0.15f, // 摇杆死区（语法：默认参数 = 0.15f）
@@ -450,7 +451,8 @@ data class GlobalSettings( // 全局设置（语法：data class 数据类）
     val longPressFallbackToShort: Boolean = false, // 长按未配置动作时是否回退执行短按动作
     val rightButtonUseFunctionKeys: Boolean = true, // 右键锁定/解锁是否发送 F11/F12（false=发送真实鼠标右键按下/松开）
     val wasdAutoRightLock: Boolean = true, // 左摇杆移动时是否自动锁定鼠标右键（默认开启）
-    val wasdAutoCenterMouse: Boolean = true // 自动锁定右键前是否先把鼠标移到屏幕正中央（默认开启）
+    val wasdAutoCenterMouse: Boolean = true, // 自动锁定右键前是否先把鼠标移到屏幕正中央（默认开启）
+    val cursorParkOffscreen: Boolean = true // 居中落点：true=屏幕中央正下方屏外 1/10 屏高，false=屏幕正中央（默认屏幕外下方）
 ) // 结束 GlobalSettings 数据类
 
 /**

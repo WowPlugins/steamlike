@@ -26,6 +26,8 @@ pub struct Runtime {
     pub right_locked: AtomicBool,
     /// 上一次鼠标光标位置（高 32 位 X，低 32 位 Y），用于把绝对移动换算成相对移动
     pub last_mouse: AtomicI64,
+    /// 「居中落点」开关：true = 屏幕中央正下方、屏幕下边缘之外 1/10 屏高处；false = 屏幕正中央
+    pub cursor_park_offscreen: AtomicBool,
 }
 
 pub static RT: Runtime = Runtime {
@@ -37,6 +39,7 @@ pub static RT: Runtime = Runtime {
     left_locked: AtomicBool::new(false),
     right_locked: AtomicBool::new(false),
     last_mouse: AtomicI64::new(0),
+    cursor_park_offscreen: AtomicBool::new(true),
 };
 
 /// APK 服务器地址与端口（界面可改，网络线程每次重连时读取）

@@ -10,7 +10,7 @@
 //! | --- | --- |
 //! | 交互键 | 吞掉，交给动作线程执行「左键点击 + 右键点击」序列，不透传 |
 //! | 长按交换键 | 吞掉，交给动作线程做长按判定；短按则补发一次普通点按 |
-//! | WASD | 吞掉并由本程序注入，保证「光标居中 → F11 → WASD」的顺序 |
+//! | WASD | 吞掉并由本程序注入，保证「光标归位 → F11 → WASD」的顺序 |
 //! | 已锁定侧的鼠标按键按下 | 吞掉，作为解锁触发（连带吞掉对应的抬起） |
 //! | 鼠标移动 | 吞掉原始事件，改注入等量的相对移动 |
 //! | 其它 | 直接透传给魔兽 |
@@ -94,8 +94,9 @@ fn ensure_right_locked_on_move() {
     if RT.right_locked.load(Ordering::Relaxed) {
         return;
     }
-    // 先把光标移到屏幕正中央，避免锁定瞬间视角从偏移位置开始漂移
-    win::center_cursor();
+    // 先把光标归位（落点由「居中落点」开关决定：屏幕外下方 / 屏幕正中央），
+    // 避免锁定瞬间视角从偏移位置开始漂移；顺序仍保持「先归位、后锁定」不变。
+    win::position_cursor(RT.cursor_park_offscreen.load(Ordering::Relaxed));
     if set_lock(BTN_RIGHT, true) {
         queue_cmd(Cmd::Note("[锁存] WASD 触发：右键锁定"));
     }

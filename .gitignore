@@ -84,3 +84,4 @@ $RECYCLE.BIN/
 
 # Rust 构建产物
 windows/rust_client/target/
+windows/rust_client_config.json

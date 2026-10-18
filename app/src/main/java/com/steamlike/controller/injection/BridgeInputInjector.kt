@@ -143,15 +143,26 @@ class BridgeInputInjector(  // 语法：class 声明类；桥接输入注入器�
     }  // 结束 sendMouseMove 函数
 
     /**
-     * 将鼠标光标移动到屏幕中央
+     * 将鼠标光标归位到开关决定的落点（屏幕外下方 / 屏幕正中央）
      *
-     * 归中前先清空位移小数余量，避免残留的亚像素位移在归中后被补发。
+     * 归位前先清空位移小数余量，避免残留的亚像素位移在归位后被补发。
+     *
+     * @param parkOffscreen true=停放到屏幕外下方，false=屏幕正中央
      */
-    override fun sendMouseCenter() {  // 语法：override 覆写；发送鼠标居中央命令
+    override fun sendMouseCenter(parkOffscreen: Boolean) {  // 语法：override 覆写；发送鼠标归位命令
         mouseRemainderX = 0f  // 清零 X 轴位移余量
         mouseRemainderY = 0f  // 清零 Y 轴位移余量
-        server.sendMouseCenter()  // 转发给 TCP 服务器发送居中事件
+        server.sendMouseCenter(parkOffscreen)  // 转发给 TCP 服务器，携带落点开关值
     }  // 结束 sendMouseCenter 函数
+
+    /**
+     * 将鼠标光标强制移动到屏幕正中央（交互键内部序列专用）
+     */
+    override fun sendMouseCenterExact() {  // 语法：override 覆写；发送强制居中央命令
+        mouseRemainderX = 0f  // 清零 X 轴位移余量
+        mouseRemainderY = 0f  // 清零 Y 轴位移余量
+        server.sendMouseCenterExact()  // 转发给 TCP 服务器发送强制居中央事件
+    }  // 结束 sendMouseCenterExact 函数
 
     /**
      * 发送鼠标滚轮事件

@@ -165,6 +165,9 @@ impl eframe::App for App {
             {
                 dirty = true;
             }
+            if ui.button("立即启动魔兽").clicked() {
+                crate::launch_game(&self.cfg);
+            }
 
             /* ===== APK 服务器 ===== */
             ui.separator();
@@ -265,6 +268,15 @@ impl eframe::App for App {
             {
                 dirty = true;
             }
+            if ui
+                .checkbox(
+                    &mut self.cfg.cursor_park_offscreen,
+                    "WASD 归中时停放到屏幕外下方（关闭则为屏幕正中央）",
+                )
+                .changed()
+            {
+                dirty = true;
+            }
             ui.label(
                 egui::RichText::new(
                     "拦截开启后：WASD 自动锁定右键；交互键执行左右键点击且不透传；\
@@ -297,6 +309,8 @@ impl eframe::App for App {
         RT.swap_vk.store(self.cfg.swap_vk, Ordering::SeqCst);
         RT.long_press_ms
             .store(self.cfg.long_press_ms.max(50), Ordering::SeqCst);
+        RT.cursor_park_offscreen
+            .store(self.cfg.cursor_park_offscreen, Ordering::SeqCst);
         *BRIDGE_TARGET.lock().unwrap() = (self.cfg.server_ip.clone(), self.cfg.server_port);
         WANT_CONNECT.store(self.cfg.auto_connect, Ordering::SeqCst);
 

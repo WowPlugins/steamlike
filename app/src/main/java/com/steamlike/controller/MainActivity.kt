@@ -633,7 +633,8 @@ class MainActivity : AppCompatActivity() { // 声明主界面 Activity，继承 
             this, // 上下文参数
             ("左摇杆移动（WASD）时是否自动锁定鼠标右键：\n" // 说明第一段
                 + "• 开启：移动时自动把鼠标居中并锁定右键（视角跟随移动方向）\n" // 说明第二段
-                + "• 关闭：移动不会自动锁定右键，需按键手动锁定"), // 说明第三段
+                + "• 关闭：移动不会自动锁定右键，需按键手动锁定\n" // 说明第三段
+                + "• 居中落点：默认停放到屏幕外下方，可改为屏幕正中央"), // 说明第四段
             0xFF999999.toInt(), 11f // 灰色文字、11sp 字号
         )) // 结束 caption 调用
         wasdLockCard.addView(UiKit.spacer(this, 8)) // 添加 8dp 间距
@@ -650,6 +651,13 @@ class MainActivity : AppCompatActivity() { // 声明主界面 Activity，继承 
             this, "自动锁定前把鼠标移到屏幕正中央", currentSettings.wasdAutoCenterMouse // 标题与当前状态
         ) {} // 空回调，保存时统一读取状态
         wasdLockCard.addView(wasdAutoCenterSwitch) // 把开关加入卡片
+        wasdLockCard.addView(UiKit.spacer(this, 4)) // 添加 4dp 间距
+
+        // 居中落点开关（默认停放到屏幕外下方：屏幕中央正下方、屏幕下边缘之外 1/10 屏高处）
+        val cursorParkSwitch = UiKit.switchRow( // 创建开关行（语法：return 返回 Switch 控件）
+            this, "居中时停放到屏幕外下方（关闭则为屏幕正中央）", currentSettings.cursorParkOffscreen // 标题与当前状态
+        ) {} // 空回调，保存时统一读取状态
+        wasdLockCard.addView(cursorParkSwitch) // 把开关加入卡片
         wasdLockCard.addView(UiKit.spacer(this, 6)) // 添加 6dp 间距
 
         // 保存按钮
@@ -665,6 +673,7 @@ class MainActivity : AppCompatActivity() { // 声明主界面 Activity，继承 
                         action = ControllerOverlayService.ACTION_UPDATE_SETTINGS // 设置动作：更新全局设置
                         putExtra(ControllerOverlayService.EXTRA_WASD_AUTO_RIGHT_LOCK, wasdAutoLockSwitch.isChecked) // 携带 WASD 自动锁定开关状态
                         putExtra(ControllerOverlayService.EXTRA_WASD_AUTO_CENTER_MOUSE, wasdAutoCenterSwitch.isChecked) // 携带自动锁定前鼠标居中开关状态
+                        putExtra(ControllerOverlayService.EXTRA_CURSOR_PARK_OFFSCREEN, cursorParkSwitch.isChecked) // 携带居中落点开关状态（屏幕外下方 / 屏幕正中央）
                     } // 结束 Intent apply 块
                     ContextCompat.startForegroundService(this@MainActivity, intent) // 启动前台服务执行设置更新
                     toastLog("正在保存自动锁定设置...") // 弹出保存提示

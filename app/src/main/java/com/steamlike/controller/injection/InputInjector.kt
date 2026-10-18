@@ -118,12 +118,25 @@ interface InputInjector {  // 语法：interface 声明接口；输入注入器�
     fun sendMouseMove(dx: Float, dy: Float)  // 语法：fun 抽象方法；鼠标相对移动
 
     /**
-     * 将鼠标光标移动到屏幕中央
+     * 将鼠标光标归位到「全局设置 cursorParkOffscreen 开关决定的落点」
      *
-     * 用于左摇杆 WASD 移动自动锁定右键前，先把光标归中，
+     * - 开启（默认）：屏幕中央正下方、屏幕下边缘之外 1/10 屏高处
+     * - 关闭：屏幕正中央
+     *
+     * 用于左摇杆 WASD 移动自动锁定右键前，先把光标归位，
      * 避免锁定瞬间视角从偏移位置开始漂移。
+     *
+     * @param parkOffscreen true=停放到屏幕外下方，false=屏幕正中央
      */
-    fun sendMouseCenter()  // 语法：fun 抽象方法；鼠标移动到屏幕中央
+    fun sendMouseCenter(parkOffscreen: Boolean)  // 语法：fun 抽象方法；鼠标归位（按开关决定落点）
+
+    /**
+     * 将鼠标光标强制移动到屏幕正中央
+     *
+     * 供「交互键」内部序列使用：交互键的三次归中必须始终落在屏幕正中央，
+     * 不受 cursorParkOffscreen 开关影响。
+     */
+    fun sendMouseCenterExact()  // 语法：fun 抽象方法；鼠标强制移到屏幕正中央（交互键专用）
 
     /**
      * 鼠标滚轮滚动

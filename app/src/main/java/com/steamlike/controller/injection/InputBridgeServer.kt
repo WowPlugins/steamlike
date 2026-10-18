@@ -42,7 +42,8 @@ import java.util.concurrent.atomic.AtomicInteger  // 导入原子整数类（自
  *   0x04 = 鼠标滚轮
  *   0x05 = 释放所有按键
  *   0x06 = 心跳Ping
- *   0x07 = 鼠标移动到屏幕中央
+ *   0x07 = 鼠标归位（落点由开关决定：屏幕外下方 / 屏幕正中央）
+ *   0x08 = 鼠标强制移动到屏幕正中央（交互键内部专用）
  *
  * Byte 1-7: 载荷 (按消息类型不同)
  *
@@ -64,6 +65,13 @@ import java.util.concurrent.atomic.AtomicInteger  // 导入原子整数类（自
  * 鼠标滚轮 (0x04):
  *   Byte 1-2: delta (int16 LE)
  *   Byte 3-7: 保留
+ *
+ * 鼠标归位 (0x07):
+ *   Byte 1: 落点 (0=屏幕正中央, 1=屏幕中央正下方、屏幕下边缘之外 1/10 屏高处)
+ *   Byte 2-7: 保留
+ *
+ * 鼠标强制居中央 (0x08):
+ *   无载荷
  * ```
  *
  * @param host TCP监听地址，null或空表示监听所有接口(0.0.0.0)
@@ -86,7 +94,8 @@ class InputBridgeServer(  // 语法：class 声明类；InputBridge TCP 服务�
         const val MSG_MOUSE_WHEEL: Byte = 0x04  // 消息类型：鼠标滚轮
         const val MSG_RELEASE_ALL: Byte = 0x05  // 消息类型：释放所有按键
         const val MSG_PING: Byte = 0x06  // 消息类型：心跳 Ping
-        const val MSG_MOUSE_CENTER: Byte = 0x07  // 消息类型：鼠标移动到屏幕中央
+        const val MSG_MOUSE_CENTER: Byte = 0x07  // 消息类型：鼠标归位（落点由开关决定）
+        const val MSG_MOUSE_CENTER_EXACT: Byte = 0x08  // 消息类型：鼠标强制移到屏幕正中央（交互键内部专用）
 
         const val PACKET_SIZE = 8  // 语法：const val 编译期常量；协议数据包固定长度 8 字节
     }  // 结束 companion object
@@ -204,17 +213,32 @@ class InputBridgeServer(  // 语法：class 声明类；InputBridge TCP 服务�
     }  // 结束 sendMouseWheel 函数
 
     /**
-     * 发送鼠标移动到屏幕中央事件
+     * 发送鼠标归位事件
      *
-     * 无载荷：Windows 客户端收到后调用 SetCursorPos 将光标挪到主屏中心。
-     * 用于左摇杆 WASD 移动自动锁定右键前，先把光标归中，
+     * Byte 1 携带落点：0=屏幕正中央，1=屏幕中央正下方、屏幕下边缘之外 1/10 屏高处。
+     * Windows 客户端收到后按落点调用 SetCursorPos，并把该开关值记下来供自身路径使用。
+     * 用于左摇杆 WASD 移动自动锁定右键前，先把光标归位，
      * 避免锁定瞬间视角从偏移位置开始漂移。
+     *
+     * @param parkOffscreen true=停放到屏幕外下方，false=屏幕正中央
      */
-    fun sendMouseCenter() {  // 语法：fun 函数；发送鼠标移动到屏幕中央事件
+    fun sendMouseCenter(parkOffscreen: Boolean) {  // 语法：fun 函数；发送鼠标归位事件
         val packet = ByteArray(PACKET_SIZE)  // 语法：val + ByteArray；创建 8 字节数据包
-        packet[0] = MSG_MOUSE_CENTER  // 写入消息类型：鼠标居中
+        packet[0] = MSG_MOUSE_CENTER  // 写入消息类型：鼠标归位
+        packet[1] = if (parkOffscreen) 1 else 0  // 写入落点：1=屏幕外下方，0=屏幕正中央
         enqueue(packet)  // 加入发送队列
     }  // 结束 sendMouseCenter 函数
+
+    /**
+     * 发送鼠标强制移到屏幕正中央事件
+     *
+     * 无载荷：交互键内部的三次归中固定用屏幕正中央，不受「居中落点」开关影响。
+     */
+    fun sendMouseCenterExact() {  // 语法：fun 函数；发送强制居中央事件
+        val packet = ByteArray(PACKET_SIZE)  // 语法：val + ByteArray；创建 8 字节数据包
+        packet[0] = MSG_MOUSE_CENTER_EXACT  // 写入消息类型：强制居中央
+        enqueue(packet)  // 加入发送队列
+    }  // 结束 sendMouseCenterExact 函数
 
     /**
      * 发送释放所有按键事件

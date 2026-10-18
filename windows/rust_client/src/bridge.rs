@@ -7,7 +7,8 @@
 //! - 0x04 鼠标滚轮：Byte1-2 delta(int16 LE)
 //! - 0x05 释放所有按键
 //! - 0x06 心跳（忽略）
-//! - 0x07 鼠标移动到屏幕中央
+//! - 0x07 鼠标归位：Byte1 落点(0=屏幕正中央，1=屏幕中央正下方、屏幕下边缘之外 1/10 屏高处)
+//! - 0x08 鼠标强制移动到屏幕正中央（交互键内部专用，无载荷）
 
 use std::io::{ErrorKind, Read};
 use std::net::{SocketAddr, TcpStream, ToSocketAddrs};
@@ -139,7 +140,13 @@ fn process_packet(data: &[u8; PACKET_SIZE]) {
         }
         0x05 => win::release_all(),
         0x06 => {} // 心跳
-        0x07 => win::center_cursor(),
+        0x07 => {
+            // 落点由报文 Byte1 决定，仅作用于本次归位；
+            // exe 自身的拦截路径落点由界面开关 + 配置文件决定，不在此处覆盖
+            win::position_cursor(data[1] != 0);
+        }
+        // 交互键内部的归中固定落在屏幕正中央，不受落点开关影响
+        0x08 => win::center_cursor(),
         _ => {}
     }
 }
