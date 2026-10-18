@@ -11,6 +11,8 @@ use windows::Win32::UI::WindowsAndMessaging::{
     GetCursorPos, GetSystemMetrics, SetCursorPos, SM_CXSCREEN, SM_CYSCREEN,
 };
 
+use crate::runtime::{pack_pos, unpack_pos, CURSOR_UNSET, RT};
+
 /// 注入事件标记：钩子识别自己注入的事件用
 pub const MAGIC: usize = 0x534C_4B52; // "SLKR"
 
@@ -157,12 +159,25 @@ pub fn current_cursor() -> (i32, i32) {
     (pt.x, pt.y)
 }
 
+/// 移动光标并把结果位置同步给钩子的基准坐标
+///
+/// `SetCursorPos` 会触发一次系统级 `WM_MOUSEMOVE`，钩子会把它当成真实移动而
+/// 再注入一份等量相对位移（造成光标多跳一次）。这里把落点写成钩子的基准坐标，
+/// 使该次事件算出的位移为 0，从而让光标精确停在目标位置。
+pub fn move_cursor_to(x: i32, y: i32) {
+    unsafe {
+        let _ = SetCursorPos(x, y);
+    }
+    let (ax, ay) = current_cursor();
+    RT.last_mouse.store(pack_pos(ax, ay), Ordering::Relaxed);
+}
+
 /// 把鼠标光标移动到主屏正中央
 pub fn center_cursor() {
     unsafe {
         let cx = GetSystemMetrics(SM_CXSCREEN) / 2;
         let cy = GetSystemMetrics(SM_CYSCREEN) / 2;
-        let _ = SetCursorPos(cx, cy);
+        move_cursor_to(cx, cy);
     }
 }
 
@@ -173,7 +188,7 @@ pub fn park_cursor_offscreen() {
     unsafe {
         let cx = GetSystemMetrics(SM_CXSCREEN) / 2;
         let cy = GetSystemMetrics(SM_CYSCREEN);
-        let _ = SetCursorPos(cx, cy + cy / 10);
+        move_cursor_to(cx, cy + cy / 10);
     }
 }
 
@@ -184,6 +199,22 @@ pub fn position_cursor(offscreen: bool) {
     } else {
         center_cursor();
     }
+}
+
+/// 记录当前光标位置，供 [restore_cursor] 还原（交互键序列开始处调用）
+pub fn save_cursor() {
+    let (x, y) = current_cursor();
+    RT.saved_cursor.store(pack_pos(x, y), Ordering::Relaxed);
+}
+
+/// 把光标还原到 [save_cursor] 记录的位置（尚未记录过时不做任何事）
+pub fn restore_cursor() {
+    let saved = RT.saved_cursor.load(Ordering::Relaxed);
+    if saved == CURSOR_UNSET {
+        return;
+    }
+    let (x, y) = unpack_pos(saved);
+    move_cursor_to(x, y);
 }
 
 /// 一次性释放本程序注入过的全部按键与鼠标按钮

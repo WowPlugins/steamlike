@@ -43,7 +43,9 @@ import java.util.concurrent.atomic.AtomicInteger  // 导入原子整数类（自
  *   0x05 = 释放所有按键
  *   0x06 = 心跳Ping
  *   0x07 = 鼠标归位（落点由开关决定：屏幕外下方 / 屏幕正中央）
- *   0x08 = 鼠标强制移动到屏幕正中央（交互键内部专用）
+ *   0x08 = 鼠标强制移动到屏幕正中央（交互键 / 解除锁定专用）
+ *   0x09 = 记录当前鼠标光标位置（交互键序列）
+ *   0x0A = 还原到 0x09 记录的鼠标光标位置（交互键序列）
  *
  * Byte 1-7: 载荷 (按消息类型不同)
  *
@@ -72,6 +74,12 @@ import java.util.concurrent.atomic.AtomicInteger  // 导入原子整数类（自
  *
  * 鼠标强制居中央 (0x08):
  *   无载荷
+ *
+ * 鼠标光标位置记录 (0x09):
+ *   无载荷。Windows 客户端把当前光标位置存下来
+ *
+ * 鼠标光标位置还原 (0x0A):
+ *   无载荷。Windows 客户端把光标移回 0x09 记录的位置
  * ```
  *
  * @param host TCP监听地址，null或空表示监听所有接口(0.0.0.0)
@@ -95,7 +103,9 @@ class InputBridgeServer(  // 语法：class 声明类；InputBridge TCP 服务�
         const val MSG_RELEASE_ALL: Byte = 0x05  // 消息类型：释放所有按键
         const val MSG_PING: Byte = 0x06  // 消息类型：心跳 Ping
         const val MSG_MOUSE_CENTER: Byte = 0x07  // 消息类型：鼠标归位（落点由开关决定）
-        const val MSG_MOUSE_CENTER_EXACT: Byte = 0x08  // 消息类型：鼠标强制移到屏幕正中央（交互键内部专用）
+        const val MSG_MOUSE_CENTER_EXACT: Byte = 0x08  // 消息类型：鼠标强制移到屏幕正中央（交互键 / 解除锁定专用）
+        const val MSG_CURSOR_SAVE: Byte = 0x09  // 消息类型：记录当前鼠标光标位置（交互键序列）
+        const val MSG_CURSOR_RESTORE: Byte = 0x0A  // 消息类型：还原到记录的光标位置（交互键序列）
 
         const val PACKET_SIZE = 8  // 语法：const val 编译期常量；协议数据包固定长度 8 字节
     }  // 结束 companion object
@@ -216,7 +226,7 @@ class InputBridgeServer(  // 语法：class 声明类；InputBridge TCP 服务�
      * 发送鼠标归位事件
      *
      * Byte 1 携带落点：0=屏幕正中央，1=屏幕中央正下方、屏幕下边缘之外 1/10 屏高处。
-     * Windows 客户端收到后按落点调用 SetCursorPos，并把该开关值记下来供自身路径使用。
+     * Windows 客户端收到后按落点调用 SetCursorPos。
      * 用于左摇杆 WASD 移动自动锁定右键前，先把光标归位，
      * 避免锁定瞬间视角从偏移位置开始漂移。
      *
@@ -232,13 +242,37 @@ class InputBridgeServer(  // 语法：class 声明类；InputBridge TCP 服务�
     /**
      * 发送鼠标强制移到屏幕正中央事件
      *
-     * 无载荷：交互键内部的三次归中固定用屏幕正中央，不受「居中落点」开关影响。
+     * 无载荷：交互键内部归中与各「解除锁定」路径固定用屏幕正中央，
+     * 不受「居中落点」开关影响。
      */
     fun sendMouseCenterExact() {  // 语法：fun 函数；发送强制居中央事件
         val packet = ByteArray(PACKET_SIZE)  // 语法：val + ByteArray；创建 8 字节数据包
         packet[0] = MSG_MOUSE_CENTER_EXACT  // 写入消息类型：强制居中央
         enqueue(packet)  // 加入发送队列
     }  // 结束 sendMouseCenterExact 函数
+
+    /**
+     * 发送「记录当前鼠标光标位置」事件
+     *
+     * 用于交互键序列开头：APK 侧无法得知 Windows 光标坐标，由 Windows 客户端
+     * 把当前光标位置存下来，序列末尾用 [sendCursorRestore] 还原。
+     */
+    fun sendCursorSave() {  // 语法：fun 函数；发送记录光标位置事件
+        val packet = ByteArray(PACKET_SIZE)  // 语法：val + ByteArray；创建 8 字节数据包
+        packet[0] = MSG_CURSOR_SAVE  // 写入消息类型：记录光标位置
+        enqueue(packet)  // 加入发送队列
+    }  // 结束 sendCursorSave 函数
+
+    /**
+     * 发送「还原鼠标光标位置」事件
+     *
+     * 把光标移回 [sendCursorSave] 记录的位置（未记录过时 Windows 客户端不做任何事）。
+     */
+    fun sendCursorRestore() {  // 语法：fun 函数；发送还原光标位置事件
+        val packet = ByteArray(PACKET_SIZE)  // 语法：val + ByteArray；创建 8 字节数据包
+        packet[0] = MSG_CURSOR_RESTORE  // 写入消息类型：还原光标位置
+        enqueue(packet)  // 加入发送队列
+    }  // 结束 sendCursorRestore 函数
 
     /**
      * 发送释放所有按键事件

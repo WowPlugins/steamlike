@@ -44,9 +44,19 @@ enum Cmd {
     SwapUp,
     /// 长按阈值到达（内部定时产生）
     SwapTimeout,
+    /// 解除鼠标长按锁定后的延时居中（钩子回调里不能阻塞，故交给动作线程延时执行）
+    UnlockCenter,
     /// 仅用于记录日志：钩子回调内不能加锁，日志改由动作线程打印
     Note(&'static str),
 }
+
+/// 「解锁 → 居中」之间插入的等待（毫秒）
+///
+/// 锁定时游戏处于 mouselook：WoW 会自己接管光标（隐藏指针、把光标钉在视口中心），
+/// 收到解锁后需等它的帧循环处理完才真正放开光标。若解锁与居中间隔太近，
+/// 居中会被游戏随后的一次光标接管覆盖（表现为「锁定状态下在游戏里不居中」）。
+/// 因此解锁立即发出，居中延后本时长执行。
+const UNLOCK_CENTER_DELAY_MS: u64 = 150;
 
 static ACTION_TX: OnceLock<Sender<Cmd>> = OnceLock::new();
 static KEY_HOOK: AtomicIsize = AtomicIsize::new(0);
@@ -117,30 +127,36 @@ fn do_swap() {
     }
 }
 
-/// 交互键触发：临时释放锁存 → 光标居中 → 左键点击 → 光标居中 → 右键点击 →
-/// 光标居中 → 恢复原有锁存状态
+/// 交互键触发：
+/// 1. 记录左右键锁存状态与光标位置
+/// 2. 若锁定则先解锁 → 等游戏退出 mouselook 后光标居中 → 左键点击一下 → 右键点击一下
+/// 3. 光标移回原位置 → 恢复原有锁存状态
 fn do_interact() {
     let left_locked = RT.left_locked.load(Ordering::Relaxed);
     let right_locked = RT.right_locked.load(Ordering::Relaxed);
+    let (saved_x, saved_y) = win::current_cursor(); // 1. 记录光标原位置
 
+    // 2. 先解锁（未锁定时 set_lock 自身为空操作）——立即发出，其余动作等游戏处理完 mouselook 退出
     set_lock(BTN_LEFT, false);
     set_lock(BTN_RIGHT, false);
+    std::thread::sleep(Duration::from_millis(UNLOCK_CENTER_DELAY_MS)); // 等游戏退出 mouselook 再居中和点击
 
     win::center_cursor();
+
     win::inject_mouse_button(BTN_LEFT, true);
     win::inject_mouse_button(BTN_LEFT, false);
 
-    win::center_cursor();
     win::inject_mouse_button(BTN_RIGHT, true);
     win::inject_mouse_button(BTN_RIGHT, false);
 
-    win::center_cursor();
+    // 3. 先把光标移回原位置，再恢复原有锁存状态
+    win::move_cursor_to(saved_x, saved_y);
     set_lock(BTN_LEFT, left_locked);
     set_lock(BTN_RIGHT, right_locked);
 
     log(format!(
-        "[交互] 完成（原锁存 左={} 右={}）",
-        left_locked, right_locked
+        "[交互] 完成（原锁存 左={} 右={}，光标还原到 {},{}）",
+        left_locked, right_locked, saved_x, saved_y
     ));
 }
 
@@ -249,8 +265,10 @@ unsafe extern "system" fn mouse_proc(ncode: i32, wparam: WPARAM, lparam: LPARAM)
         // 左键按下：若左键处于长按锁存，则本次点击作为解锁触发（不透传）
         WM_LBUTTONDOWN => {
             if RT.left_locked.load(Ordering::Relaxed) {
+                // 先解锁（立即发出，让游戏尽快退出 mouselook），居中交给动作线程延时执行
                 set_lock(BTN_LEFT, false);
                 SWALLOW_LEFT_UP.store(true, Ordering::Relaxed);
+                queue_cmd(Cmd::UnlockCenter);
                 queue_cmd(Cmd::Note("[锁存] 左键点击：解除左键锁定（本次点击不透传）"));
                 LRESULT(1)
             } else {
@@ -268,8 +286,10 @@ unsafe extern "system" fn mouse_proc(ncode: i32, wparam: WPARAM, lparam: LPARAM)
         // 右键按下：若右键处于长按锁存，则本次点击作为解锁触发（不透传）
         WM_RBUTTONDOWN => {
             if RT.right_locked.load(Ordering::Relaxed) {
+                // 先解锁（立即发出，让游戏尽快退出 mouselook），居中交给动作线程延时执行
                 set_lock(BTN_RIGHT, false);
                 SWALLOW_RIGHT_UP.store(true, Ordering::Relaxed);
+                queue_cmd(Cmd::UnlockCenter);
                 queue_cmd(Cmd::Note("[锁存] 右键点击：解除右键锁定（本次点击不透传）"));
                 LRESULT(1)
             } else {
@@ -347,6 +367,11 @@ fn action_thread(rx: Receiver<Cmd>) {
                 }
             }
             Cmd::Interact => do_interact(),
+            Cmd::UnlockCenter => {
+                // 解锁已由钩子回调立即发出，这里等游戏处理完退出 mouselook 再把光标放到屏幕正中央
+                std::thread::sleep(Duration::from_millis(UNLOCK_CENTER_DELAY_MS));
+                win::center_cursor();
+            }
             Cmd::Note(msg) => log(msg),
         }
     }

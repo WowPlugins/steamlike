@@ -111,8 +111,18 @@ class KeyboardMouseMapper( // 语法：class 类声明，定义键盘/鼠标映�
     // 层切换、滚轮、鼠标长按锁存、悬浮窗/键盘/捕获切换等动作不参与判定。
     // ====================================================================
 
-    /** 主线程 Handler，用于长按阈值定时（与输入事件同线程，避免并发） */
+    /** 主线程 Handler，用于长按阈值定时与解锁后的延时居中（与输入事件同线程，避免并发） */
     private val mainHandler = Handler(Looper.getMainLooper()) // 语法：Handler(Looper.getMainLooper())=绑定主线程的消息处理器
+
+    /**
+     * 「解锁 → 居中」之间插入的等待时长（毫秒）
+     *
+     * 锁定时游戏处于 mouselook：WoW 会自己接管光标（隐藏指针、把光标钉在视口中心），
+     * 收到解锁后需等它的帧循环处理完才真正放开光标。若解锁与居中间隔太近，
+     * 居中会被游戏随后的一次光标接管覆盖（表现为「锁定状态下在游戏里不居中」）。
+     * 因此解锁报文立即发出，居中及其之后的动作整体延后本时长，相对顺序不变。
+     */
+    private val unlockCenterDelayMs = 150L // 语法：private val 私有只读属性，延时时长（毫秒）
 
     /** 一次延迟按下（长按判定中）的上下文 */
     private data class DeferredPress( // 语法：private data class 私有数据类，封装延迟按下上下文
@@ -678,7 +688,7 @@ class KeyboardMouseMapper( // 语法：class 类声明，定义键盘/鼠标映�
      * 处理鼠标长按切换映射
      *
      * 第一次按下 → 发送 MouseDown（不松开）
-     * 第二次按下 → 发送 MouseUp（不再按下）
+     * 第二次按下 → 先发送鼠标居中，再发送 MouseUp（不再按下）
      * 松开手柄键不触发任何操作（保持 toggle 状态）
      *
      * 锁存状态按鼠标按钮全局记录（[toggledMouseButtons]），与左摇杆移动
@@ -688,7 +698,12 @@ class KeyboardMouseMapper( // 语法：class 类声明，定义键盘/鼠标映�
      */
     private fun handleMouseToggle(mouseButton: MouseButton) { // 语法：private fun 私有函数，处理鼠标长按切换映射
         val locked = toggledMouseButtons.contains(mouseButton) // 当前是否已锁存（语法：contains 集合包含判断）
-        setMouseLockState(mouseButton, !locked) // 反转锁存状态（右键内部改发 F11/F12）
+        setMouseLockState(mouseButton, !locked) // 反转锁存状态（右键内部改发 F11/F12）——解除锁定必须在居中之前立即发出
+        // 解除锁定时在解锁之后再居中：解锁报文立即发出（让游戏尽快退出 mouselook），
+        // 居中延后 [unlockCenterDelayMs] 再发，避免被游戏侧的光标接管覆盖（鼠标长按交换不受此影响）
+        if (locked) { // 语法：if 分支，仅从锁定变为解除时需要在解锁后居中
+            mainHandler.postDelayed({ injector.sendMouseCenterExact() }, unlockCenterDelayMs) // 延时居中央（语法：postDelayed 延迟投递）
+        } // 结束解锁居中分支
         Log.d(TAG, if (locked) "Toggle MouseUp: $mouseButton" else "Toggle MouseDown: $mouseButton") // 打印 toggle 日志（语法：if 表达式 + 字符串模板）
     } // 结束 handleMouseToggle 函数
 
@@ -724,9 +739,9 @@ class KeyboardMouseMapper( // 语法：class 类声明，定义键盘/鼠标映�
     /**
      * 处理释放鼠标所有长按动作
      *
-     * 遍历全局锁存集合 [toggledMouseButtons]，逐个发送 MouseUp 并清除锁存记录，
-     * 同时通知 [onMouseToggleChanged] 使悬浮窗边框恢复默认色。
-     * 集合为空（无任何长按锁存）时不做任何处理。
+     * 遍历全局锁存集合 [toggledMouseButtons]，先逐个发送 MouseUp 并清除锁存记录，
+     * 再把鼠标光标移到屏幕正中央（顺序：先解锁、后居中），最后通知 [onMouseToggleChanged]
+     * 使悬浮窗边框恢复默认色。集合为空（无任何长按锁存）时不做任何处理。
      */
     private fun handleMouseReleaseAll() { // 语法：private fun 私有函数，释放所有鼠标长按锁存
         if (toggledMouseButtons.isEmpty()) { // 无任何长按锁存
@@ -735,8 +750,10 @@ class KeyboardMouseMapper( // 语法：class 类声明，定义键盘/鼠标映�
         } // 结束空集合判断
         val released = toggledMouseButtons.toList() // 复制当前锁存按钮列表（复制后逐个释放，避免遍历中修改）
         released.forEach { button -> // 逐个释放（语法：forEach 遍历 + lambda）
-            setMouseLockState(button, false) // 释放该按钮（右键会改发 F12 解锁）
+            setMouseLockState(button, false) // 释放该按钮（右键会改发 F12 解锁）——解锁立即发出
         } // 结束逐个释放遍历
+        // 解锁之后再居中，且延后 [unlockCenterDelayMs]：让游戏先处理完退出 mouselook 再放指针
+        mainHandler.postDelayed({ injector.sendMouseCenterExact() }, unlockCenterDelayMs) // 延时居中央（语法：postDelayed 延迟投递）
         Log.d(TAG, "Release all MouseToggles: $released") // 打印释放日志
     } // 结束 handleMouseReleaseAll 函数
 
@@ -769,26 +786,36 @@ class KeyboardMouseMapper( // 语法：class 类声明，定义键盘/鼠标映�
     /**
      * 处理鼠标交互键动作
      *
-     * 先记录左右键当前的长按锁存状态，临时释放已锁定的键，然后立即依次发送
-     * 左键点击、右键点击，最后把左右键恢复到记录时的长按锁存状态。整个序列同步执行，无延时。
-     * 在左键点击、右键点击、恢复锁存三处之前，都会先把鼠标光标移到屏幕正中央
-     * （固定用正中央，不受「居中落点」开关影响）。
+     * 执行序列（顺序不可调整）：
+     * 1. 记录左右键的长按锁存状态，并让 Windows 端记录当前鼠标光标位置；
+     * 2. 若左右键处于锁定则先解锁（**立即发出**），再把鼠标移到屏幕正中央，然后左键点击一下、右键点击一下；
+     * 3. 最后把鼠标移回原位置，再恢复记录时的长按锁存状态。
+     *
+     * 居中固定用屏幕正中央，不受「居中落点」开关影响；解锁立即发出，第 2 步的居中
+     * 与之后的点击/还原/恢复锁存整体延后 [unlockCenterDelayMs]（WoW 退出 mouselook 需要时间，
+     * 否则居中会被游戏侧的光标接管覆盖），相对顺序不变。
      */
     private fun handleMouseClickSequence() { // 语法：private fun 私有函数，执行鼠标交互键序列
         val leftLocked = toggledMouseButtons.contains(MouseButton.LEFT) // 记录左键锁存状态
         val rightLocked = toggledMouseButtons.contains(MouseButton.RIGHT) // 记录右键锁存状态
-        setMouseLockState(MouseButton.LEFT, false) // 临时释放左键锁存（未锁定则无操作）
-        setMouseLockState(MouseButton.RIGHT, false) // 临时释放右键锁存（未锁定则无操作）
-        injector.sendMouseCenterExact() // 左键点击前：把鼠标光标移到屏幕正中央（交互键固定用正中央，不受居中落点开关影响）
-        injector.sendMouseDown(MouseButton.LEFT) // 左键点击：按下
-        injector.sendMouseUp(MouseButton.LEFT) // 左键点击：松开
-        injector.sendMouseCenterExact() // 右键点击前：把鼠标光标移到屏幕正中央（交互键固定用正中央，不受居中落点开关影响）
-        injector.sendMouseDown(MouseButton.RIGHT) // 右键点击：按下
-        injector.sendMouseUp(MouseButton.RIGHT) // 右键点击：松开
-        injector.sendMouseCenterExact() // 恢复锁存前：把鼠标光标移到屏幕正中央（交互键固定用正中央，不受居中落点开关影响）
-        setMouseLockState(MouseButton.LEFT, leftLocked) // 恢复左键原有锁存状态
-        setMouseLockState(MouseButton.RIGHT, rightLocked) // 恢复右键原有锁存状态
-        Log.d(TAG, "Interact key done: L=$leftLocked R=$rightLocked") // 打印完成日志
+        injector.sendCursorSave() // 1. 记录当前光标位置（Windows 客户端保存，末尾用于还原）
+        if (leftLocked || rightLocked) { // 2. 仅在锁定时才需要先解锁
+            setMouseLockState(MouseButton.LEFT, false) // 临时释放左键锁存（未锁定则无操作）——立即发出
+            setMouseLockState(MouseButton.RIGHT, false) // 临时释放右键锁存（未锁定则无操作）——立即发出
+        } // 结束解锁分支
+        // 解锁之后延后 [unlockCenterDelayMs] 再走「居中 → 左右键点击 → 还原位置 → 恢复锁存」，
+        // 让游戏先处理完退出 mouselook；序列内部相对顺序不变
+        mainHandler.postDelayed({ // 语法：postDelayed 延迟投递，延后执行整段序列
+            injector.sendMouseCenterExact() // 居中：把鼠标光标移到屏幕正中央
+            injector.sendMouseDown(MouseButton.LEFT) // 左键点击：按下
+            injector.sendMouseUp(MouseButton.LEFT) // 左键点击：松开
+            injector.sendMouseDown(MouseButton.RIGHT) // 右键点击：按下
+            injector.sendMouseUp(MouseButton.RIGHT) // 右键点击：松开
+            injector.sendCursorRestore() // 3. 把鼠标光标移回原位置
+            setMouseLockState(MouseButton.LEFT, leftLocked) // 恢复左键原有锁存状态
+            setMouseLockState(MouseButton.RIGHT, rightLocked) // 恢复右键原有锁存状态
+            Log.d(TAG, "Interact key done: L=$leftLocked R=$rightLocked") // 打印完成日志
+        }, unlockCenterDelayMs) // 延时结束（语法：postDelayed 的第二参数）
     } // 结束 handleMouseClickSequence 函数
 
     /**

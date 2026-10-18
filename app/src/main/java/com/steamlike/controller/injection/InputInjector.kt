@@ -133,10 +133,23 @@ interface InputInjector {  // 语法：interface 声明接口；输入注入器�
     /**
      * 将鼠标光标强制移动到屏幕正中央
      *
-     * 供「交互键」内部序列使用：交互键的三次归中必须始终落在屏幕正中央，
-     * 不受 cursorParkOffscreen 开关影响。
+     * 供「交互键」内部序列与各「解除锁定」路径使用：这些场景的归中必须始终落在
+     * 屏幕正中央，不受 cursorParkOffscreen 开关影响。
      */
-    fun sendMouseCenterExact()  // 语法：fun 抽象方法；鼠标强制移到屏幕正中央（交互键专用）
+    fun sendMouseCenterExact()  // 语法：fun 抽象方法；鼠标强制移到屏幕正中央（交互键 / 解除锁定专用）
+
+    /**
+     * 记录当前鼠标光标位置
+     *
+     * 供「交互键」序列使用：APK 侧无法得知 Windows 光标坐标，需由 Windows 客户端
+     * 存下当前位置，序列末尾再用 [sendCursorRestore] 还原。
+     */
+    fun sendCursorSave()  // 语法：fun 抽象方法；记录当前鼠标光标位置（交互键序列专用）
+
+    /**
+     * 把鼠标光标还原到 [sendCursorSave] 记录的位置
+     */
+    fun sendCursorRestore()  // 语法：fun 抽象方法；还原到记录的光标位置（交互键序列专用）
 
     /**
      * 鼠标滚轮滚动

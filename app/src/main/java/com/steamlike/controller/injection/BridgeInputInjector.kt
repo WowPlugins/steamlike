@@ -165,6 +165,26 @@ class BridgeInputInjector(  // 语法：class 声明类；桥接输入注入器�
     }  // 结束 sendMouseCenterExact 函数
 
     /**
+     * 记录当前鼠标光标位置（交互键序列开头使用）
+     *
+     * 同样先清空位移小数余量，避免残留的亚像素位移在归位/还原之后被补发。
+     */
+    override fun sendCursorSave() {  // 语法：override 覆写；发送记录光标位置命令
+        mouseRemainderX = 0f  // 清零 X 轴位移余量
+        mouseRemainderY = 0f  // 清零 Y 轴位移余量
+        server.sendCursorSave()  // 转发给 TCP 服务器发送记录光标位置事件
+    }  // 结束 sendCursorSave 函数
+
+    /**
+     * 把鼠标光标还原到记录的位置（交互键序列末尾使用）
+     */
+    override fun sendCursorRestore() {  // 语法：override 覆写；发送还原光标位置命令
+        mouseRemainderX = 0f  // 清零 X 轴位移余量
+        mouseRemainderY = 0f  // 清零 Y 轴位移余量
+        server.sendCursorRestore()  // 转发给 TCP 服务器发送还原光标位置事件
+    }  // 结束 sendCursorRestore 函数
+
+    /**
      * 发送鼠标滚轮事件
      * @param delta 滚轮增量（正数=上滚，负数=下滚）
      */

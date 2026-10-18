@@ -28,7 +28,12 @@ pub struct Runtime {
     pub last_mouse: AtomicI64,
     /// 「居中落点」开关：true = 屏幕中央正下方、屏幕下边缘之外 1/10 屏高处；false = 屏幕正中央
     pub cursor_park_offscreen: AtomicBool,
+    /// 交互键序列开始时记录的光标位置（高 32 位 X，低 32 位 Y），供序列末尾还原
+    pub saved_cursor: AtomicI64,
 }
+
+/// `saved_cursor` 的「尚未记录」哨兵值
+pub const CURSOR_UNSET: i64 = i64::MIN;
 
 pub static RT: Runtime = Runtime {
     intercept_enabled: AtomicBool::new(false),
@@ -40,6 +45,7 @@ pub static RT: Runtime = Runtime {
     right_locked: AtomicBool::new(false),
     last_mouse: AtomicI64::new(0),
     cursor_park_offscreen: AtomicBool::new(true),
+    saved_cursor: AtomicI64::new(CURSOR_UNSET),
 };
 
 /// APK 服务器地址与端口（界面可改，网络线程每次重连时读取）
