@@ -12,7 +12,7 @@
 //! | 长按交换键 | 吞掉，交给动作线程做长按判定；短按则补发一次普通点按 |
 //! | WASD | 吞掉并由本程序注入，保证「光标归位 → F11 → WASD」的顺序 |
 //! | 已锁定侧的鼠标按键按下 | 吞掉，作为解锁触发（连带吞掉对应的抬起） |
-//! | 鼠标移动 | 吞掉原始事件，改注入等量的相对移动 |
+//! | 鼠标移动 | 直接透传给魔兽（不改写，避免光标偏移导致界面点击/hover 失效） |
 //! | 其它 | 直接透传给魔兽 |
 
 use std::sync::atomic::{AtomicBool, AtomicIsize, AtomicU32, Ordering};
@@ -25,7 +25,7 @@ use windows::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows::Win32::System::Threading::GetCurrentThreadId;
 use windows::Win32::UI::WindowsAndMessaging::*;
 
-use crate::runtime::{log, pack_pos, unpack_pos, RT};
+use crate::runtime::{log, pack_pos, RT};
 use crate::win::{self, BTN_LEFT, BTN_RIGHT, MAGIC, VK_F11, VK_F12};
 
 /* ===== 钩子线程消息 ===== */
@@ -252,15 +252,14 @@ unsafe extern "system" fn mouse_proc(ncode: i32, wparam: WPARAM, lparam: LPARAM)
     }
 
     match msg {
-        // 鼠标移动：吞掉原始事件，改注入等量的相对移动
-        WM_MOUSEMOVE => {
-            let prev = RT
-                .last_mouse
-                .swap(pack_pos(ms.pt.x, ms.pt.y), Ordering::Relaxed);
-            let (px, py) = unpack_pos(prev);
-            win::inject_mouse_move(ms.pt.x - px, ms.pt.y - py);
-            LRESULT(1)
-        }
+        // 鼠标移动：直接透传给魔兽
+        //
+        // 这里**不要**再「吞掉原始移动 + 回注等量相对移动」。
+        // Winlator 的触摸/鼠标事件进入 Wine 时，光标已经被移动到 ms.pt 指示的位置；
+        // 若在钩子里吞掉它再注入一份相同位移的相对移动，等于让光标多走一遍，
+        // 界面上的光标位置与实际手指位置不一致，表现为按钮不高亮、点击落空；
+        // 而原始移动被吞掉后，魔兽也收不到它需要的原始输入（Raw Input）事件。
+        WM_MOUSEMOVE => CallNextHookEx(HHOOK(0), ncode, wparam, lparam),
 
         // 左键按下：若左键处于长按锁存，则本次点击作为解锁触发（不透传）
         WM_LBUTTONDOWN => {
