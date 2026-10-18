@@ -81,3 +81,6 @@ $RECYCLE.BIN/
 
 # Kotlin daemon
 .kotlin/
+
+# Rust 构建产物
+windows/rust_client/target/

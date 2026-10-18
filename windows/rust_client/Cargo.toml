@@ -1,0 +1,45 @@
+[package]
+name = "inputbridge_client"
+version = "0.1.0"
+edition = "2021"
+description = "InputBridge Client for Winlator (Rust 版) - 键鼠拦截 + TCP 事件注入"
+
+[dependencies]
+eframe = "0.22"
+crossbeam-channel = "0.5"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+rfd = { version = "0.14", default-features = false }
+windows = { version = "0.52", features = [
+    "Win32_Foundation",
+    "Win32_Security",          # CreateMutexW 的 SECURITY_ATTRIBUTES 参数依赖该 feature
+    "Win32_System_LibraryLoader",
+    "Win32_System_Threading",
+    "Win32_UI_Input_KeyboardAndMouse",
+    "Win32_UI_WindowsAndMessaging",
+] }
+
+# 说明：eframe 0.22 的 src/native/app_icon.rs 在 Windows 上直接使用 winapi 的
+# winuser 模块，但其自身的 Cargo.toml 未启用这些 feature，正常应由 winit 0.28
+# 传递启用。当前环境的 winit 0.28.7 改用 windows-sys，且 winapi 的 feature 未携带
+# 传递依赖，导致 winuser/windef 等模块未编译。这里显式补全所需 feature 以修复编译。
+winapi = { version = "0.3.9", features = [
+    "winuser",
+    "winnt",
+    "windef",
+    "minwindef",
+    "minwinbase",
+    "wingdi",
+    "ntdef",
+    "ntstatus",
+    "basetsd",
+    "guiddef",
+    "ktmtypes",
+    "excpt",
+    "limits",
+    "vadefs",
+    "vcruntime",
+] }
+
+[profile.release]
+opt-level = 2
