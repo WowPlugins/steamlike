@@ -11,7 +11,7 @@
 //! | 交互键 | 吞掉，交给动作线程执行「左键点击 + 右键点击」序列，不透传 |
 //! | 长按交换键 | 吞掉，交给动作线程做长按判定；短按则补发一次普通点按 |
 //! | WASD | 吞掉并由本程序注入，保证「光标归位 → F11 → WASD」的顺序 |
-//! | 已锁定侧的鼠标按键按下 | 吞掉，作为解锁触发（连带吞掉对应的抬起） |
+//! | 有锁存时的鼠标按键按下 | 吞掉，作为解锁触发（连带吞掉对应的抬起），左右键均可解除 |
 //! | 鼠标移动 | 直接透传给魔兽（不改写，避免光标偏移导致界面点击/hover 失效） |
 //! | 其它 | 直接透传给魔兽 |
 
@@ -261,14 +261,25 @@ unsafe extern "system" fn mouse_proc(ncode: i32, wparam: WPARAM, lparam: LPARAM)
         // 而原始移动被吞掉后，魔兽也收不到它需要的原始输入（Raw Input）事件。
         WM_MOUSEMOVE => CallNextHookEx(HHOOK(0), ncode, wparam, lparam),
 
-        // 左键按下：若左键处于长按锁存，则本次点击作为解锁触发（不透传）
-        WM_LBUTTONDOWN => {
-            if RT.left_locked.load(Ordering::Relaxed) {
+        // 鼠标左/右键按下：只要任一侧处于长按锁存，本次点击就作为解锁触发（不透传）
+        //
+        // 锁存是互斥的（WASD 自动锁右键，长按交换键只会把锁换到另一侧），
+        // 因此点任意一侧都能解除当前锁定，避免锁在左键时点右键却把点击透传给魔兽。
+        WM_LBUTTONDOWN | WM_RBUTTONDOWN => {
+            let left_locked = RT.left_locked.load(Ordering::Relaxed);
+            let right_locked = RT.right_locked.load(Ordering::Relaxed);
+            if left_locked || right_locked {
                 // 先解锁（立即发出，让游戏尽快退出 mouselook），居中交给动作线程延时执行
                 set_lock(BTN_LEFT, false);
-                SWALLOW_LEFT_UP.store(true, Ordering::Relaxed);
+                set_lock(BTN_RIGHT, false);
+                if msg == WM_LBUTTONDOWN {
+                    SWALLOW_LEFT_UP.store(true, Ordering::Relaxed);
+                    queue_cmd(Cmd::Note("[锁存] 左键点击：解除鼠标锁定（本次点击不透传）"));
+                } else {
+                    SWALLOW_RIGHT_UP.store(true, Ordering::Relaxed);
+                    queue_cmd(Cmd::Note("[锁存] 右键点击：解除鼠标锁定（本次点击不透传）"));
+                }
                 queue_cmd(Cmd::UnlockCenter);
-                queue_cmd(Cmd::Note("[锁存] 左键点击：解除左键锁定（本次点击不透传）"));
                 LRESULT(1)
             } else {
                 CallNextHookEx(HHOOK(0), ncode, wparam, lparam)
@@ -282,19 +293,6 @@ unsafe extern "system" fn mouse_proc(ncode: i32, wparam: WPARAM, lparam: LPARAM)
             }
         }
 
-        // 右键按下：若右键处于长按锁存，则本次点击作为解锁触发（不透传）
-        WM_RBUTTONDOWN => {
-            if RT.right_locked.load(Ordering::Relaxed) {
-                // 先解锁（立即发出，让游戏尽快退出 mouselook），居中交给动作线程延时执行
-                set_lock(BTN_RIGHT, false);
-                SWALLOW_RIGHT_UP.store(true, Ordering::Relaxed);
-                queue_cmd(Cmd::UnlockCenter);
-                queue_cmd(Cmd::Note("[锁存] 右键点击：解除右键锁定（本次点击不透传）"));
-                LRESULT(1)
-            } else {
-                CallNextHookEx(HHOOK(0), ncode, wparam, lparam)
-            }
-        }
         WM_RBUTTONUP => {
             if SWALLOW_RIGHT_UP.swap(false, Ordering::Relaxed) {
                 LRESULT(1)
