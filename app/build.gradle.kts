@@ -11,7 +11,7 @@ android {  // 语法：android{} 块，Android 应用模块的配置入口
         minSdk = 24  // 语法：minSdk 最低支持 Android 版本（Android 7.0）
         targetSdk = 37  // 语法：targetSdk 目标 Android 版本（37，决定系统兼容行为）
         versionCode = 1  // 内部版本号（整数，用于版本比较/升级判断）
-        versionName = "0.1.34"  // 对外显示的版本名称
+        versionName = "0.1.37"  // 对外显示的版本名称
     }  // 结束 defaultConfig 块
 
     buildTypes {  // 语法：buildTypes{} 块，配置各构建类型（debug/release 等）
@@ -96,6 +96,7 @@ tasks.register("compileWindowsExe") {  // 语法：tasks.register("任务名"){.
     inputs.file(rustProjectDir.resolve("Cargo.lock"))  // 输入：Cargo.lock（依赖版本锁定变化会影响产物）
     inputs.file(rootProject.file("windows/control.bat"))  // 输入：control.bat 脚本源
     inputs.file(rootProject.file("windows/control.ps1"))  // 输入：control.ps1 脚本源
+    inputs.property("versionName", android.defaultConfig.versionName ?: "0.0.0")  // 输入：APK 版本号（版本号变化时重新编译 exe 并注入）
     outputs.files(outputExe, assetsExe, assetsControl, assetsPs1Control)  // 输出：exe 归档与 assets 副本 + 两个脚本副本
 
     doLast {  // 语法：doLast{} 块，任务执行阶段的末尾执行其中代码（真正干活的动作）
@@ -119,6 +120,11 @@ tasks.register("compileWindowsExe") {  // 语法：tasks.register("任务名"){.
             val process = ProcessBuilder(cmd)  // 语法：ProcessBuilder 启动子进程执行命令
                 .directory(rustProjectDir)  // 子进程工作目录设为 Rust 工程目录（保证 .cargo/config.toml 生效）
                 .redirectErrorStream(true)  // 合并标准输出与错误流，便于统一读取
+                .apply {
+                    // 把 APK 的 versionName 注入 exe：Rust 端用 option_env!("STEAMLIKE_VERSION") 读取，
+                    // 使 exe 界面/日志里的版本号与 APK 始终一致（手动 cargo build 时回退到 Cargo.toml 版本）
+                    environment()["STEAMLIKE_VERSION"] = android.defaultConfig.versionName ?: "0.0.0"
+                }
                 .start()  // 启动子进程
             val output = process.inputStream.bufferedReader().readText()  // 读取子进程的全部输出文本
             val exitCode = process.waitFor()  // 等待子进程结束并获取退出码（0 表示成功）

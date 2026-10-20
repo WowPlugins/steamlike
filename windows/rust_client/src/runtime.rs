@@ -24,6 +24,8 @@ pub struct Runtime {
     pub left_locked: AtomicBool,
     /// 鼠标右键长按锁存中
     pub right_locked: AtomicBool,
+    /// F11/F12 模式下是否处于 mouselook（收到 F11 为 true，收到 F12 为 false）
+    pub fkeys_mouselook: AtomicBool,
     /// 上一次鼠标光标位置（高 32 位 X，低 32 位 Y），用于把绝对移动换算成相对移动
     pub last_mouse: AtomicI64,
     /// 「居中落点」开关：true = 屏幕中央正下方、屏幕下边缘之外 1/10 屏高处；false = 屏幕正中央
@@ -43,6 +45,7 @@ pub static RT: Runtime = Runtime {
     long_press_ms: AtomicU32::new(500),
     left_locked: AtomicBool::new(false),
     right_locked: AtomicBool::new(false),
+    fkeys_mouselook: AtomicBool::new(false),
     last_mouse: AtomicI64::new(0),
     cursor_park_offscreen: AtomicBool::new(true),
     saved_cursor: AtomicI64::new(CURSOR_UNSET),

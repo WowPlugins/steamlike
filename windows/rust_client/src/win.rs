@@ -8,7 +8,8 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use windows::Win32::Foundation::POINT;
 use windows::Win32::UI::Input::KeyboardAndMouse::*;
 use windows::Win32::UI::WindowsAndMessaging::{
-    GetCursorPos, GetSystemMetrics, SetCursorPos, SM_CXSCREEN, SM_CYSCREEN,
+    ClipCursor, GetCursorPos, GetForegroundWindow, GetSystemMetrics, GetWindowTextW, SetCursorPos,
+    SM_CXSCREEN, SM_CYSCREEN,
 };
 
 use crate::runtime::{pack_pos, unpack_pos, CURSOR_UNSET, RT};
@@ -107,6 +108,18 @@ pub fn inject_key(vk: u16, down: bool) {
 }
 
 /// 注入鼠标相对移动
+///
+/// 相对移动只会更新 Wine 内部的「Windows 光标坐标」，Winlator 那层真正的
+/// 硬件指针（屏幕上画出来的 WoW 指针）不会跟着刷新。表现就是：松开右键退出
+/// mouselook 后，WoW 的 hover/tooltip 会随摇杆变化，但可见指针停在原地不动
+/// （只有直接滑屏幕——走 X 绝对坐标——才能移动它）。
+///
+/// 因此在「游戏没有接管光标」时，注入相对位移后再向当前位置做一次 1px 的
+/// `SetCursorPos` 往返：位置先变 1px 再变回来，强制驱动把硬件指针同步到
+/// 内部坐标，而起点/终点相同，游戏侧收到的总位移不变。
+///
+/// 游戏接管光标（按住左/右键的 mouselook，或 F11/F12 模式已切到 mouselook）时不做同步：
+/// 此时指针是隐藏的，WoW 自己每帧把光标钉在视口中心，插值反而会干扰视角。
 pub fn inject_mouse_move(dx: i32, dy: i32) {
     if dx == 0 && dy == 0 {
         return;
@@ -122,6 +135,85 @@ pub fn inject_mouse_move(dx: i32, dy: i32) {
         dwExtraInfo: MAGIC,
     };
     send(&[input]);
+
+    refresh_foreground_state();
+    if !cursor_captured() {
+        sync_hardware_cursor();
+    }
+}
+
+/// 前台窗口是否为魔兽世界
+///
+/// 只有游戏在前台时，左右键才意味着 mouselook；切到桌面（Wine 桌面或其他程序）后
+/// 必须重新同步硬件指针，否则会出现「右摇杆让提示在变、但可见指针不动」。
+pub fn game_in_foreground() -> bool {
+    unsafe {
+        let hwnd = GetForegroundWindow();
+        if hwnd.0 == 0 {
+            return false;
+        }
+        let mut buf = [0u16; 128];
+        let len = GetWindowTextW(hwnd, &mut buf);
+        if len <= 0 {
+            return false;
+        }
+        let title = String::from_utf16_lossy(&buf[..len as usize]);
+        title.to_ascii_lowercase().contains("world of warcraft")
+    }
+}
+
+/// 前台是否处于游戏的缓存值（避免每次移动都取窗口标题）
+static GAME_FOREGROUND: AtomicBool = AtomicBool::new(false);
+
+/// 前台从游戏切走时清掉所有陈旧状态
+///
+/// 大退/切出游戏时若右键仍处于锁存状态（游戏被杀时按着右键），
+/// `cursor_captured()` 会一直返回 true 而永久跳过硬件指针同步；
+/// 这里清除按键锁存、mouselook 标记与裁剪矩形，让桌面上的指针恢复跟随。
+fn refresh_foreground_state() {
+    let now = game_in_foreground();
+    if GAME_FOREGROUND.swap(now, Ordering::Relaxed) && !now {
+        RT.fkeys_mouselook.store(false, Ordering::Relaxed);
+        unsafe {
+            let _ = ClipCursor(None);
+        }
+        release_all();
+    }
+}
+
+/// 光标是否正被游戏接管（mouselook）：按住左/右键，或 F11/F12 模式已切到 mouselook
+///
+/// 不看左右键锁存标志：F11/F12 模式下锁存标志只在 WASD 路径里维护，
+/// 手柄侧解锁不会清除它，会长期停在 true 而漏掉同步。
+fn cursor_captured() -> bool {
+    if !GAME_FOREGROUND.load(Ordering::Relaxed) {
+        return false;
+    }
+    if RT.fkeys_mouselook.load(Ordering::Relaxed) {
+        return true;
+    }
+    if PRESSED_BUTTONS[BTN_LEFT as usize].load(Ordering::Relaxed)
+        || PRESSED_BUTTONS[BTN_RIGHT as usize].load(Ordering::Relaxed)
+    {
+        return true;
+    }
+    // 触摸直接按住左/右键（Winlator 物理输入）同样会进入 mouselook
+    unsafe {
+        GetAsyncKeyState(VK_LBUTTON.0 as i32) < 0 || GetAsyncKeyState(VK_RBUTTON.0 as i32) < 0
+    }
+}
+
+/// 把硬件指针同步到 Wine 内部的光标坐标（1px 往返，净位移为 0）
+///
+/// 先解除裁剪矩形：游戏退出后残留的裁剪会把 `SetCursorPos` 钳在原地，
+/// 导致桌面上指针卡死。
+fn sync_hardware_cursor() {
+    let (x, y) = current_cursor();
+    unsafe {
+        let _ = ClipCursor(None);
+        let _ = SetCursorPos(x + 1, y);
+        let _ = SetCursorPos(x, y);
+    }
 }
 
 /// 注入鼠标按钮按下/释放
@@ -173,8 +265,16 @@ pub fn move_cursor_to(x: i32, y: i32) {
 }
 
 /// 把鼠标光标移动到主屏正中央
+///
+/// 调用点都是「退出 mouselook 之后」的归位（解除锁定 / 交互键），因此先把
+/// WoW 在 mouselook 里设置的裁剪矩形解除：裁剪还留着时 `SetCursorPos` 会被
+/// 钳制在矩形内，硬件指针也停在原处，出现「指针卡住、hover 却在动」。
+///
+/// 裁剪矩形属于设置它的线程，只有游戏进程退出才会自动解除，这解释了为什么
+/// 卡住后 /reload 无效、只能大退游戏。
 pub fn center_cursor() {
     unsafe {
+        let _ = ClipCursor(None);
         let cx = GetSystemMetrics(SM_CXSCREEN) / 2;
         let cy = GetSystemMetrics(SM_CYSCREEN) / 2;
         move_cursor_to(cx, cy);

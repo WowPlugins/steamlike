@@ -124,7 +124,7 @@ impl eframe::App for App {
         let mut dirty = false;
 
         egui::CentralPanel::default().show(ctx, |ui| {
-            ui.heading("SteamLike InputBridge");
+            ui.heading(format!("SteamLike InputBridge v{}", crate::VERSION));
             ui.label("运行在 Winlator 内：接收手机手柄事件注入魔兽，可选拦截本地键鼠事件。");
             ui.separator();
 
