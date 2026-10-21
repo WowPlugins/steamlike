@@ -17,7 +17,7 @@ use std::net::{SocketAddr, TcpStream, ToSocketAddrs};
 use std::sync::atomic::Ordering;
 use std::time::Duration;
 
-use crate::runtime::{log, set_status, BRIDGE_TARGET, CONNECTED, RT, WANT_CONNECT};
+use crate::runtime::{log, set_status, BRIDGE_TARGET, CONNECTED, WANT_CONNECT};
 use crate::win;
 
 const PACKET_SIZE: usize = 8;
@@ -128,15 +128,7 @@ fn process_packet(data: &[u8; PACKET_SIZE]) {
     match data[0] {
         0x01 => {
             let vk = u16::from_le_bytes([data[1], data[2]]);
-            let down = data[3] != 0;
-            // F11/F12 模式下右键锁存由游戏内宏切换 mouselook，本程序不按真实鼠标键，
-            // 只能靠这两个按键判断游戏是否正接管光标（决定要不要做硬件指针同步）
-            if vk == win::VK_F11 && down {
-                RT.fkeys_mouselook.store(true, Ordering::Relaxed);
-            } else if vk == win::VK_F12 && down {
-                RT.fkeys_mouselook.store(false, Ordering::Relaxed);
-            }
-            win::inject_key(vk, down);
+            win::inject_key(vk, data[3] != 0);
         }
         0x02 => {
             let dx = i16::from_le_bytes([data[1], data[2]]) as i32;

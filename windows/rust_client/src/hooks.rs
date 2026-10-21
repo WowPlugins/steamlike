@@ -89,8 +89,6 @@ pub fn set_lock(button: u8, locked: bool) -> bool {
         let vk = if locked { VK_F11 } else { VK_F12 };
         win::inject_key(vk, true);
         win::inject_key(vk, false);
-        // 同步「游戏是否接管光标」，供鼠标移动的硬件指针同步判断
-        RT.fkeys_mouselook.store(locked, Ordering::Relaxed);
     } else {
         win::inject_mouse_button(button, locked);
     }
