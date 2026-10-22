@@ -46,6 +46,7 @@ import java.util.concurrent.atomic.AtomicInteger  // 导入原子整数类（自
  *   0x08 = 鼠标强制移动到屏幕正中央（交互键 / 解除锁定专用）
  *   0x09 = 记录当前鼠标光标位置（交互键序列）
  *   0x0A = 还原到 0x09 记录的鼠标光标位置（交互键序列）
+ *   0x0B = 时间同步（客户端连接时下发 APK 当前时间）
  *
  * Byte 1-7: 载荷 (按消息类型不同)
  *
@@ -80,6 +81,9 @@ import java.util.concurrent.atomic.AtomicInteger  // 导入原子整数类（自
  *
  * 鼠标光标位置还原 (0x0A):
  *   无载荷。Windows 客户端把光标移回 0x09 记录的位置
+ *
+ * 时间同步 (0x0B):
+ *   Byte 1-7: epoch 毫秒 (56 位小端)。Windows 客户端收到后校准 Winlator 系统时间
  * ```
  *
  * @param host TCP监听地址，null或空表示监听所有接口(0.0.0.0)
@@ -106,6 +110,7 @@ class InputBridgeServer(  // 语法：class 声明类；InputBridge TCP 服务�
         const val MSG_MOUSE_CENTER_EXACT: Byte = 0x08  // 消息类型：鼠标强制移到屏幕正中央（交互键 / 解除锁定专用）
         const val MSG_CURSOR_SAVE: Byte = 0x09  // 消息类型：记录当前鼠标光标位置（交互键序列）
         const val MSG_CURSOR_RESTORE: Byte = 0x0A  // 消息类型：还原到记录的光标位置（交互键序列）
+        const val MSG_TIME_SYNC: Byte = 0x0B  // 消息类型：时间同步（下发 APK 当前时间给 Windows 客户端）
 
         const val PACKET_SIZE = 8  // 语法：const val 编译期常量；协议数据包固定长度 8 字节
     }  // 结束 companion object
@@ -287,10 +292,27 @@ class InputBridgeServer(  // 语法：class 声明类；InputBridge TCP 服务�
      * 发送心跳包
      */
     fun sendPing() {  // 语法：fun 函数；发送心跳包
-        val packet = ByteArray(PACKET_SIZE)  // 语法：val + ByteArray；创建 8 字节数据包
+        val packet = ByteArray(PACKET_SIZE)  // 语法：val + ByteArray；创建 8 字节定长数据包
         packet[0] = MSG_PING  // 写入消息类型：心跳 Ping
         enqueue(packet)  // 加入发送队列
     }  // 结束 sendPing 函数
+
+    /**
+     * 发送时间同步包
+     *
+     * 把 APK 当前时间（epoch 毫秒）以 56 位小端写入 Byte 1-7 下发，
+     * Windows 客户端收到后校准 Winlator 容器的系统时间（容器时间容易漂移）。
+     * 客户端每次连接建立时发送一次。
+     */
+    fun sendTimeSync() {  // 语法：fun 函数；发送时间同步包
+        val packet = ByteArray(PACKET_SIZE)  // 语法：val + ByteArray；创建 8 字节定长数据包
+        packet[0] = MSG_TIME_SYNC  // 写入消息类型：时间同步
+        val millis = System.currentTimeMillis()  // 取当前 epoch 毫秒
+        for (i in 0..6) {  // 语法：for 循环；56 位小端拆成 7 字节写入 Byte 1-7
+            packet[1 + i] = ((millis ushr (8 * i)) and 0xFF).toByte()  // 写入第 i 个字节
+        }
+        enqueue(packet)  // 加入发送队列
+    }  // 结束 sendTimeSync 函数
 
     /** 是否有客户端连接 */
     fun hasClients(): Boolean = clients.isNotEmpty()  // 语法：单表达式函数；返回客户端列表是否非空
@@ -327,6 +349,7 @@ class InputBridgeServer(  // 语法：class 声明类；InputBridge TCP 服务�
                 val addr = socket.remoteSocketAddress.toString()  // 获取客户端远程地址字符串
                 Log.i(TAG, "客户端已连接: $addr")  // 语法：字符串模板；打印连接日志
                 onClientConnected?.invoke(addr)  // 语法：?. 安全调用；通知连接回调
+                sendTimeSync()  // 客户端连上后立即下发当前时间，校准 Winlator 系统时间
                 Thread({ handleClient(client) }, "BridgeServer-Client-${client.id}").start()  // 语法：lambda + Thread + 字符串模板；启动客户端处理线程
             } catch (e: IOException) {  // 语法：catch 捕获 IO 异常
                 if (isRunning.get()) {  // 语法：if 条件判断；仅在运行中才记录错误

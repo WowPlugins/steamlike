@@ -45,6 +45,9 @@ fn main() -> eframe::Result<()> {
         return Ok(());
     }
 
+    // 单实例确认后清空旧日志并初始化文件日志
+    runtime::init_file_log();
+
     runtime::log(format!("==== SteamLike InputBridge v{} 启动 ====", VERSION));
 
     let cfg = config::load();

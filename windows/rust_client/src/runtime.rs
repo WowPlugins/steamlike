@@ -5,8 +5,11 @@
 //! 所有钩子需要读取的运行期参数都放在原子量里；状态文本/日志这类
 //! 只有非钩子线程会访问的数据才使用互斥锁。
 
+use std::fs::File;
 use std::sync::atomic::{AtomicBool, AtomicI64, AtomicU32};
 use std::sync::Mutex;
+
+use windows::Win32::System::SystemInformation::GetLocalTime;
 
 /// 键鼠拦截运行期参数与锁存状态
 pub struct Runtime {
@@ -60,14 +63,53 @@ pub static STATUS: Mutex<String> = Mutex::new(String::new());
 static LOGS: Mutex<Vec<String>> = Mutex::new(Vec::new());
 const MAX_LOGS: usize = 200;
 
-/// 追加一条日志（同时输出到控制台，方便在 Winlator 终端排查）
+/// 文件日志句柄（exe 目录下的 inputbridge_client.log，启动时清空重写）
+static LOG_FILE: Mutex<Option<File>> = Mutex::new(None);
+
+/// 初始化文件日志：清空 exe 目录下旧的 inputbridge_client.log
+///
+/// 必须在单实例检查通过之后调用，避免截断已在运行实例的日志文件。
+pub fn init_file_log() {
+    let Ok(exe) = std::env::current_exe() else {
+        return;
+    };
+    let Some(dir) = exe.parent() else {
+        return;
+    };
+    let path = dir.join("inputbridge_client.log");
+    match File::create(&path) {
+        Ok(f) => {
+            *LOG_FILE.lock().unwrap() = Some(f);
+        }
+        Err(e) => println!("无法打开日志文件 {:?}：{}", path, e),
+    }
+}
+
+/// 当前本地时间戳文本，格式 [HH:MM:SS.mmm]
+fn timestamp() -> String {
+    let st = unsafe { GetLocalTime() };
+    format!(
+        "[{:02}:{:02}:{:02}.{:03}]",
+        st.wHour, st.wMinute, st.wSecond, st.wMilliseconds
+    )
+}
+
+/// 追加一条日志：同时输出到控制台、日志文件与界面日志区
 ///
 /// 注意：绝对不要在钩子回调里调用（钩子回调必须保持无锁）。
 pub fn log(msg: impl AsRef<str>) {
-    let m = msg.as_ref();
-    println!("{}", m);
+    let line = format!("{} {}", timestamp(), msg.as_ref());
+    println!("{}", line);
+    // 写入文件日志（未初始化或写失败时静默忽略，不影响运行）
+    if let Ok(mut guard) = LOG_FILE.lock() {
+        if let Some(f) = guard.as_mut() {
+            use std::io::Write;
+            let _ = writeln!(f, "{}", line);
+            let _ = f.flush();
+        }
+    }
     let mut guard = LOGS.lock().unwrap();
-    guard.push(m.to_string());
+    guard.push(line);
     if guard.len() > MAX_LOGS {
         let excess = guard.len() - MAX_LOGS;
         guard.drain(0..excess);

@@ -313,3 +313,111 @@ pub fn wasd_index(vk: u16) -> Option<usize> {
         _ => None,
     }
 }
+
+/* ===== 系统时间同步 ===== */
+
+use windows::Win32::Foundation::{CloseHandle, FILETIME, HANDLE, LUID, SYSTEMTIME};
+use windows::Win32::Security::{
+    AdjustTokenPrivileges, LUID_AND_ATTRIBUTES, LookupPrivilegeValueW, SE_PRIVILEGE_ENABLED,
+    TOKEN_ADJUST_PRIVILEGES, TOKEN_PRIVILEGES, TOKEN_QUERY,
+};
+use windows::Win32::System::SystemInformation::{
+    GetLocalTime, GetSystemTimeAsFileTime, SetSystemTime,
+};
+use windows::Win32::System::Threading::{GetCurrentProcess, OpenProcessToken};
+use windows::Win32::System::Time::{FileTimeToSystemTime, SystemTimeToTzSpecificLocalTime};
+
+/// 格式化 SYSTEMTIME 为可读文本
+fn fmt_st(st: &SYSTEMTIME) -> String {
+    format!(
+        "{:04}-{:02}-{:02} {:02}:{:02}:{:02}.{:03}",
+        st.wYear, st.wMonth, st.wDay, st.wHour, st.wMinute, st.wSecond, st.wMilliseconds
+    )
+}
+
+/// 启用 SeSystemtimePrivilege 特权（SetSystemTime 需要；失败时仅记录，不阻断）
+fn enable_systemtime_privilege() -> bool {
+    unsafe {
+        let mut token = HANDLE::default();
+        if OpenProcessToken(
+            GetCurrentProcess(),
+            TOKEN_ADJUST_PRIVILEGES | TOKEN_QUERY,
+            &mut token,
+        )
+        .is_err()
+        {
+            return false;
+        }
+        let mut tp = TOKEN_PRIVILEGES {
+            PrivilegeCount: 1,
+            Privileges: [LUID_AND_ATTRIBUTES {
+                Luid: LUID::default(),
+                Attributes: SE_PRIVILEGE_ENABLED,
+            }],
+        };
+        if LookupPrivilegeValueW(None, w!("SeSystemtimePrivilege"), &mut tp.Privileges[0].Luid)
+            .is_err()
+        {
+            let _ = CloseHandle(token);
+            return false;
+        }
+        let ok = AdjustTokenPrivileges(
+            token,
+            false,
+            Some(&tp),
+            0,
+            None,
+            None,
+        )
+        .is_ok();
+        let _ = CloseHandle(token);
+        ok
+    }
+}
+
+/// 把 Windows 系统时间校准为 APK 下发的 epoch 毫秒
+///
+/// Winlator 容器内的系统时间容易漂移，APK 在客户端每次连上时下发一次准确时间；
+/// 与当前时间偏差小于 500ms 时跳过，避免频繁改写时钟。
+pub fn sync_system_time(epoch_millis: u64) {
+    // epoch 毫秒 → FILETIME（1601-01-01 起的 100ns 单位）
+    let target_ft: i64 = ((epoch_millis as i64) + 11_644_473_600_000) * 10_000;
+    unsafe {
+        // windows 0.52 的 GetSystemTimeAsFileTime 按值返回 FILETIME
+        let now = GetSystemTimeAsFileTime();
+        let now_ft = ((now.dwHighDateTime as i64) << 32) | now.dwLowDateTime as i64;
+        let diff_ms = (target_ft - now_ft) / 10_000;
+        if diff_ms.abs() < 500 {
+            log(format!("[时间同步] 系统时间已准确（偏差 {} ms），跳过", diff_ms));
+            return;
+        }
+
+        if !enable_systemtime_privilege() {
+            log("[时间同步] SeSystemtimePrivilege 启用失败，仍尝试直接校准");
+        }
+
+        let before = GetLocalTime();
+        let ft = FILETIME {
+            dwLowDateTime: (target_ft & 0xFFFF_FFFF) as u32,
+            dwHighDateTime: ((target_ft >> 32) & 0xFFFF_FFFF) as u32,
+        };
+        let mut utc = SYSTEMTIME::default();
+        if FileTimeToSystemTime(&ft, &mut utc).is_err() {
+            log("[时间同步] 目标时间换算失败，跳过校准");
+            return;
+        }
+        if SetSystemTime(&utc).is_err() {
+            log("[时间同步] SetSystemTime 调用失败，无法校准系统时间");
+            return;
+        }
+        // 校准后本地时间应等于目标 UTC 对应的本地时间
+        let mut local = SYSTEMTIME::default();
+        let _ = SystemTimeToTzSpecificLocalTime(None, &utc, &mut local);
+        log(format!(
+            "[时间同步] 已校准系统时间：{} → {}（原偏差 {} ms）",
+            fmt_st(&before),
+            fmt_st(&local),
+            diff_ms
+        ));
+    }
+}

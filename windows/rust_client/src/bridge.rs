@@ -11,6 +11,7 @@
 //! - 0x08 鼠标强制移动到屏幕正中央（交互键 / 解除锁定专用，无载荷）
 //! - 0x09 记录当前光标位置（交互键序列）
 //! - 0x0A 还原到 0x09 记录的光标位置（交互键序列）
+//! - 0x0B 时间同步：Byte1-7 为小端 56 位 epoch 毫秒（APK 下发），校准 Windows 系统时间
 
 use std::io::{ErrorKind, Read};
 use std::net::{SocketAddr, TcpStream, ToSocketAddrs};
@@ -153,6 +154,14 @@ fn process_packet(data: &[u8; PACKET_SIZE]) {
         0x09 => win::save_cursor(),
         // 交互键序列：把光标还原到 0x09 记录的位置
         0x0A => win::restore_cursor(),
+        // 时间同步：Byte1-7 为小端 56 位 epoch 毫秒，校准 Windows 系统时间
+        0x0B => {
+            let mut millis: u64 = 0;
+            for i in 0..7 {
+                millis |= (data[1 + i] as u64) << (8 * i);
+            }
+            win::sync_system_time(millis);
+        }
         _ => {}
     }
 }
