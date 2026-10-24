@@ -1,6 +1,7 @@
 package com.steamlike.controller.injection  // 声明包名：注入相关类的包
 
 import android.util.Log  // 导入日志工具类
+import com.steamlike.controller.BuildConfig  // 导入 BuildConfig（读取 versionName 用于版本同步包）
 import java.io.IOException  // 导入 IO 异常类
 import java.io.OutputStream  // 导入输出流类（向客户端写数据）
 import java.net.InetSocketAddress  // 导入网络地址类（绑定监听地址）
@@ -42,7 +43,7 @@ import java.util.concurrent.atomic.AtomicInteger  // 导入原子整数类（自
  *   0x04 = 鼠标滚轮
  *   0x05 = 释放所有按键
  *   0x06 = 心跳Ping
- *   0x07 = 鼠标归位（落点由开关决定：屏幕外下方 / 屏幕正中央）
+ *   0x07 = 鼠标归位（落点由开关决定：屏幕左下角之外 2/3 处 / 屏幕正中央）
  *   0x08 = 鼠标强制移动到屏幕正中央（交互键 / 解除锁定专用）
  *   0x09 = 记录当前鼠标光标位置（交互键序列）
  *   0x0A = 还原到 0x09 记录的鼠标光标位置（交互键序列）
@@ -70,7 +71,7 @@ import java.util.concurrent.atomic.AtomicInteger  // 导入原子整数类（自
  *   Byte 3-7: 保留
  *
  * 鼠标归位 (0x07):
- *   Byte 1: 落点 (0=屏幕正中央, 1=屏幕中央正下方、屏幕下边缘之外 1/10 屏高处)
+ *   Byte 1: 落点 (0=屏幕正中央, 1=屏幕左下角之外、屏幕下边缘下方 2/3 屏高处)
  *   Byte 2-7: 保留
  *
  * 鼠标强制居中央 (0x08):
@@ -111,6 +112,8 @@ class InputBridgeServer(  // 语法：class 声明类；InputBridge TCP 服务�
         const val MSG_CURSOR_SAVE: Byte = 0x09  // 消息类型：记录当前鼠标光标位置（交互键序列）
         const val MSG_CURSOR_RESTORE: Byte = 0x0A  // 消息类型：还原到记录的光标位置（交互键序列）
         const val MSG_TIME_SYNC: Byte = 0x0B  // 消息类型：时间同步（下发 APK 当前时间给 Windows 客户端）
+        const val MSG_VERSION: Byte = 0x0C  // 消息类型：版本同步（下发 APK 版本号，Windows 客户端界面/标题栏显示）
+        const val MSG_CLIENT_VERSION: Byte = 0x20  // 消息类型：客户端信息（Windows 客户端上报 exe 编译版本）
 
         const val PACKET_SIZE = 8  // 语法：const val 编译期常量；协议数据包固定长度 8 字节
     }  // 结束 companion object
@@ -124,6 +127,7 @@ class InputBridgeServer(  // 语法：class 声明类；InputBridge TCP 服务�
     var onClientConnected: ((String) -> Unit)? = null  // 语法：var + lambda 类型 + ?可空；客户端连接回调
     var onClientDisconnected: ((String) -> Unit)? = null  // 语法：var + lambda 类型 + ?可空；客户端断开回调
     var onServerError: ((String) -> Unit)? = null  // 语法：var + lambda 类型 + ?可空；服务器错误回调
+    var onClientVersionMismatch: ((String) -> Unit)? = null  // 语法：var + lambda 类型 + ?可空；客户端 exe 版本与 APK 期望不一致回调
 
     /**
      * 启动TCP服务器
@@ -314,6 +318,23 @@ class InputBridgeServer(  // 语法：class 声明类；InputBridge TCP 服务�
         enqueue(packet)  // 加入发送队列
     }  // 结束 sendTimeSync 函数
 
+    /**
+     * 发送版本同步包
+     *
+     * 把 APK 的 versionName 拆成 主版本/次版本/修订号 写入 Byte 1-3，
+     * Windows 客户端收到后用它刷新界面与标题栏的版本号，因此仅改版本号
+     * 无需重新编译或重新导出 exe。客户端每次连接建立时发送一次。
+     */
+    fun sendVersion() {  // 语法：fun 函数；发送版本同步包
+        val packet = ByteArray(PACKET_SIZE)  // 创建 8 字节定长数据包
+        packet[0] = MSG_VERSION  // 写入消息类型：版本同步
+        val parts = BuildConfig.VERSION_NAME.split(".")  // 拆分版本号（major.minor.patch）
+        for (i in 0..2) {  // 语法：for 循环；依次写入三个数字
+            packet[1 + i] = ((parts.getOrNull(i)?.toIntOrNull() ?: 0) and 0xFF).toByte()  // 越界或非数字按 0 处理
+        }  // 结束循环
+        enqueue(packet)  // 加入发送队列
+    }  // 结束 sendVersion 函数
+
     /** 是否有客户端连接 */
     fun hasClients(): Boolean = clients.isNotEmpty()  // 语法：单表达式函数；返回客户端列表是否非空
 
@@ -350,6 +371,7 @@ class InputBridgeServer(  // 语法：class 声明类；InputBridge TCP 服务�
                 Log.i(TAG, "客户端已连接: $addr")  // 语法：字符串模板；打印连接日志
                 onClientConnected?.invoke(addr)  // 语法：?. 安全调用；通知连接回调
                 sendTimeSync()  // 客户端连上后立即下发当前时间，校准 Winlator 系统时间
+                sendVersion()  // 同时下发 APK 版本号，客户端界面/标题栏显示与 APK 一致的版本
                 Thread({ handleClient(client) }, "BridgeServer-Client-${client.id}").start()  // 语法：lambda + Thread + 字符串模板；启动客户端处理线程
             } catch (e: IOException) {  // 语法：catch 捕获 IO 异常
                 if (isRunning.get()) {  // 语法：if 条件判断；仅在运行中才记录错误
@@ -360,15 +382,31 @@ class InputBridgeServer(  // 语法：class 声明类；InputBridge TCP 服务�
     }  // 结束 acceptLoop 函数
 
     /**
-     * 处理单个客户端连接（读取客户端发来的数据，目前仅用于检测断开）
+     * 处理单个客户端连接（读取客户端发来的定长数据包）
+     *
+     * 目前客户端只在连接建立时上报一次 exe 版本（0x20），用于判断是否需要重新导出客户端；
+     * 其余字节仅用于检测断开。读取按 8 字节定长分包，避免 TCP 分片导致解析错位。
      */
     private fun handleClient(client: ClientConnection) {  // 语法：private fun 私有函数；处理单个客户端连接
         try {  // 尝试读取客户端数据
             val input = client.socket.getInputStream()  // 获取客户端输入流（读取断开信号）
             val buffer = ByteArray(64)  // 语法：val + ByteArray；创建读取缓冲区
+            val frame = ByteArray(PACKET_SIZE)  // 定长帧缓冲（按 8 字节组包）
+            var filled = 0  // 当前帧已填充字节数
             while (isRunning.get() && !client.closed) {  // 语法：while + && 逻辑与 + ! 取反；运行且未关闭时持续读
                 val read = input.read(buffer)  // 读取客户端发来的数据
                 if (read == -1) break  // 客户端断开 // 读到 -1 说明对端已关闭连接
+                var offset = 0  // 本次读到的数据偏移
+                while (offset < read) {  // 语法：while 循环；把读到的字节逐个填进定长帧
+                    val copy = minOf(PACKET_SIZE - filled, read - offset)  // 本次可拷贝字节数
+                    System.arraycopy(buffer, offset, frame, filled, copy)  // 拷贝到帧缓冲
+                    filled += copy  // 更新已填充字节数
+                    offset += copy  // 更新偏移
+                    if (filled == PACKET_SIZE) {  // 凑满一个完整数据包
+                        filled = 0  // 重置帧缓冲计数
+                        handleClientPacket(frame)  // 处理该数据包
+                    }  // 结束整包判断
+                }  // 结束内层 while 循环
             }  // 结束 while 循环
         } catch (e: IOException) {  // 语法：catch 捕获 IO 异常
             // 客户端断开
@@ -380,6 +418,23 @@ class InputBridgeServer(  // 语法：class 声明类；InputBridge TCP 服务�
             onClientDisconnected?.invoke(addr)  // 语法：?. 安全调用；通知断开回调
         }  // 结束 finally 块
     }  // 结束 handleClient 函数
+
+    /**
+     * 处理客户端上报的数据包
+     *
+     * 目前只处理 0x20 客户端信息包：比对 exe 编译版本与 APK 期望的 Rust 版本，
+     * 不一致说明 Winlator 里的 exe 没有更新，需要重新导出并复制。
+     */
+    private fun handleClientPacket(packet: ByteArray) {  // 语法：private fun 私有函数；处理客户端上报的数据包
+        if (packet[0] != MSG_CLIENT_VERSION) return  // 只处理客户端信息包
+        val clientVersion = "${packet[1]}.${packet[2]}.${packet[3]}"  // 拼成 主.次.修订 版本号
+        if (clientVersion != BuildConfig.RUST_CLIENT_VERSION) {  // 与 APK 期望版本比对
+            Log.w(TAG, "客户端 exe 版本不一致: 实际 $clientVersion, 期望 ${BuildConfig.RUST_CLIENT_VERSION}")  // 打印版本不一致警告
+            onClientVersionMismatch?.invoke(clientVersion)  // 通知外部提示用户重新导出客户端
+        } else {  // 版本一致
+            Log.i(TAG, "客户端 exe 版本已是最新: $clientVersion")  // 打印版本一致日志
+        }  // 结束版本比对
+    }  // 结束 handleClientPacket 函数
 
     /**
      * 消息分发循环：将队列中的消息发送给所有已连接的客户端

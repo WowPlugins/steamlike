@@ -1207,10 +1207,20 @@ class MainActivity : AppCompatActivity() { // 声明主界面 Activity，继承 
         } // 结束版本分支
         results.add("config.json: ${if (configSuccess) "OK" else "FAIL"} (${configBytes.size} bytes)") // 记录 config.json 导出结果
 
+        // 额外导出 version.txt（Windows 客户端启动时读取该文件显示版本号，
+        // 因此仅提升版本号无需重新编译/导出 exe）
+        val versionBytes = "${BuildConfig.VERSION_NAME}\n".toByteArray(Charsets.UTF_8) // 版本号文本（语法：字符串模板）
+        val versionSuccess = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) { // 系统版本分支（语法：if 条件分支）
+            exportViaMediaStore(versionBytes, "version.txt") // 用 MediaStore 方式写入
+        } else { // 旧系统分支
+            exportViaLegacyFile(versionBytes, "version.txt") // 用传统文件方式写入
+        } // 结束版本分支
+        results.add("version.txt: ${if (versionSuccess) "OK" else "FAIL"} (${versionBytes.size} bytes)") // 记录 version.txt 导出结果
+
         // 汇总提示
         val allSuccess = results.all { it.contains("OK") } // 判断是否全部成功（语法：lambda + all 判断）
         val msg = if (allSuccess) { // 全部成功时（语法：if 条件分支）
-            "已导出 ${exportFiles.size + 1} 个文件到 Download/$exportDirName 目录:\n" + // 成功提示第一行
+            "已导出 ${exportFiles.size + 2} 个文件到 Download/$exportDirName 目录:\n" + // 成功提示第一行（exe+两个脚本+config.json+version.txt）
             results.joinToString("\n") { "  $it" } + "\n" + // 拼接各文件结果（语法：joinToString + lambda）
             if (gameExe.isBlank()) { // 游戏路径为空时（语法：if 嵌套表达式）
                 "config.json 的 wowPath 为空，Windows 客户端启动时会报错退出。\n请先在“选择游戏 EXE 路径”设置游戏路径后重新导出。" // 提醒需先设置游戏路径

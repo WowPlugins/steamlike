@@ -102,6 +102,7 @@ pub struct App {
     cfg: ClientConfig,
     last_intercept: bool,
     last_connect: bool,
+    title_version: String,
 }
 
 impl App {
@@ -109,6 +110,7 @@ impl App {
         Self {
             last_intercept: cfg.intercept_enabled,
             last_connect: cfg.auto_connect,
+            title_version: crate::runtime::display_version(),
             cfg,
         }
     }
@@ -123,8 +125,18 @@ impl eframe::App for App {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         let mut dirty = false;
 
+        // 连接后 APK 会下发版本号：与标题栏不一致时同步更新窗口标题
+        let version = crate::runtime::display_version();
+        if version != self.title_version {
+            let old_title = format!("SteamLike InputBridge v{}", self.title_version);
+            let new_title = format!("SteamLike InputBridge v{}", version);
+            if crate::win::rename_own_window(&old_title, &new_title) {
+                self.title_version = version.clone();
+            }
+        }
+
         egui::CentralPanel::default().show(ctx, |ui| {
-            ui.heading(format!("SteamLike InputBridge v{}", crate::VERSION));
+            ui.heading(format!("SteamLike InputBridge v{}", version));
             ui.label("运行在 Winlator 内：接收手机手柄事件注入魔兽，可选拦截本地键鼠事件。");
             ui.separator();
 
@@ -271,7 +283,7 @@ impl eframe::App for App {
             if ui
                 .checkbox(
                     &mut self.cfg.cursor_park_offscreen,
-                    "WASD 归中时停放到屏幕外下方（关闭则为屏幕正中央）",
+                    "WASD 归中时停放到屏幕左下角之外 2/3 处（关闭则为屏幕正中央）",
                 )
                 .changed()
             {

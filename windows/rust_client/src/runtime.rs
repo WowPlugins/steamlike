@@ -8,6 +8,7 @@
 use std::fs::File;
 use std::sync::atomic::{AtomicBool, AtomicI64, AtomicU32};
 use std::sync::Mutex;
+use std::sync::OnceLock;
 
 use windows::Win32::System::SystemInformation::GetLocalTime;
 
@@ -29,7 +30,7 @@ pub struct Runtime {
     pub right_locked: AtomicBool,
     /// 上一次鼠标光标位置（高 32 位 X，低 32 位 Y），用于把绝对移动换算成相对移动
     pub last_mouse: AtomicI64,
-    /// 「居中落点」开关：true = 屏幕中央正下方、屏幕下边缘之外 1/10 屏高处；false = 屏幕正中央
+    /// 「居中落点」开关：true = 屏幕中央正下方、屏幕下边缘之外 2/3 屏高处；false = 屏幕正中央
     pub cursor_park_offscreen: AtomicBool,
     /// 交互键序列开始时记录的光标位置（高 32 位 X，低 32 位 Y），供序列末尾还原
     pub saved_cursor: AtomicI64,
@@ -92,6 +93,45 @@ fn timestamp() -> String {
         "[{:02}:{:02}:{:02}.{:03}]",
         st.wHour, st.wMinute, st.wSecond, st.wMilliseconds
     )
+}
+
+/// 客户端版本号（进程内缓存一次）
+///
+/// 优先读取 exe 目录下的 version.txt（APK 导出时写入，仅改版本号时无需重编 Rust），
+/// 读取失败时回退到编译期注入的 STEAMLIKE_VERSION，再回退到 Cargo.toml 的版本。
+pub fn version() -> &'static str {
+    static VERSION: OnceLock<String> = OnceLock::new();
+    VERSION.get_or_init(|| {
+        let from_file = std::env::current_exe()
+            .ok()
+            .and_then(|exe| exe.parent().map(|dir| dir.join("version.txt")))
+            .and_then(|path| std::fs::read_to_string(path).ok())
+            .map(|text| text.trim().to_string())
+            .filter(|v| !v.is_empty());
+        from_file.unwrap_or_else(|| {
+            option_env!("STEAMLIKE_VERSION")
+                .unwrap_or(env!("CARGO_PKG_VERSION"))
+                .to_string()
+        })
+    })
+}
+
+/// 远端（APK）下发的版本号：连接成功后自动同步，界面优先显示它
+static REMOTE_VERSION: Mutex<Option<String>> = Mutex::new(None);
+
+/// 记录 APK 下发的版本号
+pub fn set_remote_version(v: String) {
+    if !v.is_empty() {
+        *REMOTE_VERSION.lock().unwrap() = Some(v);
+    }
+}
+
+/// 界面显示的版本号：优先用 APK 下发的（连接后），否则用 exe 自带版本
+pub fn display_version() -> String {
+    if let Some(v) = REMOTE_VERSION.lock().unwrap().clone() {
+        return v;
+    }
+    version().to_string()
 }
 
 /// 追加一条日志：同时输出到控制台、日志文件与界面日志区

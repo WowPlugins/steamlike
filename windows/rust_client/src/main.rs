@@ -22,13 +22,6 @@ use windows::Win32::UI::WindowsAndMessaging::{MessageBoxW, MB_ICONINFORMATION, M
 
 use runtime::{BRIDGE_TARGET, RT, WANT_CONNECT};
 
-/// 客户端版本号：Gradle 编译 exe 时注入 APK 的 versionName（环境变量 STEAMLIKE_VERSION），
-/// 手动 cargo build 时回退到 Cargo.toml 的 version
-pub const VERSION: &str = match option_env!("STEAMLIKE_VERSION") {
-    Some(v) => v,
-    None => env!("CARGO_PKG_VERSION"),
-};
-
 const MUTEX_NAME_W: windows::core::PCWSTR = w!("Global\\SteamLikeInputBridgeClient");
 
 fn main() -> eframe::Result<()> {
@@ -48,7 +41,10 @@ fn main() -> eframe::Result<()> {
     // 单实例确认后清空旧日志并初始化文件日志
     runtime::init_file_log();
 
-    runtime::log(format!("==== SteamLike InputBridge v{} 启动 ====", VERSION));
+    runtime::log(format!(
+        "==== SteamLike InputBridge v{} 启动 ====",
+        runtime::version()
+    ));
 
     let cfg = config::load();
     runtime::log(format!(
@@ -77,7 +73,7 @@ fn main() -> eframe::Result<()> {
     };
 
     let result = eframe::run_native(
-        &format!("SteamLike InputBridge v{}", VERSION),
+        &format!("SteamLike InputBridge v{}", runtime::version()),
         options,
         Box::new(|cc| {
             ui::setup_fonts(&cc.egui_ctx);

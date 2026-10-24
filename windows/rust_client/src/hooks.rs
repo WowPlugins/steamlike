@@ -104,7 +104,7 @@ fn ensure_right_locked_on_move() {
     if RT.right_locked.load(Ordering::Relaxed) {
         return;
     }
-    // 先把光标归位（落点由「居中落点」开关决定：屏幕外下方 / 屏幕正中央），
+    // 先把光标归位（落点由「居中落点」开关决定：屏幕左下角之外 2/3 处 / 屏幕正中央），
     // 避免锁定瞬间视角从偏移位置开始漂移；顺序仍保持「先归位、后锁定」不变。
     win::position_cursor(RT.cursor_park_offscreen.load(Ordering::Relaxed));
     if set_lock(BTN_RIGHT, true) {

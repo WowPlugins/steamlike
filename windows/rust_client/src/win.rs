@@ -9,7 +9,8 @@ use windows::core::{w, PCWSTR};
 use windows::Win32::Foundation::POINT;
 use windows::Win32::UI::Input::KeyboardAndMouse::*;
 use windows::Win32::UI::WindowsAndMessaging::{
-    FindWindowW, GetCursorPos, GetSystemMetrics, SetCursorPos, SM_CXSCREEN, SM_CYSCREEN,
+    FindWindowW, GetCursorPos, GetSystemMetrics, SetCursorPos, SetWindowTextW, SM_CXSCREEN,
+    SM_CYSCREEN,
 };
 
 use crate::runtime::{log, pack_pos, unpack_pos, CURSOR_UNSET, RT};
@@ -159,6 +160,25 @@ fn screen_size() -> (i32, i32) {
     unsafe { (GetSystemMetrics(SM_CXSCREEN), GetSystemMetrics(SM_CYSCREEN)) }
 }
 
+/// 按当前标题查找本程序窗口并改名，用于连接后把标题栏版本号同步为 APK 版本
+///
+/// eframe 0.22 没有运行时修改标题的 API，这里直接调用 Win32 `FindWindowW` + `SetWindowTextW`。
+///
+/// @param old_title 当前窗口标题（必须与创建时一致才能找到窗口）
+/// @param new_title 新窗口标题
+/// @return 是否成功改名
+pub fn rename_own_window(old_title: &str, new_title: &str) -> bool {
+    let old_w: Vec<u16> = old_title.encode_utf16().chain(std::iter::once(0)).collect();
+    let new_w: Vec<u16> = new_title.encode_utf16().chain(std::iter::once(0)).collect();
+    unsafe {
+        let hwnd = FindWindowW(PCWSTR::null(), PCWSTR(old_w.as_ptr()));
+        if hwnd.0 == 0 {
+            return false;
+        }
+        SetWindowTextW(hwnd, PCWSTR(new_w.as_ptr())).is_ok()
+    }
+}
+
 /// WoW 主窗口是否还存在（带缓存，避免每帧枚举窗口）
 ///
 /// 按窗口类名 `GxWindowClass` 判断，找不到再按标题兜底。
@@ -246,18 +266,18 @@ pub fn center_cursor() {
     }
 }
 
-/// 把鼠标光标停放到「屏幕中央正下方、屏幕下边缘之外 1/10 屏高处」
+/// 把鼠标光标停放到「屏幕左下角之外、屏幕下边缘下方 2/3 屏高处」
 ///
-/// 视角锁定前把光标停到屏幕外，可避免它停在界面元素上弹出 tooltip。
+/// 视角锁定前把光标停到屏幕外，可避免它停在界面元素上弹出 tooltip；
+/// 落点取左下角，让光标尽量远离游戏画面中央的交互区域。
 pub fn park_cursor_offscreen() {
     unsafe {
-        let cx = GetSystemMetrics(SM_CXSCREEN) / 2;
         let cy = GetSystemMetrics(SM_CYSCREEN);
-        move_cursor_to(cx, cy + cy / 10);
+        move_cursor_to(0, cy + cy * 2 / 3);
     }
 }
 
-/// 按「居中落点」开关把光标归位：true = 屏幕外下方，false = 屏幕正中央
+/// 按「居中落点」开关把光标归位：true = 屏幕左下角之外，false = 屏幕正中央
 pub fn position_cursor(offscreen: bool) {
     if offscreen {
         park_cursor_offscreen();

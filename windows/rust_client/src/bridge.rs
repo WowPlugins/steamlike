@@ -7,21 +7,36 @@
 //! - 0x04 鼠标滚轮：Byte1-2 delta(int16 LE)
 //! - 0x05 释放所有按键
 //! - 0x06 心跳（忽略）
-//! - 0x07 鼠标归位：Byte1 落点(0=屏幕正中央，1=屏幕中央正下方、屏幕下边缘之外 1/10 屏高处)
+//! - 0x07 鼠标归位：Byte1 落点(0=屏幕正中央，1=屏幕中央正下方、屏幕下边缘之外 2/3 屏高处)
 //! - 0x08 鼠标强制移动到屏幕正中央（交互键 / 解除锁定专用，无载荷）
 //! - 0x09 记录当前光标位置（交互键序列）
 //! - 0x0A 还原到 0x09 记录的光标位置（交互键序列）
 //! - 0x0B 时间同步：Byte1-7 为小端 56 位 epoch 毫秒（APK 下发），校准 Windows 系统时间
+//! - 0x0C 版本同步：Byte1=主版本，Byte2=次版本，Byte3=修订号（APK 下发），界面显示该版本
+//! - 0x20 客户端信息（exe → APK）：Byte1-3 为 exe 编译时的版本号，APK 据此判断客户端是否过期
 
-use std::io::{ErrorKind, Read};
+use std::io::{ErrorKind, Read, Write};
 use std::net::{SocketAddr, TcpStream, ToSocketAddrs};
 use std::sync::atomic::Ordering;
 use std::time::Duration;
 
-use crate::runtime::{log, set_status, BRIDGE_TARGET, CONNECTED, WANT_CONNECT};
+use crate::runtime::{self, log, set_status, BRIDGE_TARGET, CONNECTED, WANT_CONNECT};
 use crate::win;
 
 const PACKET_SIZE: usize = 8;
+
+/// 客户端版本信息包（0x20）：把 exe 编译时的版本号上报给 APK
+///
+/// APK 用它与自身携带的「Rust 期望版本」比对，不一致时提示需要重新导出客户端。
+/// 注意这里用编译期版本（Cargo.toml），不是运行时读取的 version.txt。
+fn client_version_packet() -> [u8; PACKET_SIZE] {
+    let mut packet = [0u8; PACKET_SIZE];
+    packet[0] = 0x20;
+    for (i, part) in env!("CARGO_PKG_VERSION").split('.').take(3).enumerate() {
+        packet[1 + i] = part.parse::<u8>().unwrap_or(0);
+    }
+    packet
+}
 
 /// 启动网络线程（程序启动时调用一次，线程自身按开关决定连接/断开）
 pub fn start() {
@@ -73,10 +88,12 @@ fn bridge_thread() {
                 continue;
             };
             match TcpStream::connect_timeout(&addr, Duration::from_secs(2)) {
-                Ok(s) => {
+                Ok(mut s) => {
                     // 手柄事件都是 8 字节小包，禁用 Nagle 降低延迟
                     let _ = s.set_nodelay(true);
                     let _ = s.set_read_timeout(Some(Duration::from_millis(200)));
+                    // 上报 exe 自身版本，供 APK 判断客户端是否需要重新导出
+                    let _ = s.write_all(&client_version_packet());
                     stream = Some(s);
                     connected_to = Some(target.clone());
                     CONNECTED.store(true, Ordering::Relaxed);
@@ -161,6 +178,12 @@ fn process_packet(data: &[u8; PACKET_SIZE]) {
                 millis |= (data[1 + i] as u64) << (8 * i);
             }
             win::sync_system_time(millis);
+        }
+        // 版本同步：Byte1/2/3 分别为 major/minor/patch（APK 下发），界面据此显示版本号
+        0x0C => {
+            let v = format!("{}.{}.{}", data[1], data[2], data[3]);
+            runtime::set_remote_version(v.clone());
+            runtime::log(format!("已同步 APK 版本号：v{}", v));
         }
         _ => {}
     }

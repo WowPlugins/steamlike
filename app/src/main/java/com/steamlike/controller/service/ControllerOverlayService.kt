@@ -37,6 +37,7 @@ import android.widget.LinearLayout  // 导入线性布局容器
 import android.widget.ScrollView  // 导入滚动视图容器
 import android.widget.TextView  // 导入文本视图控件
 import android.widget.Toast  // 导入 Toast 提示类
+import com.steamlike.controller.BuildConfig  // 导入 BuildConfig（读取 RUST_CLIENT_VERSION 用于版本比对）
 import androidx.core.app.NotificationCompat  // 导入通知兼容构建器
 import androidx.core.app.ServiceCompat  // 导入服务兼容工具类
 import android.content.pm.PackageManager  // 导入包管理器类
@@ -481,6 +482,12 @@ class ControllerOverlayService : Service() {  // class=类声明；继承 Servic
                     updateStatus("❌ 服务器错误: $msg")  // 字符串模板 "$var"=插值变量；更新错误状态
                     broadcastClientStatus("服务器错误: $msg", false)  // 字符串模板 "$var"=插值变量；广播错误状态
                 }  // 结束 onServerError lambda
+                bridgeServer?.onClientVersionMismatch = { clientVersion ->  // ?.=安全调用；客户端 exe 版本与 APK 期望不一致回调
+                    val expected = BuildConfig.RUST_CLIENT_VERSION  // APK 期望的 Rust 客户端版本（取自 Cargo.toml）
+                    val msg = "⚠ Windows 客户端版本 v$clientVersion 与 APK 期望 v$expected 不一致，请重新导出并复制 inputbridge_client.exe"  // 提示文本
+                    Log.w(TAG, msg)  // 打印版本不一致日志
+                    toast(msg)  // 弹出提示，避免使用过期 exe 才发现功能缺失
+                }  // 结束 onClientVersionMismatch lambda
 
                 if (bridgeServer?.start() != true) {  // ?.=安全调用；if 判断：服务器启动失败
                     Log.e(TAG, "TCP server start failed")  // 打印服务器启动失败日志
