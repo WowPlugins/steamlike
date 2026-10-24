@@ -7,6 +7,7 @@
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use windows::core::{w, PCWSTR};
 use windows::Win32::Foundation::POINT;
+use windows::Win32::System::SystemInformation::GetTickCount;
 use windows::Win32::UI::Input::KeyboardAndMouse::*;
 use windows::Win32::UI::WindowsAndMessaging::{
     FindWindowW, GetCursorPos, GetSystemMetrics, SetCursorPos, SetWindowTextW, SM_CXSCREEN,
@@ -264,6 +265,29 @@ pub fn center_cursor() {
         let cy = GetSystemMetrics(SM_CYSCREEN) / 2;
         move_cursor_to(cx, cy);
     }
+}
+
+/// 系统运行毫秒数（用于比较「最近一次输入」的先后）
+pub fn current_tick() -> u32 {
+    unsafe { GetTickCount() }
+}
+
+/// 自 `baseline_tick` 之后系统是否收到过键鼠输入（含鼠标移动）
+///
+/// 用 `GetLastInputInfo` 读系统级最后输入时间，不需要安装钩子，
+/// 因此不受「键鼠拦截」开关影响。
+pub fn input_since(baseline_tick: u32) -> bool {
+    let mut info = LASTINPUTINFO {
+        cbSize: std::mem::size_of::<LASTINPUTINFO>() as u32,
+        dwTime: 0,
+    };
+    unsafe {
+        if !GetLastInputInfo(&mut info).as_bool() {
+            return false;
+        }
+    }
+    // dwTime 是 32 位毫秒计数，用有符号差值判断先后，避免计数回绕误判
+    (info.dwTime.wrapping_sub(baseline_tick) as i32) > 0
 }
 
 /// 把鼠标光标停放到「屏幕左下角之外、屏幕下边缘下方 2/3 屏高处」

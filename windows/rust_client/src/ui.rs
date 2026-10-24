@@ -107,16 +107,25 @@ pub struct App {
     mismatch_dismissed: bool,
     /// 版本不一致是否已写入日志（避免每帧重复记录）
     mismatch_logged: bool,
+    /// 游戏 exe 路径错误提示（路径不存在/未设置时显示红字）
+    launch_error: Option<String>,
 }
 
 impl App {
     pub fn new(cfg: ClientConfig) -> Self {
+        // 启动时就检查一次路径，路径无效则直接显示提示
+        let launch_error = if cfg.auto_launch || !cfg.wow_path.trim().is_empty() {
+            config::check_wow_path(&cfg).err()
+        } else {
+            None
+        };
         Self {
             last_intercept: cfg.intercept_enabled,
             last_connect: cfg.auto_connect,
             title_version: crate::runtime::display_version(),
             mismatch_dismissed: false,
             mismatch_logged: false,
+            launch_error,
             cfg,
         }
     }
@@ -171,10 +180,45 @@ impl eframe::App for App {
                         .add_filter("可执行文件", &["exe"])
                         .pick_file()
                     {
-                        self.cfg.wow_path = p.display().to_string();
+                        let picked = p.display().to_string();
+                        self.cfg.wow_path = picked.clone();
+                        config::remember_path(&mut self.cfg, &picked);
+                        self.launch_error = None;
                         dirty = true;
                     }
                 }
+                // 历史路径下拉：快速切回以前用过的 exe，选中即校验路径是否有效
+                ui.label("历史：");
+                let selected_text = if self.cfg.wow_path.trim().is_empty() {
+                    "（无）".to_string()
+                } else {
+                    std::path::Path::new(&self.cfg.wow_path)
+                        .file_name()
+                        .map(|n| n.to_string_lossy().to_string())
+                        .unwrap_or_else(|| self.cfg.wow_path.clone())
+                };
+                let history = self.cfg.wow_path_history.clone();
+                egui::ComboBox::from_id_source("wow_path_history")
+                    .selected_text(selected_text)
+                    .width(200.0)
+                    .show_ui(ui, |ui| {
+                        if history.is_empty() {
+                            ui.label("暂无历史路径");
+                        }
+                        for path in history {
+                            if ui.selectable_label(self.cfg.wow_path == path, &path).clicked() {
+                                self.cfg.wow_path = path.clone();
+                                if std::path::Path::new(&path).is_file() {
+                                    self.launch_error = None;
+                                } else {
+                                    self.launch_error =
+                                        Some(format!("exe 路径不存在：{}", path));
+                                    runtime::log(format!("[启动] 历史路径不可用：{}", path));
+                                }
+                                dirty = true;
+                            }
+                        }
+                    });
             });
             let resp = ui.add(
                 egui::TextEdit::singleline(&mut self.cfg.wow_path)
@@ -183,6 +227,10 @@ impl eframe::App for App {
             );
             if resp.changed() {
                 dirty = true;
+                // 手动输入成有效路径后清掉旧提示
+                if std::path::Path::new(self.cfg.wow_path.trim()).is_file() {
+                    self.launch_error = None;
+                }
             }
             if ui
                 .checkbox(
@@ -199,8 +247,50 @@ impl eframe::App for App {
             {
                 dirty = true;
             }
+            ui.horizontal(|ui| {
+                ui.label("自动启动延时：");
+                if ui
+                    .add(
+                        egui::DragValue::new(&mut self.cfg.auto_launch_delay_ms)
+                            .clamp_range(0..=30000)
+                            .speed(50.0)
+                            .suffix(" ms"),
+                    )
+                    .changed()
+                {
+                    dirty = true;
+                }
+                ui.add_space(12.0);
+                if ui
+                    .checkbox(
+                        &mut self.cfg.skip_launch_on_input,
+                        "延时内有键鼠输入则本次不自动启动",
+                    )
+                    .changed()
+                {
+                    dirty = true;
+                }
+            });
             if ui.button("立即启动魔兽").clicked() {
-                crate::launch_game(&self.cfg);
+                match config::check_wow_path(&self.cfg) {
+                    Ok(path) => {
+                        self.launch_error = None;
+                        config::remember_path(&mut self.cfg, &path);
+                        dirty = true;
+                        crate::launch_game(&self.cfg);
+                    }
+                    Err(e) => {
+                        self.launch_error = Some(e.clone());
+                        runtime::log(format!("[启动] {}", e));
+                    }
+                }
+            }
+            if let Some(err) = &self.launch_error {
+                // 路径无效时红色提示，避免用户点了没反应
+                ui.label(
+                    egui::RichText::new(err)
+                        .color(egui::Color32::from_rgb(0xD3, 0x2F, 0x2F)),
+                );
             }
 
             /* ===== APK 服务器 ===== */

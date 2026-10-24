@@ -64,7 +64,21 @@ fn main() -> eframe::Result<()> {
     bridge::start();
 
     if cfg.auto_launch {
-        launch_game(&cfg);
+        // 自动启动延时：等待期间如果有键鼠输入，可取消本次自动启动（避免打断用户操作）
+        let launch_cfg = cfg.clone();
+        let _ = std::thread::Builder::new()
+            .name("auto_launch".to_string())
+            .spawn(move || {
+                let baseline = win::current_tick();
+                std::thread::sleep(std::time::Duration::from_millis(
+                    launch_cfg.auto_launch_delay_ms as u64,
+                ));
+                if launch_cfg.skip_launch_on_input && win::input_since(baseline) {
+                    runtime::log("自动启动等待期间检测到键鼠输入，本次不启动魔兽");
+                    return;
+                }
+                launch_game(&launch_cfg);
+            });
     }
 
     let options = eframe::NativeOptions {
@@ -107,14 +121,14 @@ fn apply_runtime(cfg: &config::ClientConfig) {
 ///
 /// 供启动流程与界面「立即启动魔兽」按钮共用。
 pub(crate) fn launch_game(cfg: &config::ClientConfig) {
-    let Some(path) = config::resolve_wow_path(cfg) else {
-        return;
+    let path = match config::check_wow_path(cfg) {
+        Ok(p) => p,
+        Err(e) => {
+            runtime::log(format!("启动游戏失败：{}", e));
+            return;
+        }
     };
     let exe = std::path::PathBuf::from(&path);
-    if !exe.exists() {
-        runtime::log(format!("游戏 exe 不存在：{}", path));
-        return;
-    }
     let mut cmd = std::process::Command::new(&exe);
     if let Some(dir) = exe.parent() {
         cmd.current_dir(dir);

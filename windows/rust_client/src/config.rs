@@ -19,10 +19,16 @@ pub const DEFAULT_PORT: u16 = 27015;
 pub struct ClientConfig {
     /// 界面上选择的魔兽 exe 路径
     pub wow_path: String,
-    /// true = 从 config.json 读取游戏路径；false = 使用界面选择的路径（默认读取 config.json）
-    pub wow_path_from_config_json: bool,
+    /// 历史使用过的魔兽 exe 路径（下拉快速切换，最新的在前）
+    pub wow_path_history: Vec<String>,
     /// 启动程序时是否自动启动魔兽（默认启动）
     pub auto_launch: bool,
+    /// 自动启动魔兽前的等待时间（毫秒），期间检测到键鼠输入可取消本次自动启动
+    pub auto_launch_delay_ms: u32,
+    /// 自动启动等待期间有键鼠输入则取消本次自动启动（默认开启）
+    pub skip_launch_on_input: bool,
+    /// true = 从 config.json 读取游戏路径；false = 使用界面选择的路径（默认读取 config.json）
+    pub wow_path_from_config_json: bool,
     /// APK 服务器 IP
     pub server_ip: String,
     /// APK 服务器端口
@@ -48,8 +54,11 @@ impl Default for ClientConfig {
     fn default() -> Self {
         Self {
             wow_path: String::new(),
+            wow_path_history: Vec::new(),
             wow_path_from_config_json: true,
             auto_launch: true,
+            auto_launch_delay_ms: 1000,
+            skip_launch_on_input: true,
             server_ip: DEFAULT_IP.to_string(),
             server_port: DEFAULT_PORT,
             auto_connect: true,
@@ -137,4 +146,41 @@ pub fn resolve_wow_path(cfg: &ClientConfig) -> Option<String> {
     } else {
         Some(cfg.wow_path.clone())
     }
+}
+
+/// 校验当前设置的游戏路径是否可用：Ok(路径) / Err(给用户看的错误说明)
+pub fn check_wow_path(cfg: &ClientConfig) -> Result<String, String> {
+    if cfg.wow_path_from_config_json {
+        return match read_exported_wow_path() {
+            Some(p) if Path::new(&p).is_file() => Ok(p),
+            Some(p) => Err(format!("config.json 中的 exe 路径不存在：{}", p)),
+            None => Err(format!(
+                "{} 中未找到 wowPath，请先让 APK 导出配置",
+                EXPORTED_CONFIG_FILE_NAME
+            )),
+        };
+    }
+    let path = cfg.wow_path.trim();
+    if path.is_empty() {
+        return Err("请先选择魔兽 exe 路径".to_string());
+    }
+    let file = Path::new(path);
+    if !file.exists() {
+        return Err(format!("exe 路径不存在：{}", path));
+    }
+    if !file.is_file() {
+        return Err(format!("路径不是可执行文件：{}", path));
+    }
+    Ok(path.to_string())
+}
+
+/// 记录一条历史路径（去重、最新在前、最多保留 10 条）
+pub fn remember_path(cfg: &mut ClientConfig, path: &str) {
+    let path = path.trim();
+    if path.is_empty() {
+        return;
+    }
+    cfg.wow_path_history.retain(|p| p != path);
+    cfg.wow_path_history.insert(0, path.to_string());
+    cfg.wow_path_history.truncate(10);
 }
