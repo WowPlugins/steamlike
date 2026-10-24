@@ -103,6 +103,10 @@ pub struct App {
     last_intercept: bool,
     last_connect: bool,
     title_version: String,
+    /// 版本不一致弹窗是否已被用户确认关闭（关闭后一旦操作界面会再次弹出）
+    mismatch_dismissed: bool,
+    /// 版本不一致是否已写入日志（避免每帧重复记录）
+    mismatch_logged: bool,
 }
 
 impl App {
@@ -111,6 +115,8 @@ impl App {
             last_intercept: cfg.intercept_enabled,
             last_connect: cfg.auto_connect,
             title_version: crate::runtime::display_version(),
+            mismatch_dismissed: false,
+            mismatch_logged: false,
             cfg,
         }
     }
@@ -133,6 +139,22 @@ impl eframe::App for App {
             if crate::win::rename_own_window(&old_title, &new_title) {
                 self.title_version = version.clone();
             }
+        }
+
+        // 版本不一致：APK 下发的版本 ≠ 本 exe 编译版本 → 停用全部逻辑并弹模态提示
+        let mismatch = runtime::apk_version_mismatch();
+        if mismatch && !self.mismatch_logged {
+            self.mismatch_logged = true;
+            runtime::log(format!(
+                "[版本] APK v{} 与本客户端 v{} 不一致，所有功能已停用",
+                runtime::apk_version().unwrap_or_default(),
+                runtime::build_version()
+            ));
+        }
+
+        if mismatch && self.mismatch_dismissed && ctx.input(|i| i.pointer.any_click()) {
+            // 用户确认后仍去操作界面：不执行任何功能，重新弹出模态提示
+            self.mismatch_dismissed = false;
         }
 
         egui::CentralPanel::default().show(ctx, |ui| {
@@ -311,9 +333,42 @@ impl eframe::App for App {
                 });
         });
 
+        // 版本不一致：整窗透明遮罩拦住所有点击，主界面上的功能都点不动
+        if mismatch {
+            egui::Area::new(egui::Id::new("mismatch_blocker"))
+                .order(egui::Order::Middle)
+                .fixed_pos(egui::Pos2::ZERO)
+                .show(ctx, |ui| {
+                    ui.allocate_response(ctx.screen_rect().size(), egui::Sense::click());
+                });
+        }
+
+        // 模态提示：版本不一致时展示；用户点「我知道了」暂时关闭，再次操作界面会重新弹出
+        if mismatch && !self.mismatch_dismissed {
+            egui::Window::new("⚠ 版本不一致")
+                .collapsible(false)
+                .resizable(false)
+                .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
+                .show(ctx, |ui| {
+                    ui.label(format!(
+                        "Windows 客户端版本：v{}\n手机 APK 版本：v{}\n",
+                        runtime::build_version(),
+                        runtime::apk_version().unwrap_or_default()
+                    ));
+                    ui.label(
+                        "版本不一致，客户端全部功能已停用（键鼠拦截、注入、连接均不工作）。\n\
+                         请从 APK「导出」重新获取 inputbridge_client.exe，替换到 Winlator 后重启本程序。",
+                    );
+                    ui.add_space(6.0);
+                    if ui.button("我知道了").clicked() {
+                        self.mismatch_dismissed = true;
+                    }
+                });
+        }
+
         // 界面参数即时同步到运行期状态
         RT.intercept_enabled
-            .store(self.cfg.intercept_enabled, Ordering::SeqCst);
+            .store(self.cfg.intercept_enabled && !mismatch, Ordering::SeqCst);
         RT.right_button_fkeys
             .store(self.cfg.right_button_fkeys, Ordering::SeqCst);
         RT.interaction_vk
@@ -324,12 +379,14 @@ impl eframe::App for App {
         RT.cursor_park_offscreen
             .store(self.cfg.cursor_park_offscreen, Ordering::SeqCst);
         *BRIDGE_TARGET.lock().unwrap() = (self.cfg.server_ip.clone(), self.cfg.server_port);
-        WANT_CONNECT.store(self.cfg.auto_connect, Ordering::SeqCst);
+        WANT_CONNECT.store(self.cfg.auto_connect && !mismatch, Ordering::SeqCst);
 
-        if self.cfg.intercept_enabled != self.last_intercept {
-            self.last_intercept = self.cfg.intercept_enabled;
-            hooks::set_enabled(self.last_intercept);
-            runtime::log(if self.last_intercept {
+        // 版本不一致时强制关闭键鼠拦截（配置本身不改，版本恢复一致后自动生效）
+        let intercept_now = self.cfg.intercept_enabled && !mismatch;
+        if intercept_now != self.last_intercept {
+            self.last_intercept = intercept_now;
+            hooks::set_enabled(intercept_now);
+            runtime::log(if intercept_now {
                 "[拦截] 已启用键鼠拦截"
             } else {
                 "[拦截] 已关闭键鼠拦截"

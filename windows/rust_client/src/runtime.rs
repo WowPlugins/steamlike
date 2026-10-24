@@ -126,6 +126,26 @@ pub fn set_remote_version(v: String) {
     }
 }
 
+/// exe 自身编译版本（取自 Cargo.toml，只有 Rust 代码/依赖改动时才会变化）
+pub fn build_version() -> &'static str {
+    env!("CARGO_PKG_VERSION")
+}
+
+/// APK 已下发的版本号（尚未连接或未收到时为 None）
+pub fn apk_version() -> Option<String> {
+    REMOTE_VERSION.lock().unwrap().clone()
+}
+
+/// 版本是否不一致：APK 下发的版本 ≠ exe 编译版本
+///
+/// APK 尚未下发版本时视为一致（此时无法判断，不能误停功能）。
+pub fn apk_version_mismatch() -> bool {
+    match apk_version() {
+        Some(v) => v != build_version(),
+        None => false,
+    }
+}
+
 /// 界面显示的版本号：优先用 APK 下发的（连接后），否则用 exe 自带版本
 pub fn display_version() -> String {
     if let Some(v) = REMOTE_VERSION.lock().unwrap().clone() {
