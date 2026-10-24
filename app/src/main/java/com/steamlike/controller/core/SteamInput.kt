@@ -160,6 +160,23 @@ class SteamInput(context: Context) { // 主控制器类（语法：class 声明�
     var onButtonMapped: ((button: ControllerButton, isPressed: Boolean, mapping: KeyMapping) -> Unit)? = null
 
     /**
+     * 无映射按钮的松开回调
+     *
+     * 当手柄按键松开、但在当前激活层与公共层里都查不到映射时调用。
+     * 典型场景：在操作层里把某键绑定为鼠标左键并按住，松开层触发键使该层停用后
+     * 再松开该键——此时查不到映射，若不通知外部释放，按下时注入的鼠标按钮会一直卡住。
+     */
+    var onButtonReleased: ((button: ControllerButton) -> Unit)? = null
+
+    /**
+     * 操作层停用回调
+     *
+     * 操作层被停用（松开切层键、切换操作集、销毁）时调用；参数为被停用的层，
+     * 一次性停用全部层时参数为 null。外部据此释放该层按键注入的鼠标长按锁存。
+     */
+    var onLayerDeactivated: ((layer: OperationLayer?) -> Unit)? = null
+
+    /**
      * 手柄按钮按下/释放状态回调（覆盖所有按钮，与映射动作类型无关）
      *
      * 在 [handleButtonEvent] 中更新 [heldButtons] 后调用，
@@ -300,6 +317,7 @@ class SteamInput(context: Context) { // 主控制器类（语法：class 声明�
             activeLayerName = if (activeLayers.isEmpty()) "Common" else activeLayers.last().name // 更新激活层名（语法：if 表达式 + else）
             Log.i(TAG, "Layer deactivated: ${layer.name}, active=${activeLayerName}") // 打印停用日志
             onLayerChanged?.invoke(activeLayerName) // 触发层变化回调
+            onLayerDeactivated?.invoke(layer) // 通知外部释放该层按住时注入的鼠标长按锁存
         } // 结束 if
     } // 结束 deactivateLayer 函数
 
@@ -314,11 +332,13 @@ class SteamInput(context: Context) { // 主控制器类（语法：class 声明�
      * 停用所有操作层
      */
     fun deactivateAllLayers() { // 停用所有操作层
+        val hadActive = activeLayers.isNotEmpty() // 记录停用前是否有激活层
         activeLayers.clear() // 清空激活列表
         buttonTriggeredLayers.clear() // 清空层切换触发记录
         switchLayerAndKeyMappings.clear() // 清空切层+按键缓存映射
         activeLayerName = "Common" // 激活层名回到公共层
         onLayerChanged?.invoke(activeLayerName) // 触发层变化回调
+        if (hadActive) onLayerDeactivated?.invoke(null) // 通知外部释放各层按住时注入的鼠标长按锁存
     } // 结束 deactivateAllLayers 函数
 
     /**
@@ -694,7 +714,13 @@ class SteamInput(context: Context) { // 主控制器类（语法：class 声明�
         } // 结束松开分支
 
         // 查找有效映射（先查激活层，回退到 Common 层）
-        val mapping = getEffectiveMapping(button) ?: return // 无有效映射则返回（语法：?: 空值合并）
+        val mapping = getEffectiveMapping(button) // 查找按钮有效映射
+        if (mapping == null) { // 无有效映射
+            // 松开时也必须通知外部释放：按下时可能是在某个操作层里绑定了动作，
+            // 松开前该层已被停用（查不到映射），不通知会让注入的键/鼠标按钮永久卡住
+            if (!isPressed) onButtonReleased?.invoke(button) // 仅松开时通知外部释放已注入状态
+            return // 提前返回
+        } // 结束无映射判断
 
         // 处理 SwitchLayer 动作（通过按键映射切换层）
         when (val action = mapping.action) { // 按动作类型分发（语法：when 分支表达式 + val 局部捕获）
@@ -709,6 +735,9 @@ class SteamInput(context: Context) { // 主控制器类（语法：class 声明�
                         } // 结束按下分支
                     } // 结束目标层存在判断
                 } // 结束捕获判断
+                // 松开时：该按钮不是切层触发键（按下时在层内执行的是其它映射），
+                // 必须通知外部释放按下时注入的键鼠状态，避免鼠标/按键卡在按下态
+                if (!isPressed) onButtonReleased?.invoke(button) // 释放残留注入状态
             } // 结束 SwitchLayer 分支
             is MappedAction.SwitchLayerAndKey -> { // 切层+按键同时生效分支（语法：is 类型判断分支）
                 // 暂停时不处理层切换

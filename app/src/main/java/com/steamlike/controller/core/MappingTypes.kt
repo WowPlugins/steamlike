@@ -151,6 +151,16 @@ sealed class MappedAction { // 映射动作密封类（语法：sealed class 密
     data object MouseClickSequence : MappedAction() // 鼠标交互键动作
 
     /**
+     * 鼠标精细移动动作
+     *
+     * 按住时进入「精细移动」模式：右摇杆（视角控制）产生的鼠标位移按
+     * [FINE_MOVE_FACTOR] 缩小，用于在 Winlator 中精确对准目标；
+     * 松开后立即恢复正常右摇杆移动速度。
+     * 用于解决大范围灵敏度下难以微调鼠标的问题。
+     */
+    data object MouseFineMove : MappedAction() // 鼠标精细移动动作
+
+    /**
      * 鼠标滚轮上滚动作
      *
      * 将手柄按键映射为鼠标滚轮向上滚动（发送一次固定增量的滚轮事件）。
@@ -284,6 +294,7 @@ data class KeyMapping( // 按键映射定义（语法：data class 数据类）
         is MappedAction.MouseSwapToggle -> "长按交换" // 鼠标长按交换描述
         is MappedAction.MouseReleaseAll -> "释放鼠标长按" // 释放鼠标所有长按描述
         is MappedAction.MouseClickSequence -> "交互键" // 鼠标交互键描述
+        is MappedAction.MouseFineMove -> "精细移动" // 鼠标精细移动描述
         is MappedAction.MouseScrollUp -> "滚轮上滚" // 滚轮上滚描述
         is MappedAction.MouseScrollDown -> "滚轮下滚" // 滚轮下滚描述
         is MappedAction.ToggleOverlay -> "切换悬浮窗" // 切换悬浮窗描述
