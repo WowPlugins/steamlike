@@ -169,3 +169,15 @@ tasks.register("compileWindowsExe") {  // 语法：tasks.register("任务名"){.
 tasks.named("preBuild") {  // 语法：tasks.named("任务名") 获取已存在的任务并对其进行配置
     dependsOn("compileWindowsExe")  // 语法：dependsOn(...) 声明任务依赖：preBuild 依赖 compileWindowsExe，先编译 exe 再构建
 }  // 结束 preBuild 配置块
+
+// ===== 编译完成后自动归档 APK 到仓库 apk/ 目录 =====
+// 每次 assembleDebug 结束都把最新产物复制到 apk/app-debug.apk，
+// 便于编译产物随代码一起提交并推送到 GitHub（apk/ 已在 .gitignore 中放行）。
+val copyDebugApkToRepo = tasks.register<org.gradle.api.tasks.Copy>("copyDebugApkToRepo") {  // 注册复制任务
+    from(layout.buildDirectory.file("outputs/apk/debug/app-debug.apk"))  // 来源：Gradle 编译出的 debug APK
+    into(rootProject.layout.projectDirectory.dir("apk"))  // 目标：仓库根目录下的 apk/
+}  // 结束 Copy 任务配置
+
+tasks.configureEach {  // 语法：configureEach(...) 对匹配到的任务做延迟配置
+    if (name == "assembleDebug") finalizedBy(copyDebugApkToRepo)  // 语法：finalizedBy(...) 在 assembleDebug 结束后执行复制
+}  // 结束任务配置块
