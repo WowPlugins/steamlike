@@ -129,7 +129,7 @@ fn do_swap() {
 
 /// 交互键触发：
 /// 1. 记录左右键锁存状态与光标位置
-/// 2. 若锁定则先解锁 → 等游戏退出 mouselook 后光标居中 → 左键点击一下 → 右键点击一下
+/// 2. 若锁定则先解锁 → 等游戏退出 mouselook 后光标居中 → 左键点击一下
 /// 3. 光标移回原位置 → 恢复原有锁存状态
 fn do_interact() {
     let left_locked = RT.left_locked.load(Ordering::Relaxed);
@@ -145,9 +145,6 @@ fn do_interact() {
 
     win::inject_mouse_button(BTN_LEFT, true);
     win::inject_mouse_button(BTN_LEFT, false);
-
-    win::inject_mouse_button(BTN_RIGHT, true);
-    win::inject_mouse_button(BTN_RIGHT, false);
 
     // 3. 先把光标移回原位置，再恢复原有锁存状态
     win::move_cursor_to(saved_x, saved_y);
