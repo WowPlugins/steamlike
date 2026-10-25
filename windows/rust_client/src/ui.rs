@@ -150,13 +150,13 @@ impl eframe::App for App {
             }
         }
 
-        // 版本不一致：APK 下发的版本 ≠ 本 exe 编译版本 → 停用全部逻辑并弹模态提示
+        // 版本不一致：APK 期望的客户端版本 ≠ 本 exe 编译版本 → 停用全部逻辑并弹模态提示
         let mismatch = runtime::apk_version_mismatch();
         if mismatch && !self.mismatch_logged {
             self.mismatch_logged = true;
             runtime::log(format!(
-                "[版本] APK v{} 与本客户端 v{} 不一致，所有功能已停用",
-                runtime::apk_version().unwrap_or_default(),
+                "[版本] APK 期望 v{} 与本客户端 v{} 不一致，所有功能已停用",
+                runtime::expected_rust_version().unwrap_or_default(),
                 runtime::build_version()
             ));
         }
@@ -441,9 +441,9 @@ impl eframe::App for App {
                 .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
                 .show(ctx, |ui| {
                     ui.label(format!(
-                        "Windows 客户端版本：v{}\n手机 APK 版本：v{}\n",
+                        "Windows 客户端版本：v{}\nAPK 期望的客户端版本：v{}\n",
                         runtime::build_version(),
-                        runtime::apk_version().unwrap_or_default()
+                        runtime::expected_rust_version().unwrap_or_default()
                     ));
                     ui.label(
                         "版本不一致，客户端全部功能已停用（键鼠拦截、注入、连接均不工作）。\n\

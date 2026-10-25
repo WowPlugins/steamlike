@@ -119,10 +119,20 @@ pub fn version() -> &'static str {
 /// 远端（APK）下发的版本号：连接成功后自动同步，界面优先显示它
 static REMOTE_VERSION: Mutex<Option<String>> = Mutex::new(None);
 
+/// APK 下发的「期望客户端版本」（取自 APK 的 Cargo.toml，仅 Rust 代码改动时才变化）
+static EXPECTED_RUST_VERSION: Mutex<Option<String>> = Mutex::new(None);
+
 /// 记录 APK 下发的版本号
 pub fn set_remote_version(v: String) {
     if !v.is_empty() {
         *REMOTE_VERSION.lock().unwrap() = Some(v);
+    }
+}
+
+/// 记录 APK 期望的客户端版本
+pub fn set_expected_rust_version(v: String) {
+    if !v.is_empty() {
+        *EXPECTED_RUST_VERSION.lock().unwrap() = Some(v);
     }
 }
 
@@ -131,16 +141,18 @@ pub fn build_version() -> &'static str {
     env!("CARGO_PKG_VERSION")
 }
 
-/// APK 已下发的版本号（尚未连接或未收到时为 None）
-pub fn apk_version() -> Option<String> {
-    REMOTE_VERSION.lock().unwrap().clone()
+/// APK 期望的客户端版本（尚未连接或未收到时为 None）
+pub fn expected_rust_version() -> Option<String> {
+    EXPECTED_RUST_VERSION.lock().unwrap().clone()
 }
 
-/// 版本是否不一致：APK 下发的版本 ≠ exe 编译版本
+/// 版本是否不一致：APK 期望的客户端版本 ≠ exe 编译版本
 ///
-/// APK 尚未下发版本时视为一致（此时无法判断，不能误停功能）。
+/// 只与 Cargo.toml 版本比对，与 APK 自身 versionName 无关：
+/// 仅改 APK 版本号时已导出的 exe 仍然有效。
+/// APK 尚未下发期望版本时视为一致（此时无法判断，不能误停功能）。
 pub fn apk_version_mismatch() -> bool {
-    match apk_version() {
+    match expected_rust_version() {
         Some(v) => v != build_version(),
         None => false,
     }

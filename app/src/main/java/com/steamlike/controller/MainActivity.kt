@@ -360,6 +360,50 @@ class MainActivity : AppCompatActivity() { // 声明主界面 Activity，继承 
         }, UiKit.Style.DANGER)) // 按钮使用危险色调样式
         container.addView(serverCard) // 把 TCP 卡片加入内容容器
 
+        // ===== Windows 客户端卡片 =====
+        val winCard = UiKit.card(this) // 创建“Windows 客户端”卡片
+        winCard.addView(UiKit.sectionTitle(this, "Windows 客户端")) // 添加卡片标题
+        winCard.addView(UiKit.spacer(this, 6)) // 添加 6dp 间距
+
+        // 游戏 EXE 路径（导出后 control.bat 先启动客户端、成功后再启动游戏）
+        winCard.addView(UiKit.label(this, "游戏 EXE 路径（Winlator 内完整路径）")) // 添加 EXE 路径标签
+        winCard.addView(UiKit.spacer(this, 4)) // 添加 4dp 间距
+        gameExeText = UiKit.caption( // 创建游戏 EXE 路径显示文本
+            this, // 上下文参数
+            appCfg.gameExePath.ifBlank { "未设置（control.bat 将只启动输入桥接客户端）" }, // 路径为空时显示提示文字（语法：ifBlank 空值兜底）
+            0xFFCCCCCC.toInt(), 12f // 浅灰文字、12sp 字号
+        ) // 结束 caption 调用
+        winCard.addView(gameExeText) // 把路径文本加入卡片
+        winCard.addView(UiKit.spacer(this, 6)) // 添加 6dp 间距
+        // 历史路径下拉：直接选择之前用过的路径（无需再走文件选择器）
+        val exeSpinner = Spinner(this).apply { // 创建历史路径下拉框并配置（语法：apply{}=作用域函数）
+            onItemSelectedListener = object : AdapterView.OnItemSelectedListener { // 设置选择监听（语法：object : 接口匿名实现）
+                override fun onItemSelected(parent: AdapterView<*>?, v: View?, position: Int, id: Long) { // 选中某项时
+                    val target = parent?.getItemAtPosition(position) as? String ?: return // 取选中路径（语法：as?=安全类型转换）
+                    val cur = AppConfigStore.load(this@MainActivity).gameExePath // 读取当前游戏路径
+                    if (target == cur) return // 与当前路径一致则无需处理
+                    AppConfigStore.save(this@MainActivity, // 保存选中的历史路径
+                        AppConfigStore.load(this@MainActivity).copy(gameExePath = target)) // 复制配置并更新游戏路径
+                    if (::gameExeText.isInitialized) gameExeText.text = target // 同步界面显示文本
+                    toastLog("已选择历史路径: $target") // 弹出切换提示（语法：字符串模板）
+                } // 结束 onItemSelected 方法
+                override fun onNothingSelected(parent: AdapterView<*>?) {} // 无选中项时不处理（语法：空函数体）
+            } // 结束匿名监听对象
+        } // 结束 Spinner apply 块
+        gameExeSpinner = exeSpinner // 记录控件引用供后续刷新
+        winCard.addView(exeSpinner) // 把历史路径下拉框加入卡片
+        refreshGameExeSpinner() // 初始填充历史路径（无历史时自动隐藏）
+        winCard.addView(UiKit.spacer(this, 6)) // 添加 6dp 间距
+        winCard.addView(UiKit.button(this, "选择游戏 EXE 路径", { // 创建“选择游戏 EXE”按钮（语法：lambda 点击回调）
+            // 弹出系统文件选择器，直接定位到 Download 目录
+            openExeLauncher.launch(buildOpenExeIntent()) // 启动文件选择器
+        })) // 结束按钮回调
+        winCard.addView(UiKit.spacer(this, 8)) // 添加 8dp 间距
+        winCard.addView(UiKit.button(this, "导出 Windows 客户端到 Download/AControler", { // 创建导出客户端按钮（语法：lambda 点击回调）
+            exportFilesToDownload() // 执行导出操作
+        })) // 结束按钮回调
+        container.addView(winCard) // 把 Windows 客户端卡片加入内容容器
+
         // ===== 配置管理卡片 =====
         val configCard = UiKit.card(this) // 创建“配置管理”卡片
         configCard.addView(UiKit.sectionTitle(this, "配置管理")) // 添加卡片标题
@@ -682,50 +726,6 @@ class MainActivity : AppCompatActivity() { // 声明主界面 Activity，继承 
             style = UiKit.Style.PRIMARY // 按钮使用主色调样式
         )) // 结束按钮创建
         container.addView(wasdLockCard) // 把 WASD 自动锁定卡片加入内容容器
-
-        // ===== Windows 客户端卡片 =====
-        val winCard = UiKit.card(this) // 创建“Windows 客户端”卡片
-        winCard.addView(UiKit.sectionTitle(this, "Windows 客户端")) // 添加卡片标题
-        winCard.addView(UiKit.spacer(this, 6)) // 添加 6dp 间距
-
-        // 游戏 EXE 路径（导出后 control.bat 先启动客户端、成功后再启动游戏）
-        winCard.addView(UiKit.label(this, "游戏 EXE 路径（Winlator 内完整路径）")) // 添加 EXE 路径标签
-        winCard.addView(UiKit.spacer(this, 4)) // 添加 4dp 间距
-        gameExeText = UiKit.caption( // 创建游戏 EXE 路径显示文本
-            this, // 上下文参数
-            appCfg.gameExePath.ifBlank { "未设置（control.bat 将只启动输入桥接客户端）" }, // 路径为空时显示提示文字（语法：ifBlank 空值兜底）
-            0xFFCCCCCC.toInt(), 12f // 浅灰文字、12sp 字号
-        ) // 结束 caption 调用
-        winCard.addView(gameExeText) // 把路径文本加入卡片
-        winCard.addView(UiKit.spacer(this, 6)) // 添加 6dp 间距
-        // 历史路径下拉：直接选择之前用过的路径（无需再走文件选择器）
-        val exeSpinner = Spinner(this).apply { // 创建历史路径下拉框并配置（语法：apply{}=作用域函数）
-            onItemSelectedListener = object : AdapterView.OnItemSelectedListener { // 设置选择监听（语法：object : 接口匿名实现）
-                override fun onItemSelected(parent: AdapterView<*>?, v: View?, position: Int, id: Long) { // 选中某项时
-                    val target = parent?.getItemAtPosition(position) as? String ?: return // 取选中路径（语法：as?=安全类型转换）
-                    val cur = AppConfigStore.load(this@MainActivity).gameExePath // 读取当前游戏路径
-                    if (target == cur) return // 与当前路径一致则无需处理
-                    AppConfigStore.save(this@MainActivity, // 保存选中的历史路径
-                        AppConfigStore.load(this@MainActivity).copy(gameExePath = target)) // 复制配置并更新游戏路径
-                    if (::gameExeText.isInitialized) gameExeText.text = target // 同步界面显示文本
-                    toastLog("已选择历史路径: $target") // 弹出切换提示（语法：字符串模板）
-                } // 结束 onItemSelected 方法
-                override fun onNothingSelected(parent: AdapterView<*>?) {} // 无选中项时不处理（语法：空函数体）
-            } // 结束匿名监听对象
-        } // 结束 Spinner apply 块
-        gameExeSpinner = exeSpinner // 记录控件引用供后续刷新
-        winCard.addView(exeSpinner) // 把历史路径下拉框加入卡片
-        refreshGameExeSpinner() // 初始填充历史路径（无历史时自动隐藏）
-        winCard.addView(UiKit.spacer(this, 6)) // 添加 6dp 间距
-        winCard.addView(UiKit.button(this, "选择游戏 EXE 路径", { // 创建“选择游戏 EXE”按钮（语法：lambda 点击回调）
-            // 弹出系统文件选择器，直接定位到 Download 目录
-            openExeLauncher.launch(buildOpenExeIntent()) // 启动文件选择器
-        })) // 结束按钮回调
-        winCard.addView(UiKit.spacer(this, 8)) // 添加 8dp 间距
-        winCard.addView(UiKit.button(this, "导出 Windows 客户端到 Download/AControler", { // 创建导出客户端按钮（语法：lambda 点击回调）
-            exportFilesToDownload() // 执行导出操作
-        })) // 结束按钮回调
-        container.addView(winCard) // 把 Windows 客户端卡片加入内容容器
 
         // ===== 调试卡片 =====
         val debugCard = UiKit.card(this) // 创建“调试”卡片

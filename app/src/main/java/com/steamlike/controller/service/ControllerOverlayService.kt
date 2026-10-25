@@ -1970,6 +1970,55 @@ class ControllerOverlayService : Service() {  // class=类声明；继承 Servic
             setPadding(dp(12), dp(10), dp(12), dp(10))  // 设置内边距（dp 转像素）
         }  // 结束 apply lambda
 
+        // ===== 控制按钮（放在面板最上方，分组布局）=====
+        // 主操作行：拉起应用（绿色主按钮） + 暂停/恢复捕获
+        val primaryRow = LinearLayout(this).apply {  // val=只读变量；apply=作用域函数；创建主操作行横向布局
+            orientation = LinearLayout.HORIZONTAL  // 设置行方向为横向
+            setPadding(0, 0, 0, 0)  // 位于顶部，无需额外上边距
+        }  // 结束 apply lambda
+        primaryRow.addView(  // 向主行添加按钮
+            createOverlayButton(  // 调用工厂方法创建按钮
+                label = "拉起应用",  // 按钮文本（命名参数）
+                onClick = { launchGameApp() },  // 点击回调 lambda：拉起游戏应用
+                weight = 1.2f,  // 横向均分权重 1.2（占更大比例）
+                normalColor = COLOR_BTN_GAME,  // 正常态背景色（绿色）
+                pressedColor = COLOR_BTN_GAME_PRESSED,  // 按下态背景色（深绿）
+                textSize = 12f  // 字号 12sp
+            )  // 结束 createOverlayButton 调用
+        )  // 结束 addView
+        // 暂停/恢复捕获按钮（始终显示，反映实际捕获状态，与 app 内开关双向同步）
+        captureButton = createOverlayButton(  // 创建暂停/恢复捕获按钮并保存引用
+            label = "暂停捕获",  // 按钮文本
+            onClick = { toggleCaptureFromButton() },  // 点击回调 lambda：切换捕获状态
+            weight = 1f,  // 均分权重 1
+            textSize = 12f  // 字号 12sp
+        )  // 结束 createOverlayButton 调用
+        primaryRow.addView(captureButton!!)  // !! =非空断言；把捕获按钮加入主行（此时已赋值必非空）
+        container.addView(primaryRow)  // 把主操作行加入容器
+
+        // 次操作行：映射 + 收起 + 关闭（关闭红色）
+        val secondaryRow = LinearLayout(this).apply {  // val=只读变量；apply=作用域函数；创建次操作行横向布局
+            orientation = LinearLayout.HORIZONTAL  // 设置行方向为横向
+            setPadding(0, dp(3), 0, dp(6))  // 设置顶部 3dp、底部 6dp 间距，与下方信息区隔开
+        }  // 结束 apply lambda
+        secondaryRow.addView(  // 向次行添加按钮
+            createOverlayButton("映射", { showMappingView() }, weight = 1f, textSize = 11f)  // 创建"映射"按钮，点击打开映射列表
+        )  // 结束 addView
+        secondaryRow.addView(  // 向次行添加按钮
+            createOverlayButton("收起", { showCollapsedView() }, weight = 1f, textSize = 11f)  // 创建"收起"按钮，点击收起悬浮窗
+        )  // 结束 addView
+        secondaryRow.addView(  // 向次行添加按钮
+            createOverlayButton(  // 调用工厂方法创建按钮
+                label = "关闭",  // 按钮文本
+                onClick = { stopSelf() },  // 点击回调 lambda：停止前台服务
+                weight = 1f,  // 均分权重 1
+                normalColor = COLOR_BTN_DANGER,  // 正常态背景色（红色）
+                pressedColor = COLOR_BTN_DANGER_PRESSED,  // 按下态背景色（深红）
+                textSize = 11f  // 字号 11sp
+            )  // 结束 createOverlayButton 调用
+        )  // 结束 addView
+        container.addView(secondaryRow)  // 把次操作行加入容器
+
         // 面板标题
         container.addView(TextView(this).apply {  // 添加标题 TextView；apply=作用域函数
             text = "SteamLike 手柄"  // 设置标题文本
@@ -2027,55 +2076,6 @@ class ControllerOverlayService : Service() {  // class=类声明；继承 Servic
             }  // 结束内层 forEach lambda
             container.addView(row)  // 把整行加入容器
         }  // 结束外层 forEach lambda
-
-        // ===== 控制按钮（分组布局）=====
-        // 主操作行：拉起应用（绿色主按钮） + 暂停/恢复捕获
-        val primaryRow = LinearLayout(this).apply {  // val=只读变量；apply=作用域函数；创建主操作行横向布局
-            orientation = LinearLayout.HORIZONTAL  // 设置行方向为横向
-            setPadding(0, dp(6), 0, 0)  // 设置顶部内边距 6dp
-        }  // 结束 apply lambda
-        primaryRow.addView(  // 向主行添加按钮
-            createOverlayButton(  // 调用工厂方法创建按钮
-                label = "拉起应用",  // 按钮文本（命名参数）
-                onClick = { launchGameApp() },  // 点击回调 lambda：拉起游戏应用
-                weight = 1.2f,  // 横向均分权重 1.2（占更大比例）
-                normalColor = COLOR_BTN_GAME,  // 正常态背景色（绿色）
-                pressedColor = COLOR_BTN_GAME_PRESSED,  // 按下态背景色（深绿）
-                textSize = 12f  // 字号 12sp
-            )  // 结束 createOverlayButton 调用
-        )  // 结束 addView
-        // 暂停/恢复捕获按钮（始终显示，反映实际捕获状态，与 app 内开关双向同步）
-        captureButton = createOverlayButton(  // 创建暂停/恢复捕获按钮并保存引用
-            label = "暂停捕获",  // 按钮文本
-            onClick = { toggleCaptureFromButton() },  // 点击回调 lambda：切换捕获状态
-            weight = 1f,  // 均分权重 1
-            textSize = 12f  // 字号 12sp
-        )  // 结束 createOverlayButton 调用
-        primaryRow.addView(captureButton!!)  // !! =非空断言；把捕获按钮加入主行（此时已赋值必非空）
-        container.addView(primaryRow)  // 把主操作行加入容器
-
-        // 次操作行：映射 + 收起 + 关闭（关闭红色）
-        val secondaryRow = LinearLayout(this).apply {  // val=只读变量；apply=作用域函数；创建次操作行横向布局
-            orientation = LinearLayout.HORIZONTAL  // 设置行方向为横向
-            setPadding(0, dp(3), 0, 0)  // 设置顶部内边距 3dp
-        }  // 结束 apply lambda
-        secondaryRow.addView(  // 向次行添加按钮
-            createOverlayButton("映射", { showMappingView() }, weight = 1f, textSize = 11f)  // 创建"映射"按钮，点击打开映射列表
-        )  // 结束 addView
-        secondaryRow.addView(  // 向次行添加按钮
-            createOverlayButton("收起", { showCollapsedView() }, weight = 1f, textSize = 11f)  // 创建"收起"按钮，点击收起悬浮窗
-        )  // 结束 addView
-        secondaryRow.addView(  // 向次行添加按钮
-            createOverlayButton(  // 调用工厂方法创建按钮
-                label = "关闭",  // 按钮文本
-                onClick = { stopSelf() },  // 点击回调 lambda：停止前台服务
-                weight = 1f,  // 均分权重 1
-                normalColor = COLOR_BTN_DANGER,  // 正常态背景色（红色）
-                pressedColor = COLOR_BTN_DANGER_PRESSED,  // 按下态背景色（深红）
-                textSize = 11f  // 字号 11sp
-            )  // 结束 createOverlayButton 调用
-        )  // 结束 addView
-        container.addView(secondaryRow)  // 把次操作行加入容器
 
         // 快捷键提示
         hintText = TextView(this).apply {  // apply=作用域函数；创建快捷键提示文本控件并赋值给成员字段

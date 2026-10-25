@@ -13,6 +13,7 @@
 //! - 0x0A 还原到 0x09 记录的光标位置（交互键序列）
 //! - 0x0B 时间同步：Byte1-7 为小端 56 位 epoch 毫秒（APK 下发），校准 Windows 系统时间
 //! - 0x0C 版本同步：Byte1=主版本，Byte2=次版本，Byte3=修订号（APK 下发），界面显示该版本
+//! - 0x0D 期望客户端版本：Byte1-3 为 APK 的 Cargo.toml 版本，客户端据此判断 exe 是否过期
 //! - 0x20 客户端信息（exe → APK）：Byte1-3 为 exe 编译时的版本号，APK 据此判断客户端是否过期
 
 use std::io::{ErrorKind, Read, Write};
@@ -184,6 +185,13 @@ fn process_packet(data: &[u8; PACKET_SIZE]) {
             let v = format!("{}.{}.{}", data[1], data[2], data[3]);
             runtime::set_remote_version(v.clone());
             runtime::log(format!("已同步 APK 版本号：v{}", v));
+        }
+        // 期望客户端版本：Byte1/2/3 分别为 major/minor/patch（APK 的 Cargo.toml 版本），
+        // 与本 exe 的编译版本比对，不一致则停用功能并提示重新导出
+        0x0D => {
+            let v = format!("{}.{}.{}", data[1], data[2], data[3]);
+            runtime::set_expected_rust_version(v.clone());
+            runtime::log(format!("已同步 APK 期望的客户端版本：v{}", v));
         }
         _ => {}
     }

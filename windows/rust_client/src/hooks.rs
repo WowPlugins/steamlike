@@ -143,8 +143,8 @@ fn do_interact() {
 
     win::center_cursor();
 
-    win::inject_mouse_button(BTN_LEFT, true);
-    win::inject_mouse_button(BTN_LEFT, false);
+    win::inject_mouse_button(BTN_RIGHT, true);
+    win::inject_mouse_button(BTN_RIGHT, false);
 
     // 3. 先把光标移回原位置，再恢复原有锁存状态
     win::move_cursor_to(saved_x, saved_y);

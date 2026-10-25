@@ -113,6 +113,7 @@ class InputBridgeServer(  // 语法：class 声明类；InputBridge TCP 服务�
         const val MSG_CURSOR_RESTORE: Byte = 0x0A  // 消息类型：还原到记录的光标位置（交互键序列）
         const val MSG_TIME_SYNC: Byte = 0x0B  // 消息类型：时间同步（下发 APK 当前时间给 Windows 客户端）
         const val MSG_VERSION: Byte = 0x0C  // 消息类型：版本同步（下发 APK 版本号，Windows 客户端界面/标题栏显示）
+        const val MSG_RUST_VERSION: Byte = 0x0D  // 消息类型：期望客户端版本（下发 Cargo.toml 版本，客户端据此判断 exe 是否过期）
         const val MSG_CLIENT_VERSION: Byte = 0x20  // 消息类型：客户端信息（Windows 客户端上报 exe 编译版本）
 
         const val PACKET_SIZE = 8  // 语法：const val 编译期常量；协议数据包固定长度 8 字节
@@ -335,6 +336,24 @@ class InputBridgeServer(  // 语法：class 声明类；InputBridge TCP 服务�
         enqueue(packet)  // 加入发送队列
     }  // 结束 sendVersion 函数
 
+    /**
+     * 发送期望客户端版本包
+     *
+     * 把 BuildConfig.RUST_CLIENT_VERSION（取自 Cargo.toml）拆成 主版本/次版本/修订号
+     * 写入 Byte 1-3，Windows 客户端据此判断 exe 是否与 APK 期望一致。
+     * 与 APK 自身的 versionName 无关：只改 APK 版本号不会让已导出的 exe 被判为过期。
+     * 客户端每次连接建立时发送一次（先于 [sendVersion]，避免界面短暂误报不一致）。
+     */
+    fun sendRustVersion() {  // 语法：fun 函数；发送期望客户端版本包
+        val packet = ByteArray(PACKET_SIZE)  // 创建 8 字节定长数据包
+        packet[0] = MSG_RUST_VERSION  // 写入消息类型：期望客户端版本
+        val parts = BuildConfig.RUST_CLIENT_VERSION.split(".")  // 拆分 Cargo.toml 版本号（major.minor.patch）
+        for (i in 0..2) {  // 语法：for 循环；依次写入三个数字
+            packet[1 + i] = ((parts.getOrNull(i)?.toIntOrNull() ?: 0) and 0xFF).toByte()  // 越界或非数字按 0 处理
+        }  // 结束循环
+        enqueue(packet)  // 加入发送队列
+    }  // 结束 sendRustVersion 函数
+
     /** 是否有客户端连接 */
     fun hasClients(): Boolean = clients.isNotEmpty()  // 语法：单表达式函数；返回客户端列表是否非空
 
@@ -371,7 +390,8 @@ class InputBridgeServer(  // 语法：class 声明类；InputBridge TCP 服务�
                 Log.i(TAG, "客户端已连接: $addr")  // 语法：字符串模板；打印连接日志
                 onClientConnected?.invoke(addr)  // 语法：?. 安全调用；通知连接回调
                 sendTimeSync()  // 客户端连上后立即下发当前时间，校准 Winlator 系统时间
-                sendVersion()  // 同时下发 APK 版本号，客户端界面/标题栏显示与 APK 一致的版本
+                sendRustVersion()  // 先下发 APK 期望的客户端版本（Cargo.toml），客户端据此判断 exe 是否过期
+                sendVersion()  // 再下发 APK 版本号，客户端界面/标题栏显示与 APK 一致的版本
                 Thread({ handleClient(client) }, "BridgeServer-Client-${client.id}").start()  // 语法：lambda + Thread + 字符串模板；启动客户端处理线程
             } catch (e: IOException) {  // 语法：catch 捕获 IO 异常
                 if (isRunning.get()) {  // 语法：if 条件判断；仅在运行中才记录错误
