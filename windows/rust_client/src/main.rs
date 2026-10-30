@@ -88,6 +88,7 @@ fn main() -> eframe::Result<()> {
         decorated: false,
         always_on_top: true,
         transparent: true,
+        // 启动总是显示完整主界面，尺寸固定为主界面大小
         initial_window_size: Some(egui::vec2(620.0, 660.0)),
         ..Default::default()
     };

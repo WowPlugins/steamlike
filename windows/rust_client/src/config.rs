@@ -63,6 +63,10 @@ pub struct ClientConfig {
     /// 打开时才有三种：小圆点 ⇄ 小面板 ⇄ 完整主界面。
     #[serde(default)]
     pub overlay_compact_enabled: bool,
+    /// 上次退出时窗口左上角的 X 坐标（物理像素，None = 未记录）
+    pub window_x: Option<i32>,
+    /// 上次退出时窗口左上角的 Y 坐标（物理像素，None = 未记录）
+    pub window_y: Option<i32>,
 }
 
 impl Default for ClientConfig {
@@ -88,6 +92,8 @@ impl Default for ClientConfig {
             key_mappings: Vec::new(),
             overlay_expanded: true,
             overlay_compact_enabled: false,
+            window_x: None,
+            window_y: None,
         }
     }
 }

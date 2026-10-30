@@ -244,6 +244,42 @@ pub fn resize_own_window(title: &str, w: i32, h: i32) {
     }
 }
 
+/// 读取本程序窗口左上角坐标（物理像素），找不到窗口时返回 None
+pub fn own_window_pos(title: &str) -> Option<(i32, i32)> {
+    let wide: Vec<u16> = title.encode_utf16().chain(std::iter::once(0)).collect();
+    unsafe {
+        let hwnd = FindWindowW(PCWSTR::null(), PCWSTR(wide.as_ptr()));
+        if hwnd.0 == 0 {
+            return None;
+        }
+        let mut rect = RECT::default();
+        if GetWindowRect(hwnd, &mut rect).is_err() {
+            return None;
+        }
+        Some((rect.left, rect.top))
+    }
+}
+
+/// 把本程序窗口移动到指定位置（不改尺寸、不改 z 序、不抢焦点）
+pub fn move_own_window(title: &str, x: i32, y: i32) {
+    let wide: Vec<u16> = title.encode_utf16().chain(std::iter::once(0)).collect();
+    unsafe {
+        let hwnd = FindWindowW(PCWSTR::null(), PCWSTR(wide.as_ptr()));
+        if hwnd.0 == 0 {
+            return;
+        }
+        let _ = SetWindowPos(
+            hwnd,
+            HWND(0),
+            x,
+            y,
+            0,
+            0,
+            SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE,
+        );
+    }
+}
+
 /// 强制本程序窗口置顶
 ///
 /// eframe 的 `always_on_top` 在 Winlator/Wine 下不可靠：魔兽以窗口化全屏启动后会盖住悬浮窗，

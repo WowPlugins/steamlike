@@ -265,10 +265,12 @@ pub struct App {
     full_editor: bool,
     /// 上次应用的窗口尺寸（用于检测面板状态切换时调整窗口大小）
     last_window_size: (f32, f32),
-    /// 上次裁剪圆角时的窗口实际尺寸（尺寸变化后需要重新设置窗口区域）
-    last_region_size: (i32, i32),
+    /// 上次裁剪圆角时的（窗口宽, 窗口高, 圆角半径），任一变化都要重新设置窗口区域
+    last_region: (i32, i32, i32),
     /// 上次强制置顶的时间（魔兽窗口化全屏会盖住悬浮窗，需周期性重新置顶）
     last_topmost_at: std::time::Instant,
+    /// 是否已恢复上次退出时的窗口位置（只在首个界面帧做一次）
+    pos_restored: bool,
 }
 
 impl App {
@@ -283,11 +285,12 @@ impl App {
         // 把配置中的映射同步到运行时
         *RT.key_mappings.lock().unwrap() = cfg.key_mappings.clone();
         RT.key_mapping_enabled.store(cfg.key_mapping_enabled, Ordering::SeqCst);
-        RT.overlay_expanded.store(cfg.overlay_expanded, Ordering::SeqCst);
 
-        // 启动时总是展开（不沿用上次收起为圆点的状态）
+        // 启动时总是显示完整主界面（不沿用上次收起为圆点的状态）
+        // 注意：运行期原子量也必须写成本展开值，否则 update() 会把它同步回配置，首帧又收成圆点
         let mut cfg = cfg;
         cfg.overlay_expanded = true;
+        RT.overlay_expanded.store(true, Ordering::SeqCst);
 
         Self {
             last_intercept: cfg.intercept_enabled,
@@ -310,8 +313,9 @@ impl App {
             // 启动即显示完整主界面
             full_editor: true,
             last_window_size: (0.0, 0.0),
-            last_region_size: (0, 0),
+            last_region: (0, 0, 0),
             last_topmost_at: std::time::Instant::now(),
+            pos_restored: false,
         }
     }
 
@@ -387,9 +391,23 @@ impl eframe::App for App {
         // 圆角裁剪：把窗口区域设成圆角矩形，圆角外完全不绘制（Wine 下不依赖桌面透明合成）
         let title = format!("SteamLike InputBridge v{}", self.title_version);
         let size = crate::win::own_window_size(&title);
-        if size != self.last_region_size {
-            self.last_region_size = size;
-            crate::win::round_own_window(&title, 12);
+        // 圆点态直接把窗口裁成圆形；展开态圆角半径按 DPI 换算成物理像素，与界面绘制的圆角一致
+        let radius = if !self.cfg.overlay_expanded {
+            (size.0 / 2).max(1)
+        } else {
+            (12.0 * ctx.pixels_per_point()) as i32
+        };
+        if (size.0, size.1, radius) != self.last_region {
+            self.last_region = (size.0, size.1, radius);
+            crate::win::round_own_window(&title, radius);
+        }
+
+        // 恢复上次退出时的窗口位置（只做一次；尺寸由面板形态决定，随 overlay_expanded 一起恢复）
+        if !self.pos_restored {
+            self.pos_restored = true;
+            if let (Some(x), Some(y)) = (self.cfg.window_x, self.cfg.window_y) {
+                crate::win::move_own_window(&title, x, y);
+            }
         }
 
         // 魔兽以窗口化全屏启动后会盖住悬浮窗：每秒用 Win32 强制置顶一次，
@@ -397,6 +415,14 @@ impl eframe::App for App {
         if self.last_topmost_at.elapsed() >= Duration::from_secs(1) {
             self.last_topmost_at = std::time::Instant::now();
             crate::win::set_topmost(&title);
+            // 同步窗口位置到配置：拖动后退出，下次仍按同样位置启动
+            if let Some((x, y)) = crate::win::own_window_pos(&title) {
+                if self.cfg.window_x != Some(x) || self.cfg.window_y != Some(y) {
+                    self.cfg.window_x = Some(x);
+                    self.cfg.window_y = Some(y);
+                    dirty = true;
+                }
+            }
         }
 
         if !self.cfg.overlay_expanded {
@@ -490,9 +516,32 @@ impl eframe::App for App {
         ctx.request_repaint_after(Duration::from_millis(300));
     }
 
-    /// 窗口背景用全透明，配合窗口圆角区域裁剪，圆角外不出现黑色边角
-    fn clear_color(&self, _visuals: &egui::Visuals) -> [f32; 4] {
-        egui::Color32::TRANSPARENT.to_normalized_gamma_f32()
+    /// 窗口底色
+    ///
+    /// Winlator/Wine 不做透明合成，透明像素会被画成黑色，窗口圆角外就成了黑角。
+    /// 这里把底色画成与界面填充色相同（圆点态用状态色），窗口再配合圆角/圆形区域裁剪：
+    /// 区域生效时圆角透出游戏画面，不生效时颜色也与界面一致，都不会出现黑角。
+    fn clear_color(&self, visuals: &egui::Visuals) -> [f32; 4] {
+        if !self.cfg.overlay_expanded {
+            if CONNECTED.load(Ordering::Relaxed) {
+                egui::Color32::from_rgb(0x1B, 0x8A, 0x2E).to_normalized_gamma_f32()
+            } else {
+                egui::Color32::from_rgb(0x9E, 0x5B, 0x00).to_normalized_gamma_f32()
+            }
+        } else {
+            visuals.window_fill.to_normalized_gamma_f32()
+        }
+    }
+
+    /// 退出前把窗口位置写进配置，保证下次启动位置一致
+    fn on_close_event(&mut self) -> bool {
+        let title = format!("SteamLike InputBridge v{}", self.title_version);
+        if let Some((x, y)) = crate::win::own_window_pos(&title) {
+            self.cfg.window_x = Some(x);
+            self.cfg.window_y = Some(y);
+        }
+        config::save(&self.cfg);
+        true
     }
 }
 
@@ -1274,7 +1323,7 @@ impl App {
                 let (rect, response) =
                     ui.allocate_exact_size(size, egui::Sense::click_and_drag());
                 let center = rect.center();
-                let radius = size.min_elem() / 2.0 - 4.0;
+                let radius = size.min_elem() / 2.0 - 1.5;
                 let color = if CONNECTED.load(Ordering::Relaxed) {
                     egui::Color32::from_rgb(0x1B, 0x8A, 0x2E) // 绿色：已连接
                 } else {
