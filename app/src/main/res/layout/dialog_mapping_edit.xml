@@ -6,10 +6,10 @@
 
   布局结构（垂直 LinearLayout）:
   1. 正在编辑的按键名称（标题）
-  2. 动作类型 Spinner（未设置 / 键盘按键 / 鼠标点击 / 鼠标长按 / 切换操作层）
-  3. 动作值 Spinner（根据动作类型动态切换选项）
-  4. 子命令区域（最多3个键盘按键选择，未设置/切换操作层时隐藏）
-  5. 添加子命令按钮（子命令未满3个时显示）
+  2. 点击（短按）分组：点击动作类型 / 点击动作值 / 附加按键 / 点击动作的子命令
+  3. 长按分组：长按动作类型 / 长按动作值 / 长按动作的子命令
+
+  分组标题用加粗 16sp，标签用普通 14sp，便于一眼看清「哪个按键属于哪个动作」。
 -->
 <!-- 语法：ScrollView 可滚动容器（对话框内容超高时可滚动）；xmlns:android 声明 android 命名空间
      layout_width=match_parent：与父容器同宽；layout_height=wrap_content：高度随内容自适应；
@@ -31,8 +31,7 @@
 
         <!-- ===== 正在编辑的按键名称 ===== -->
         <!-- 语法：TextView 文本控件；显示正在编辑的手柄按键名称
-             id=@+id/tv_button_name：新建按键名称文本 id（代码中动态设置）；layout_width=match_parent：与父容器同宽；
-             layout_height=wrap_content：高度自适应；textSize=18sp：字号；textStyle=bold：加粗；
+             id=@+id/tv_button_name：按键名称文本 id（代码中动态设置）；textSize=18sp：字号；textStyle=bold：加粗；
              textColor=#FFFFFFFF：白色；paddingBottom=14dp：底部内边距 -->
         <TextView
             android:id="@+id/tv_button_name"
@@ -43,20 +42,32 @@
             android:textColor="#FFFFFFFF"
             android:paddingBottom="14dp" />
 
-        <!-- ===== 动作类型选择 ===== -->
-        <!-- 语法：TextView 文本控件；"动作类型:" 标签
-             layout_width=match_parent：与父容器同宽；layout_height=wrap_content：高度自适应；
-             text=动作类型:：标签文字；textSize=14sp：字号；textColor=#FFDDDDDD：浅灰 -->
+        <!-- ==================== 点击（短按）分组 ==================== -->
+        <!-- 语法：TextView 文本控件；分组标题「点击（短按）动作」
+             textSize=16sp：分组标题字号；textStyle=bold：加粗；textColor=#FFDDDDDD：浅灰；
+             paddingTop=4dp：顶部内边距；paddingBottom=10dp：底部内边距 -->
         <TextView
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:text="动作类型:"
+            android:text="点击（短按）动作"
+            android:textSize="16sp"
+            android:textStyle="bold"
+            android:textColor="#FFDDDDDD"
+            android:paddingTop="4dp"
+            android:paddingBottom="10dp" />
+
+        <!-- 语法：TextView 文本控件；「点击动作类型:」标签
+             textSize=14sp：字号；textColor=#FFDDDDDD：浅灰 -->
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="点击动作类型:"
             android:textSize="14sp"
             android:textColor="#FFDDDDDD" />
 
-        <!-- 语法：Spinner 下拉选择器控件；选择动作类型（未设置/键盘/鼠标点击/鼠标长按/切换操作层）
-             id=@+id/spinner_action_type：新建动作类型选择器 id；layout_width=match_parent：与父容器同宽；
-             layout_height=wrap_content：高度自适应；paddingHorizontal=10dp：水平内边距；paddingBottom=10dp：底部内边距 -->
+        <!-- 语法：Spinner 下拉选择器控件；选择点击（短按）动作类型
+             id=@+id/spinner_action_type：点击动作类型选择器 id；layout_width=match_parent：与父容器同宽；
+             paddingHorizontal=10dp：水平内边距；paddingBottom=10dp：底部内边距 -->
         <Spinner
             android:id="@+id/spinner_action_type"
             android:layout_width="match_parent"
@@ -64,43 +75,137 @@
             android:paddingHorizontal="10dp"
             android:paddingBottom="10dp" />
 
-        <!-- ===== 动作值选择（根据类型动态切换） ===== -->
-        <!-- 语法：TextView 文本控件；"选择按键:" 标签
-             id=@+id/tv_action_label：新建动作值标签 id（代码中动态改文字）；layout_width=match_parent：与父容器同宽；
-             layout_height=wrap_content：高度自适应；text=选择按键:：标签文字；textSize=14sp：字号；textColor=#FFDDDDDD：浅灰 -->
+        <!-- 语法：TextView 文本控件；点击动作值标签（代码中动态改文字，带「点击 · 」前缀）
+             id=@+id/tv_action_label：点击动作值标签 id；text=点击动作值:：默认文字；
+             textSize=14sp：字号；textColor=#FFDDDDDD：浅灰 -->
         <TextView
             android:id="@+id/tv_action_label"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:text="选择按键:"
+            android:text="点击动作值:"
             android:textSize="14sp"
             android:textColor="#FFDDDDDD" />
 
-        <!-- 语法：Spinner 下拉选择器控件；选择具体动作值（如具体按键）
-             id=@+id/spinner_action_value：新建动作值选择器 id；layout_width=match_parent：与父容器同宽；
-             layout_height=wrap_content：高度自适应；paddingHorizontal=10dp：水平内边距；paddingBottom=14dp：底部内边距 -->
+        <!-- 语法：Spinner 下拉选择器控件；选择点击动作的具体取值（如具体按键）
+             id=@+id/spinner_action_value：点击动作值选择器 id；layout_width=match_parent：与父容器同宽；
+             paddingHorizontal=10dp：水平内边距；paddingBottom=10dp：底部内边距 -->
         <Spinner
             android:id="@+id/spinner_action_value"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:paddingHorizontal="10dp"
-            android:paddingBottom="14dp" />
+            android:paddingBottom="10dp" />
 
-        <!-- ===== 长按动作选择（可选） ===== -->
+        <!-- ===== 「切层+按键」类型的附加按键（属于点击动作） ===== -->
+        <!-- 仅当点击动作类型选择「切换层+按键」时显示 -->
+        <!-- 语法：LinearLayout 线性布局；附加按键区域容器
+             id=@+id/layout_extra_key：附加按键区域容器 id（代码中控制显隐）；orientation=vertical：垂直排列 -->
+        <LinearLayout
+            android:id="@+id/layout_extra_key"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical">
+
+            <!-- 语法：TextView 文本控件；「点击动作 · 切层时同时按下的按键:」标签
+                 textSize=14sp：字号；textColor=#FFDDDDDD：浅灰 -->
+            <TextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="点击动作 · 切层时同时按下的按键:"
+                android:textSize="14sp"
+                android:textColor="#FFDDDDDD" />
+
+            <!-- 语法：Spinner 下拉选择器控件；选择切层时同时注入的键盘按键
+                 id=@+id/spinner_extra_key：附加按键选择器 id；layout_width=match_parent：与父容器同宽；
+                 paddingHorizontal=10dp：水平内边距；paddingBottom=10dp：底部内边距 -->
+            <Spinner
+                android:id="@+id/spinner_extra_key"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:paddingHorizontal="10dp"
+                android:paddingBottom="10dp" />
+        </LinearLayout>  <!-- 结束附加按键区域 -->
+
+        <!-- ===== 点击动作的子命令区域 ===== -->
+        <!-- 紧跟在点击动作值下方，与长按子命令明确分开 -->
+        <!-- 语法：LinearLayout 线性布局；点击子命令区域容器
+             id=@+id/layout_sub_commands：点击子命令容器 id（代码中控制显隐）；orientation=vertical：垂直排列 -->
+        <LinearLayout
+            android:id="@+id/layout_sub_commands"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical">
+
+            <!-- 语法：TextView 文本控件；点击子命令说明标题
+                 text=点击动作的子命令（组合键，最多 3 个）:：标题文字；textStyle=bold：加粗；
+                 textColor=#FFDDDDDD：浅灰；paddingTop=8dp：顶部内边距；paddingBottom=8dp：底部内边距 -->
+            <TextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="点击动作的子命令（组合键，最多 3 个）:"
+                android:textStyle="bold"
+                android:textColor="#FFDDDDDD"
+                android:paddingTop="8dp"
+                android:paddingBottom="8dp" />
+
+            <!-- 语法：TextView 文本控件；组合键用法提示（修饰键应设为主键，这里放被按下的普通键）
+                 textSize=12sp：小号提示字；textColor=#FF999999：更暗的灰；paddingBottom=8dp：底部内边距 -->
+            <TextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="例：Ctrl+C → 点击动作值选 Ctrl，子命令选 C（先按修饰键，再按子命令）"
+                android:textSize="12sp"
+                android:textColor="#FF999999"
+                android:paddingBottom="8dp" />
+
+            <!-- 语法：LinearLayout 线性布局；点击子命令动态容器
+                 id=@+id/layout_sub_command_list：点击子命令列表容器 id（代码中动态添加 Spinner）；
+                 orientation=vertical：垂直排列（自闭合标签） -->
+            <LinearLayout
+                android:id="@+id/layout_sub_command_list"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical" />
+
+            <!-- 语法：Button 按钮控件；「添加点击子命令」按钮
+                 id=@+id/btn_add_sub_command：添加点击子命令按钮 id；layout_width=match_parent：与父容器同宽；
+                 text=+ 添加点击子命令：按钮文字；textColor=#FFFFFFFF：白色；background=@drawable/bg_button：圆角按钮样式 -->
+            <Button
+                android:id="@+id/btn_add_sub_command"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="+ 添加点击子命令"
+                android:textColor="#FFFFFFFF"
+                android:background="@drawable/bg_button" />
+        </LinearLayout>  <!-- 结束点击子命令区域 -->
+
+        <!-- ==================== 长按分组 ==================== -->
         <!-- 配置该按键的长按动作；选「未设置」= 不启用长按判定，保持原有按下即触发行为 -->
-        <!-- 语法：TextView 文本控件；"长按动作（可选）:" 标签
-             layout_width=match_parent：与父容器同宽；layout_height=wrap_content：高度自适应；
-             text=长按动作（可选）:：标签文字；textSize=14sp：字号；textColor=#FFDDDDDD：浅灰 -->
+        <!-- 语法：TextView 文本控件；分组标题「长按动作（可选）」
+             textSize=16sp：分组标题字号；textStyle=bold：加粗；textColor=#FFDDDDDD：浅灰；
+             paddingTop=18dp：顶部内边距（与上一分组拉开距离）；paddingBottom=10dp：底部内边距 -->
         <TextView
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:text="长按动作（可选）:"
+            android:text="长按动作（可选，未设置则不做长按判定）"
+            android:textSize="16sp"
+            android:textStyle="bold"
+            android:textColor="#FFDDDDDD"
+            android:paddingTop="18dp"
+            android:paddingBottom="10dp" />
+
+        <!-- 语法：TextView 文本控件；「长按动作类型:」标签
+             textSize=14sp：字号；textColor=#FFDDDDDD：浅灰 -->
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="长按动作类型:"
             android:textSize="14sp"
             android:textColor="#FFDDDDDD" />
 
         <!-- 语法：Spinner 下拉选择器控件；选择长按动作类型（未设置/键盘/鼠标点击/…）
-             id=@+id/spinner_long_press_type：新建长按动作类型选择器 id；layout_width=match_parent：与父容器同宽；
-             layout_height=wrap_content：高度自适应；paddingHorizontal=10dp：水平内边距；paddingBottom=10dp：底部内边距 -->
+             id=@+id/spinner_long_press_type：长按动作类型选择器 id；layout_width=match_parent：与父容器同宽；
+             paddingHorizontal=10dp：水平内边距；paddingBottom=10dp：底部内边距 -->
         <Spinner
             android:id="@+id/spinner_long_press_type"
             android:layout_width="match_parent"
@@ -108,32 +213,31 @@
             android:paddingHorizontal="10dp"
             android:paddingBottom="10dp" />
 
-        <!-- 语法：TextView 文本控件；长按动作值标签（代码中动态改文字）
-             id=@+id/tv_long_press_label：新建长按动作值标签 id；layout_width=match_parent：与父容器同宽；
-             layout_height=wrap_content：高度自适应；text=选择按键:：标签文字；textSize=14sp：字号；textColor=#FFDDDDDD：浅灰 -->
+        <!-- 语法：TextView 文本控件；长按动作值标签（代码中动态改文字，带「长按 · 」前缀）
+             id=@+id/tv_long_press_label：长按动作值标签 id；text=长按动作值:：默认文字；
+             textSize=14sp：字号；textColor=#FFDDDDDD：浅灰 -->
         <TextView
             android:id="@+id/tv_long_press_label"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:text="选择按键:"
+            android:text="长按动作值:"
             android:textSize="14sp"
             android:textColor="#FFDDDDDD" />
 
         <!-- 语法：Spinner 下拉选择器控件；选择长按动作的具体动作值
-             id=@+id/spinner_long_press_value：新建长按动作值选择器 id；layout_width=match_parent：与父容器同宽；
-             layout_height=wrap_content：高度自适应；paddingHorizontal=10dp：水平内边距；paddingBottom=14dp：底部内边距 -->
+             id=@+id/spinner_long_press_value：长按动作值选择器 id；layout_width=match_parent：与父容器同宽；
+             paddingHorizontal=10dp：水平内边距；paddingBottom=10dp：底部内边距 -->
         <Spinner
             android:id="@+id/spinner_long_press_value"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:paddingHorizontal="10dp"
-            android:paddingBottom="14dp" />
+            android:paddingBottom="10dp" />
 
-        <!-- ===== 长按子命令区域 ===== -->
-        <!-- 作用于「长按动作」，与短按子命令区域同构；仅长按动作为键盘按键/数字小键盘等可组合类型时显示 -->
+        <!-- ===== 长按动作的子命令区域 ===== -->
+        <!-- 仅长按动作为键盘按键/数字小键盘/鼠标点击/鼠标长按时显示 -->
         <!-- 语法：LinearLayout 线性布局；长按子命令区域容器
-             id=@+id/layout_long_press_sub_commands：新建长按子命令容器 id（代码中控制显隐）；layout_width=match_parent：与父容器同宽；
-             layout_height=wrap_content：高度自适应；orientation=vertical：垂直排列 -->
+             id=@+id/layout_long_press_sub_commands：长按子命令容器 id（代码中控制显隐）；orientation=vertical：垂直排列 -->
         <LinearLayout
             android:id="@+id/layout_long_press_sub_commands"
             android:layout_width="match_parent"
@@ -141,20 +245,19 @@
             android:orientation="vertical">
 
             <!-- 语法：TextView 文本控件；长按子命令说明标题
-                 text=长按子命令（最多3个，组合键）:：标题文字；textStyle=bold：加粗；textColor=#FFDDDDDD：浅灰；
-                 paddingTop=8dp：顶部内边距；paddingBottom=8dp：底部内边距 -->
+                 text=长按动作的子命令（组合键，最多 3 个）:：标题文字；textStyle=bold：加粗；
+                 textColor=#FFDDDDDD：浅灰；paddingTop=8dp：顶部内边距；paddingBottom=8dp：底部内边距 -->
             <TextView
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:text="长按子命令（最多3个，组合键）:"
+                android:text="长按动作的子命令（组合键，最多 3 个）:"
                 android:textStyle="bold"
                 android:textColor="#FFDDDDDD"
                 android:paddingTop="8dp"
                 android:paddingBottom="8dp" />
 
             <!-- 语法：LinearLayout 线性布局；长按子命令动态容器
-                 id=@+id/layout_long_press_sub_command_list：新建长按子命令列表容器 id（代码中动态添加 Spinner）；
-                 layout_width=match_parent：与父容器同宽；layout_height=wrap_content：高度自适应；
+                 id=@+id/layout_long_press_sub_command_list：长按子命令列表容器 id（代码中动态添加 Spinner）；
                  orientation=vertical：垂直排列（自闭合标签） -->
             <LinearLayout
                 android:id="@+id/layout_long_press_sub_command_list"
@@ -162,10 +265,9 @@
                 android:layout_height="wrap_content"
                 android:orientation="vertical" />
 
-            <!-- 语法：Button 按钮控件；"添加长按子命令" 按钮
-                 id=@+id/btn_add_long_press_sub_command：新建添加长按子命令按钮 id；layout_width=match_parent：与父容器同宽；
-                 layout_height=wrap_content：高度自适应；text=+ 添加长按子命令：按钮文字；textColor=#FFFFFFFF：白色；
-                 background=@drawable/bg_button：普通按钮圆角样式 -->
+            <!-- 语法：Button 按钮控件；「添加长按子命令」按钮
+                 id=@+id/btn_add_long_press_sub_command：添加长按子命令按钮 id；layout_width=match_parent：与父容器同宽；
+                 text=+ 添加长按子命令：按钮文字；textColor=#FFFFFFFF：白色；background=@drawable/bg_button：圆角按钮样式 -->
             <Button
                 android:id="@+id/btn_add_long_press_sub_command"
                 android:layout_width="match_parent"
@@ -174,91 +276,6 @@
                 android:textColor="#FFFFFFFF"
                 android:background="@drawable/bg_button" />
         </LinearLayout>  <!-- 结束长按子命令区域 -->
-
-        <!-- ===== 「切层+按键」类型的附加按键区域 ===== -->
-        <!-- 仅当动作类型选择「切换层+按键」时显示；用于选择切层的同时注入的键盘按键 -->
-        <!-- 语法：LinearLayout 线性布局；附加按键区域容器
-             id=@+id/layout_extra_key：新建附加按键区域容器 id（代码中控制显隐）；layout_width=match_parent：与父容器同宽；
-             layout_height=wrap_content：高度自适应；orientation=vertical：垂直排列（起始标签） -->
-        <LinearLayout
-            android:id="@+id/layout_extra_key"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:orientation="vertical">
-
-            <!-- 语法：TextView 文本控件；"同时按下的按键:" 标签
-                 layout_width=match_parent：与父容器同宽；layout_height=wrap_content：高度自适应；
-                 text=同时按下的按键:：标签文字；textSize=14sp：字号；textColor=#FFDDDDDD：浅灰 -->
-            <TextView
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:text="同时按下的按键:"
-                android:textSize="14sp"
-                android:textColor="#FFDDDDDD" />
-
-            <!-- 语法：Spinner 下拉选择器控件；选择切层时同时注入的键盘按键
-                 id=@+id/spinner_extra_key：新建附加按键选择器 id；layout_width=match_parent：与父容器同宽；
-                 layout_height=wrap_content：高度自适应；paddingHorizontal=10dp：水平内边距；paddingBottom=14dp：底部内边距 -->
-            <Spinner
-                android:id="@+id/spinner_extra_key"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:paddingHorizontal="10dp"
-                android:paddingBottom="14dp" />
-        </LinearLayout>  <!-- 结束附加按键区域 -->
-
-        <!-- ===== 子命令区域 ===== -->
-        <!-- 整个子命令容器，未设置/切换操作层类型时整体隐藏 -->
-        <!-- 语法：LinearLayout 线性布局；子命令区域容器
-             id=@+id/layout_sub_commands：新建子命令容器 id（代码中控制显隐）；layout_width=match_parent：与父容器同宽；
-             layout_height=wrap_content：高度自适应；orientation=vertical：垂直排列 -->
-        <LinearLayout
-            android:id="@+id/layout_sub_commands"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:orientation="vertical">
-
-            <!-- 语法：TextView 文本控件；子命令说明标题
-                 layout_width=match_parent：与父容器同宽；layout_height=wrap_content：高度自适应；
-                 text=子命令（最多3个，组合键）:：标题文字；textStyle=bold：加粗；textColor=#FFDDDDDD：浅灰；
-                 paddingTop=8dp：顶部内边距；paddingBottom=8dp：底部内边距 -->
-            <TextView
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:text="子命令（最多3个，组合键）:"
-                android:textStyle="bold"
-                android:textColor="#FFDDDDDD"
-                android:paddingTop="8dp"
-                android:paddingBottom="8dp" />
-
-            <!--
-              子命令动态容器
-              子命令 Spinner 在代码中动态添加到此容器。
-              每个子命令 Spinner 第一项为"无"（表示该位置不设子命令）。
-            -->
-            <!-- 语法：LinearLayout 线性布局；子命令动态容器
-                 id=@+id/layout_sub_command_list：新建子命令列表容器 id（代码中动态添加 Spinner）；
-                 layout_width=match_parent：与父容器同宽；layout_height=wrap_content：高度自适应；
-                 orientation=vertical：垂直排列（自闭合标签） -->
-            <LinearLayout
-                android:id="@+id/layout_sub_command_list"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:orientation="vertical" />
-
-            <!-- 添加子命令按钮（已满3个时隐藏） -->
-            <!-- 语法：Button 按钮控件；"添加子命令" 按钮
-                 id=@+id/btn_add_sub_command：新建添加子命令按钮 id；layout_width=match_parent：与父容器同宽；
-                 layout_height=wrap_content：高度自适应；text=+ 添加子命令：按钮文字；textColor=#FFFFFFFF：白色；
-                 background=@drawable/bg_button：普通按钮圆角样式 -->
-            <Button
-                android:id="@+id/btn_add_sub_command"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:text="+ 添加子命令"
-                android:textColor="#FFFFFFFF"
-                android:background="@drawable/bg_button" />
-        </LinearLayout>  <!-- 结束子命令区域 -->
 
     </LinearLayout>  <!-- 结束对话框内容垂直容器 -->
 </ScrollView>  <!-- 结束 ScrollView -->

@@ -793,7 +793,7 @@ class LayerEditActivity : AppCompatActivity() { // 定义操作层编辑 Activit
         val initialActionType = actionTypeIndexOf(existingMapping?.action) // 复用动作类型索引转换（语法：调用私有辅助函数）
 
         // 先设置动作值 Spinner 的适配器（基于初始类型）
-        setupActionValueSpinner(spinnerActionValue, tvActionLabel, initialActionType) // 按初始类型初始化动作值下拉框的选项
+        setupActionValueSpinner(spinnerActionValue, tvActionLabel, initialActionType, "点击 · ") // 按初始类型初始化点击动作值下拉框的选项
 
         // ===== 长按动作类型 Spinner =====
         // 长按可选类型：排除「切换操作层」「切层+按键」（层切换按键保持原有「按住即切层」语义）
@@ -804,7 +804,7 @@ class LayerEditActivity : AppCompatActivity() { // 定义操作层编辑 Activit
         } // 结束 also 块
         val initialLongPressType = actionTypeIndexOf(existingMapping?.longPressAction) // 长按动作类型索引
         val initialLongPressPos = longPressTypeIndices.indexOf(initialLongPressType).coerceAtLeast(0) // 在长按选项列表中的位置
-        setupActionValueSpinner(spinnerLongPressValue, tvLongPressLabel, initialLongPressType) // 初始化长按动作值下拉框选项
+        setupActionValueSpinner(spinnerLongPressValue, tvLongPressLabel, initialLongPressType, "长按 · ") // 初始化长按动作值下拉框选项
         spinnerLongPressType.setSelection(initialLongPressPos) // 设置长按动作类型下拉框的初始选中项
 
         // 设置「同时按下的按键」下拉框的适配器（固定为键盘按键列表，仅切层+按键类型使用）
@@ -930,7 +930,7 @@ class LayerEditActivity : AppCompatActivity() { // 定义操作层编辑 Activit
         spinnerActionType.onItemSelectedListener = object : AdapterView.OnItemSelectedListener { // 设置动作类型下拉框选择监听：匿名对象实现接口（语法：object:接口=匿名对象）
             override fun onItemSelected(parent: AdapterView<*>?, view: View?, position: Int, id: Long) { // 覆写：动作类型切换时回调（语法：override=覆写）
                 // 重新设置动作值 Spinner 的选项（内部会把选中位置重置为首项，避免旧索引越界崩溃）
-                setupActionValueSpinner(spinnerActionValue, tvActionLabel, position) // 按新类型重建动作值下拉框的选项
+                setupActionValueSpinner(spinnerActionValue, tvActionLabel, position, "点击 · ") // 按新类型重建点击动作值下拉框的选项
                 // 未设置/切换操作层/滚轮/悬浮窗/键盘/捕获时隐藏子命令区域（切层+按键类型支持子命令故显示）
                 layoutSubCommands.visibility = // 设置子命令区域可见性（跨行赋值）
                     if (position == 0 || position == 4 || position == 5 || position == 6 || // 若类型为未设置/切换层/滚轮上下滚（跨行条件）
@@ -956,7 +956,7 @@ class LayerEditActivity : AppCompatActivity() { // 定义操作层编辑 Activit
         spinnerLongPressType.onItemSelectedListener = object : AdapterView.OnItemSelectedListener { // 设置长按类型下拉框选择监听（语法：object:接口=匿名对象）
             override fun onItemSelected(parent: AdapterView<*>?, view: View?, position: Int, id: Long) { // 覆写：长按类型切换时回调
                 val actionType = longPressTypeIndices[position] // 位置还原为动作类型索引（语法：列表下标访问）
-                setupActionValueSpinner(spinnerLongPressValue, tvLongPressLabel, actionType) // 按新类型重建长按动作值选项
+                setupActionValueSpinner(spinnerLongPressValue, tvLongPressLabel, actionType, "长按 · ") // 按新类型重建长按动作值选项
                 // 长按子命令区可见性：仅键盘/鼠标点击/鼠标长按/数字小键盘类型显示（其余类型子命令无效）
                 layoutLongPressSubCommands.visibility = if (longPressSubVisible(actionType)) View.VISIBLE else View.GONE // 按新长按类型设置可见性
                 // 与已有长按动作类型一致时恢复选中值（打开对话框/attach 触发时显示当前长按动作）
@@ -1682,7 +1682,7 @@ class LayerEditActivity : AppCompatActivity() { // 定义操作层编辑 Activit
      * @param label 动作值标签（根据类型更新文字）
      * @param actionType 动作类型 (0=未设置, 1=键盘, 2=鼠标点击, 3=鼠标长按, 4=切换层, 10=切层+按键, 11=数字小键盘)
      */
-    private fun setupActionValueSpinner(spinner: Spinner, label: TextView, actionType: Int) { // 私有函数：根据动作类型设置动作值下拉框选项
+    private fun setupActionValueSpinner(spinner: Spinner, label: TextView, actionType: Int, labelPrefix: String = ""): Unit { // 私有函数：根据动作类型设置动作值下拉框选项（labelPrefix 用于区分点击/长按分组）
         val options: List<String> = when (actionType) { // 按动作类型计算选项列表（语法：when=分支表达式，显式声明 List<String> 类型）
             0 -> {  // 未设置（取消映射） // 未设置类型分支：保存时取消映射
                 label.text = "未设置（保存后取消该按键映射）" // 更新动作标签文字
@@ -1758,6 +1758,8 @@ class LayerEditActivity : AppCompatActivity() { // 定义操作层编辑 Activit
         // 重置选中位置为首项：Spinner 更换 adapter 后会保留旧列表的选中索引，
         // 若旧索引超出新列表长度（如键盘按键长列表索引 74 → 数字小键盘仅 11 项）布局时会越界崩溃
         spinner.setSelection(0) // 重置下拉框选中位置为首项（语法：setSelection=设置下拉框选中项）
+        // 给标签加上分组前缀，让「点击动作」与「长按动作」的取值标签一眼可分
+        if (labelPrefix.isNotEmpty()) label.text = labelPrefix + label.text // 追加分组前缀（语法：字符串拼接）
     } // 结束 setupActionValueSpinner 函数
 
     /**
@@ -1819,7 +1821,7 @@ class LayerEditActivity : AppCompatActivity() { // 定义操作层编辑 Activit
         container: LinearLayout, // 参数：子命令行父容器
         addButton: Button, // 参数：「添加子命令」按钮（用于更新其状态）
         spinners: MutableList<Spinner>, // 参数：子命令下拉框列表（用于跟踪所有行）
-        label: String = "添加子命令" // 参数：添加按钮文字名称（默认值保持短按区原有文字）
+        label: String = "添加点击子命令" // 参数：添加按钮文字名称（默认值对应点击动作子命令区）
     ): Spinner { // 函数返回新创建的 Spinner
         // 创建水平行容器
         val row = LinearLayout(this).apply { // 创建水平布局行，apply 块内配置（语法：apply{}=作用域函数）
@@ -1827,6 +1829,15 @@ class LayerEditActivity : AppCompatActivity() { // 定义操作层编辑 Activit
             gravity = Gravity.CENTER_VERTICAL // 子控件垂直居中对齐
             setPadding(0, 4, 0, 4) // 设置上下内边距 4 像素
         } // 结束 apply 块
+
+        // 创建序号标签：每行显示「子 N」，一眼看出是第几个子命令
+        val indexLabel = TextView(this).apply { // 创建序号文本控件（语法：TextView(this)=代码创建控件）
+            text = "子 1" // 初始文字，添加后统一由 refreshSubCommandIndexes 重排
+            textSize = 12f // 字号 12sp
+            setTextColor(0xFFAAAAAA.toInt()) // 浅灰文字，弱于正文
+            setPadding(0, 0, (6 * resources.displayMetrics.density).toInt(), 0) // 右侧留 6dp 间距
+        } // 结束 apply 块
+        row.addView(indexLabel) // 把序号标签加入行容器（放在下拉框之前）
 
         // 创建子命令 Spinner
         val spinner = Spinner(this).apply { // 创建子命令下拉框，apply 块内配置（语法：apply{}=作用域函数）
@@ -1850,6 +1861,7 @@ class LayerEditActivity : AppCompatActivity() { // 定义操作层编辑 Activit
             setOnClickListener { // 设置点击监听（语法：setOnClickListener{}=点击监听 lambda）
                 spinners.remove(spinner) // 从跟踪列表移除该子命令
                 container.removeView(row) // 从容器移除整行
+                refreshSubCommandIndexes(container) // 重排行序号，保持「子 1/2/3」连续
                 updateAddSubCommandButton(addButton, spinners.size, label) // 更新「添加子命令」按钮状态
             } // 结束删除按钮点击监听
         } // 结束 apply 块
@@ -1858,18 +1870,35 @@ class LayerEditActivity : AppCompatActivity() { // 定义操作层编辑 Activit
         // 添加到容器
         container.addView(row) // 把整行加入子命令列表容器
         spinners.add(spinner) // 把下拉框加入跟踪列表
+        refreshSubCommandIndexes(container) // 重排行序号，保证新行显示正确的「子 N」
 
         return spinner // 返回新创建的子命令下拉框
     } // 结束 addSubCommandSpinner 函数
+
+    /**
+     * 刷新子命令行的序号标签
+     *
+     * 每行结构为「序号标签 TextView + 按键 Spinner + 删除按钮」，
+     * 删除中间行后按容器当前顺序重新编号，保持「子 1 / 子 2 / 子 3」连续。
+     *
+     * @param container 子命令列表容器
+     */
+    private fun refreshSubCommandIndexes(container: LinearLayout) { // 私有函数：按当前行顺序重排序号
+        for (index in 0 until container.childCount) { // 遍历容器内的每一行（语法：until=左闭右开区间）
+            val row = container.getChildAt(index) as? LinearLayout ?: continue // 取行容器（语法：as?=安全类型转换，?:=空值合并）
+            val indexLabel = row.getChildAt(0) as? TextView ?: continue // 行首即序号标签，取不到则跳过
+            indexLabel.text = "子 ${index + 1}" // 更新为当前序号（语法：字符串模板）
+        } // 结束遍历
+    } // 结束 refreshSubCommandIndexes 函数
 
     /**
      * 更新"添加子命令"按钮的状态和文字
      *
      * @param button 添加子命令按钮
      * @param count 当前子命令数量
-     * @param label 按钮文字中使用的名称（默认「添加子命令」，长按子命令区传「添加长按子命令」）
+     * @param label 按钮文字中使用的名称（默认「添加点击子命令」，长按子命令区传「添加长按子命令」）
      */
-    private fun updateAddSubCommandButton(button: Button, count: Int, label: String = "添加子命令") { // 私有函数：更新「添加子命令」按钮状态和文字
+    private fun updateAddSubCommandButton(button: Button, count: Int, label: String = "添加点击子命令") { // 私有函数：更新「添加子命令」按钮状态和文字
         if (count >= KeyMapping.MAX_SUB_COMMANDS) { // 若子命令数已达上限
             // 已满，禁用按钮
             button.isEnabled = false // 禁用添加按钮
