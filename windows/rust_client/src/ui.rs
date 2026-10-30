@@ -267,6 +267,8 @@ pub struct App {
     last_window_size: (f32, f32),
     /// 上次裁剪圆角时的窗口实际尺寸（尺寸变化后需要重新设置窗口区域）
     last_region_size: (i32, i32),
+    /// 上次强制置顶的时间（魔兽窗口化全屏会盖住悬浮窗，需周期性重新置顶）
+    last_topmost_at: std::time::Instant,
 }
 
 impl App {
@@ -309,6 +311,7 @@ impl App {
             full_editor: true,
             last_window_size: (0.0, 0.0),
             last_region_size: (0, 0),
+            last_topmost_at: std::time::Instant::now(),
         }
     }
 
@@ -387,6 +390,13 @@ impl eframe::App for App {
         if size != self.last_region_size {
             self.last_region_size = size;
             crate::win::round_own_window(&title, 12);
+        }
+
+        // 魔兽以窗口化全屏启动后会盖住悬浮窗：每秒用 Win32 强制置顶一次，
+        // 保证小圆点始终显示在游戏画面之上（eframe 的 always_on_top 在 Wine 下不可靠）
+        if self.last_topmost_at.elapsed() >= Duration::from_secs(1) {
+            self.last_topmost_at = std::time::Instant::now();
+            crate::win::set_topmost(&title);
         }
 
         if !self.cfg.overlay_expanded {
@@ -595,6 +605,10 @@ impl App {
                     Ok(path) => {
                         self.launch_error = None;
                         config::remember_path(&mut self.cfg, &path);
+                        // 启动后自动收起到小圆点，避免大面板挡住游戏画面
+                        self.cfg.overlay_expanded = false;
+                        self.full_editor = false;
+                        RT.overlay_expanded.store(false, Ordering::Relaxed);
                         *dirty = true;
                         crate::launch_game(&self.cfg);
                     }

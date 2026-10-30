@@ -12,7 +12,8 @@ use windows::Win32::System::SystemInformation::GetTickCount;
 use windows::Win32::UI::Input::KeyboardAndMouse::*;
 use windows::Win32::UI::WindowsAndMessaging::{
     FindWindowW, GetCursorPos, GetSystemMetrics, GetWindowRect, SetCursorPos, SetWindowPos,
-    SetWindowTextW, SM_CXSCREEN, SM_CYSCREEN, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOZORDER,
+    SetWindowTextW, HWND_TOPMOST, SM_CXSCREEN, SM_CYSCREEN, SWP_NOACTIVATE, SWP_NOMOVE,
+    SWP_NOZORDER, SWP_NOSIZE,
 };
 
 use crate::runtime::{log, pack_pos, unpack_pos, CURSOR_UNSET, RT};
@@ -239,6 +240,30 @@ pub fn resize_own_window(title: &str, w: i32, h: i32) {
             w.max(1),
             h.max(1),
             SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE,
+        );
+    }
+}
+
+/// 强制本程序窗口置顶
+///
+/// eframe 的 `always_on_top` 在 Winlator/Wine 下不可靠：魔兽以窗口化全屏启动后会盖住悬浮窗，
+/// 小圆点就看不见了。这里每次调用都用 `SetWindowPos(HWND_TOPMOST)` 把窗口重新提回最上层，
+/// 只改 z 序、不动位置和焦点，界面里周期性调用即可。
+pub fn set_topmost(title: &str) {
+    let wide: Vec<u16> = title.encode_utf16().chain(std::iter::once(0)).collect();
+    unsafe {
+        let hwnd = FindWindowW(PCWSTR::null(), PCWSTR(wide.as_ptr()));
+        if hwnd.0 == 0 {
+            return;
+        }
+        let _ = SetWindowPos(
+            hwnd,
+            HWND_TOPMOST,
+            0,
+            0,
+            0,
+            0,
+            SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE,
         );
     }
 }
