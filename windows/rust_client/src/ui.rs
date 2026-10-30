@@ -353,7 +353,14 @@ impl eframe::App for App {
             *RT.key_mappings.lock().unwrap() = self.cfg.key_mappings.clone();
         }
         RT.key_mapping_enabled.store(self.cfg.key_mapping_enabled, Ordering::SeqCst);
-        RT.overlay_expanded.store(self.cfg.overlay_expanded, Ordering::SeqCst);
+
+        // 悬浮窗展开状态以运行期为准：映射动作在动作线程里翻转它，
+        // 这里回写到配置（若反过来每帧用配置覆盖运行期，映射触发就永远看不到效果）
+        let rt_expanded = RT.overlay_expanded.load(Ordering::Relaxed);
+        if rt_expanded != self.cfg.overlay_expanded {
+            self.cfg.overlay_expanded = rt_expanded;
+            dirty = true;
+        }
 
         // 面板状态 → 目标窗口尺寸（状态切换时调整窗口大小）
         let target = if !self.cfg.overlay_expanded {
@@ -459,14 +466,6 @@ impl eframe::App for App {
             } else {
                 "[网络] 连接开关已关闭"
             });
-        }
-
-        // 悬浮窗展开状态：映射动作（OverlayToggle）在后台线程里改的是运行期状态，
-        // 这里回写到界面配置，保证面板形态随之切换
-        let rt_expanded = RT.overlay_expanded.load(Ordering::Relaxed);
-        if rt_expanded != self.cfg.overlay_expanded {
-            self.cfg.overlay_expanded = rt_expanded;
-            dirty = true;
         }
 
         // 映射编辑对话框（模态）
