@@ -365,8 +365,8 @@ impl eframe::App for App {
         // 面板状态 → 目标窗口尺寸（状态切换时调整窗口大小）
         let target = if !self.cfg.overlay_expanded {
             egui::vec2(64.0, 64.0) // 圆点
-        } else if self.full_editor {
-            egui::vec2(620.0, 660.0) // 完整编辑面板
+        } else if self.full_editor || !self.cfg.overlay_compact_enabled {
+            egui::vec2(620.0, 660.0) // 完整编辑面板（小面板不参与形态时直接展开为主界面）
         } else {
             egui::vec2(280.0, 250.0) // 小面板
         };
@@ -391,7 +391,7 @@ impl eframe::App for App {
 
         if !self.cfg.overlay_expanded {
             self.render_collapsed(ctx, frame, &mut dirty);
-        } else if self.full_editor {
+        } else if self.full_editor || !self.cfg.overlay_compact_enabled {
             self.render_full(ctx, frame, &mut dirty, &version);
         } else {
             self.render_compact(ctx, frame, &mut dirty);
@@ -746,6 +746,29 @@ impl App {
                      已连接 APK 时另把文本发送到手机剪贴板。记录文件：{}",
                     config::exe_dir().join("clipboard_log.txt").display()
                 ))
+                .weak(),
+            );
+
+            /* ===== 悬浮窗形态 ===== */
+            ui.separator();
+            Self::section(ui, "悬浮窗形态");
+            if ui
+                .checkbox(
+                    &mut self.cfg.overlay_compact_enabled,
+                    "小面板参与形态（关闭时只在「完整主界面」和「小圆点」之间切换）",
+                )
+                .changed()
+            {
+                // 关闭小面板后当前若停留在小面板，直接落回完整主界面，避免出现不存在的形态
+                if !self.cfg.overlay_compact_enabled {
+                    self.full_editor = true;
+                }
+                *dirty = true;
+            }
+            ui.label(
+                egui::RichText::new(
+                    "关闭（默认）：小圆点 ⇄ 完整主界面；打开：小圆点 ⇄ 小面板 ⇄ 完整主界面。",
+                )
                 .weak(),
             );
     }
@@ -1350,7 +1373,8 @@ impl App {
             .show(ctx, |ui| {
                 // 标题栏：返回小面板 + 可拖动标题 + 收起为圆点
                 ui.horizontal(|ui| {
-                    if ui.button("◀ 小面板").clicked() {
+                    // 小面板不参与形态时没有「上一级」，直接由右侧「─」收起到圆点
+                    if self.cfg.overlay_compact_enabled && ui.button("◀ 小面板").clicked() {
                         self.full_editor = false;
                     }
                     let title = ui.add(

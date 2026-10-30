@@ -57,6 +57,12 @@ pub struct ClientConfig {
     pub key_mappings: Vec<KeyMapping>,
     /// 悬浮窗是否展开（默认展开为小面板，false = 收起为状态点）
     pub overlay_expanded: bool,
+    /// 小面板（紧凑形态）是否参与悬浮窗形态（默认不参与）
+    ///
+    /// 关闭时形态只有两种：小圆点 ⇄ 完整主界面；
+    /// 打开时才有三种：小圆点 ⇄ 小面板 ⇄ 完整主界面。
+    #[serde(default)]
+    pub overlay_compact_enabled: bool,
 }
 
 impl Default for ClientConfig {
@@ -81,6 +87,7 @@ impl Default for ClientConfig {
             key_mapping_enabled: true,
             key_mappings: Vec::new(),
             overlay_expanded: true,
+            overlay_compact_enabled: false,
         }
     }
 }
