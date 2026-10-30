@@ -6,12 +6,13 @@
 
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use windows::core::{w, PCWSTR};
-use windows::Win32::Foundation::POINT;
+use windows::Win32::Foundation::{HWND, POINT, RECT};
+use windows::Win32::Graphics::Gdi::{CreateRoundRectRgn, DeleteObject, SetWindowRgn};
 use windows::Win32::System::SystemInformation::GetTickCount;
 use windows::Win32::UI::Input::KeyboardAndMouse::*;
 use windows::Win32::UI::WindowsAndMessaging::{
-    FindWindowW, GetCursorPos, GetSystemMetrics, SetCursorPos, SetWindowTextW, SM_CXSCREEN,
-    SM_CYSCREEN,
+    FindWindowW, GetCursorPos, GetSystemMetrics, GetWindowRect, SetCursorPos, SetWindowPos,
+    SetWindowTextW, SM_CXSCREEN, SM_CYSCREEN, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOZORDER,
 };
 
 use crate::runtime::{log, pack_pos, unpack_pos, CURSOR_UNSET, RT};
@@ -177,6 +178,77 @@ pub fn rename_own_window(old_title: &str, new_title: &str) -> bool {
             return false;
         }
         SetWindowTextW(hwnd, PCWSTR(new_w.as_ptr())).is_ok()
+    }
+}
+
+/// 读取本程序窗口的实际外框尺寸（宽, 高）
+///
+/// 找不到窗口时返回 (0, 0)，供界面判断是否需要重新设置圆角区域。
+pub fn own_window_size(title: &str) -> (i32, i32) {
+    let wide: Vec<u16> = title.encode_utf16().chain(std::iter::once(0)).collect();
+    unsafe {
+        let hwnd = FindWindowW(PCWSTR::null(), PCWSTR(wide.as_ptr()));
+        if hwnd.0 == 0 {
+            return (0, 0);
+        }
+        let mut rect = RECT::default();
+        if GetWindowRect(hwnd, &mut rect).is_err() {
+            return (0, 0);
+        }
+        (rect.right - rect.left, rect.bottom - rect.top)
+    }
+}
+
+/// 用 Win32 直接调整本程序窗口尺寸（物理像素）
+///
+/// eframe 的 `set_window_size` 只是请求，Winlator/Wine 下不一定生效；
+/// 这里直接调用 `SetWindowPos`，窗口尺寸变化后 winit 会收到 Resize 事件并同步给 egui。
+pub fn resize_own_window(title: &str, w: i32, h: i32) {
+    let wide: Vec<u16> = title.encode_utf16().chain(std::iter::once(0)).collect();
+    unsafe {
+        let hwnd = FindWindowW(PCWSTR::null(), PCWSTR(wide.as_ptr()));
+        if hwnd.0 == 0 {
+            return;
+        }
+        let _ = SetWindowPos(
+            hwnd,
+            HWND(0),
+            0,
+            0,
+            w.max(1),
+            h.max(1),
+            SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE,
+        );
+    }
+}
+
+/// 把本程序窗口裁剪成圆角矩形
+///
+/// Winlator 下窗口透明合成不可靠（圆角外会画成黑色），这里直接用窗口区域
+/// （Wine 映射为 XShape）把四个角裁掉，圆角外干脆不属于窗口，不依赖桌面合成器。
+pub fn round_own_window(title: &str, radius: i32) {
+    let wide: Vec<u16> = title.encode_utf16().chain(std::iter::once(0)).collect();
+    unsafe {
+        let hwnd = FindWindowW(PCWSTR::null(), PCWSTR(wide.as_ptr()));
+        if hwnd.0 == 0 {
+            return;
+        }
+        let mut rect = RECT::default();
+        if GetWindowRect(hwnd, &mut rect).is_err() {
+            return;
+        }
+        let (w, h) = (rect.right - rect.left, rect.bottom - rect.top);
+        if w <= 0 || h <= 0 {
+            return;
+        }
+        let rgn = CreateRoundRectRgn(0, 0, w + 1, h + 1, radius * 2, radius * 2);
+        if rgn.0 == 0 {
+            return;
+        }
+        // 成功后区域归系统所有，不能再删除
+        if SetWindowRgn(hwnd, rgn, true) == 0 {
+            let _ = DeleteObject(rgn);
+        }
     }
 }
 

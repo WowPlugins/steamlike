@@ -51,6 +51,12 @@ pub struct ClientConfig {
     /// 剪贴板同步开关（默认开启）：剪贴板文本始终追加到 exe 目录的 clipboard_log.txt，
     /// 已连接 APK 时同时发送到手机剪贴板
     pub clipboard_sync: bool,
+    /// 按键映射总开关（默认开启）：关闭时所有映射不生效，按键原样透传
+    pub key_mapping_enabled: bool,
+    /// 按键映射列表
+    pub key_mappings: Vec<KeyMapping>,
+    /// 悬浮窗是否展开（默认展开为小面板，false = 收起为状态点）
+    pub overlay_expanded: bool,
 }
 
 impl Default for ClientConfig {
@@ -72,6 +78,127 @@ impl Default for ClientConfig {
             right_button_fkeys: true,
             cursor_park_offscreen: true,
             clipboard_sync: true,
+            key_mapping_enabled: true,
+            key_mappings: Vec::new(),
+            overlay_expanded: true,
+        }
+    }
+}
+
+/* ===== 按键映射数据结构 ===== */
+
+/// 映射动作（短按或长按触发后要执行的动作）
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum MappedAction {
+    /// 未设置（占位，保存时不写）
+    None,
+    /// 键盘按键（含子命令组合键）
+    KeyboardKey { key_code: u32, sub_commands: Vec<u32> },
+    /// 数字小键盘按键（含子命令组合键）
+    NumpadKey { key_code: u32, sub_commands: Vec<u32> },
+    /// 鼠标点击（含子命令组合键）
+    MouseClick { button: u8, sub_commands: Vec<u32> },
+    /// 鼠标长按/锁存（含子命令组合键）
+    MouseToggle { button: u8, sub_commands: Vec<u32> },
+    /// 滚轮上滚
+    ScrollUp,
+    /// 滚轮下滚
+    ScrollDown,
+    /// 鼠标长按交换（左右键锁存互换）
+    MouseSwapToggle,
+    /// 释放所有鼠标长按锁存
+    MouseReleaseAll,
+    /// 交互键（解锁存 → 居中 → 右键点击 → 恢复锁存）
+    Interact,
+    /// 悬浮窗展开/收起
+    OverlayToggle,
+}
+
+impl Default for MappedAction {
+    fn default() -> Self {
+        Self::None
+    }
+}
+
+impl MappedAction {
+    /// 动作的具体描述（用于界面列表展示）
+    pub fn describe(&self) -> String {
+        match self {
+            Self::None => "未设置".to_string(),
+            Self::KeyboardKey { key_code, sub_commands } => {
+                // 主键 Shift + 唯一子命令 = Shift 符号组合，能对应符号时直接显示（Shift+1 → !）
+                if *key_code == 0x10 && sub_commands.len() == 1 {
+                    if let Some(sym) = crate::ui::shift_symbol_name(sub_commands[0]) {
+                        return format!("键盘 Shift+{}", sym);
+                    }
+                }
+                let key_name = crate::ui::key_name(*key_code);
+                if sub_commands.is_empty() {
+                    format!("键盘 {}", key_name)
+                } else {
+                    let subs: Vec<String> = sub_commands.iter().map(|&c| crate::ui::key_name(c)).collect();
+                    format!("键盘 {} + {}", key_name, subs.join(" + "))
+                }
+            }
+            Self::NumpadKey { key_code, sub_commands } => {
+                let key_name = crate::ui::numpad_key_name(*key_code);
+                if sub_commands.is_empty() {
+                    format!("小键盘 {}", key_name)
+                } else {
+                    let subs: Vec<String> = sub_commands.iter().map(|&c| crate::ui::key_name(c)).collect();
+                    format!("小键盘 {} + {}", key_name, subs.join(" + "))
+                }
+            }
+            Self::MouseClick { button, sub_commands } => {
+                let btn_name = crate::ui::mouse_button_name(*button);
+                if sub_commands.is_empty() {
+                    format!("鼠标点击 {}", btn_name)
+                } else {
+                    let subs: Vec<String> = sub_commands.iter().map(|&c| crate::ui::key_name(c)).collect();
+                    format!("鼠标点击 {} + {}", btn_name, subs.join(" + "))
+                }
+            }
+            Self::MouseToggle { button, sub_commands } => {
+                let btn_name = crate::ui::mouse_button_name(*button);
+                if sub_commands.is_empty() {
+                    format!("鼠标长按 {}", btn_name)
+                } else {
+                    let subs: Vec<String> = sub_commands.iter().map(|&c| crate::ui::key_name(c)).collect();
+                    format!("鼠标长按 {} + {}", btn_name, subs.join(" + "))
+                }
+            }
+            Self::ScrollUp => "滚轮上滚".to_string(),
+            Self::ScrollDown => "滚轮下滚".to_string(),
+            Self::MouseSwapToggle => "鼠标长按交换".to_string(),
+            Self::MouseReleaseAll => "释放鼠标长按".to_string(),
+            Self::Interact => "交互键".to_string(),
+            Self::OverlayToggle => "悬浮窗展开/收起".to_string(),
+        }
+    }
+}
+
+/// 一条按键映射：源按键 → 短按动作 + 长按动作
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+#[serde(default)]
+pub struct KeyMapping {
+    /// 源按键虚拟键码
+    pub source_vk: u32,
+    /// 短按动作
+    pub tap_action: MappedAction,
+    /// 长按动作（None 表示无长按映射）
+    pub long_press_action: MappedAction,
+    /// 该映射是否生效（默认生效）
+    pub enabled: bool,
+}
+
+impl Default for KeyMapping {
+    fn default() -> Self {
+        Self {
+            source_vk: 0,
+            tap_action: MappedAction::None,
+            long_press_action: MappedAction::None,
+            enabled: true,
         }
     }
 }

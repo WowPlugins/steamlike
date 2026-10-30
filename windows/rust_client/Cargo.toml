@@ -1,6 +1,6 @@
 [package]
 name = "inputbridge_client"
-version = "0.1.54"
+version = "0.1.60"
 edition = "2021"
 description = "InputBridge Client for Winlator (Rust 版) - 键鼠拦截 + TCP 事件注入"
 
@@ -19,6 +19,7 @@ windows = { version = "0.52", features = [
     "Win32_System_Time",              # GetLocalTime / SetSystemTime（日志时间戳 + 时间同步）
     "Win32_UI_Input_KeyboardAndMouse",
     "Win32_UI_WindowsAndMessaging",
+    "Win32_Graphics_Gdi",              # CreateRoundRectRgn / DeleteObject（窗口圆角裁剪）
 ] }
 
 # 说明：eframe 0.22 的 src/native/app_icon.rs 在 Windows 上直接使用 winapi 的

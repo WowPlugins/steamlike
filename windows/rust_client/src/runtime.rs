@@ -37,6 +37,13 @@ pub struct Runtime {
     /// 剪贴板同步开关（默认开启）：开启后剪贴板文本始终追加到本地文件，
     /// 已连接 APK 时同时发送到手机剪贴板
     pub clipboard_sync: AtomicBool,
+    /// 按键映射总开关（默认开启）：关闭时所有映射不生效，按键原样透传
+    pub key_mapping_enabled: AtomicBool,
+    /// 悬浮窗是否展开（true = 展开为小面板，false = 收起为状态点）
+    pub overlay_expanded: AtomicBool,
+    /// 当前生效的按键映射列表（UI 线程更新，钩子线程读取）
+    /// 用 Mutex 而非原子量是因为映射列表是动态结构，钩子只做读+快照
+    pub key_mappings: std::sync::Mutex<Vec<crate::config::KeyMapping>>,
 }
 
 /// `saved_cursor` 的「尚未记录」哨兵值
@@ -54,6 +61,9 @@ pub static RT: Runtime = Runtime {
     cursor_park_offscreen: AtomicBool::new(true),
     saved_cursor: AtomicI64::new(CURSOR_UNSET),
     clipboard_sync: AtomicBool::new(true),
+    key_mapping_enabled: AtomicBool::new(true),
+    overlay_expanded: AtomicBool::new(true),
+    key_mappings: std::sync::Mutex::new(Vec::new()),
 };
 
 /// APK 服务器地址与端口（界面可改，网络线程每次重连时读取）

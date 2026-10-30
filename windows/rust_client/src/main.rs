@@ -84,7 +84,11 @@ fn main() -> eframe::Result<()> {
     }
 
     let options = eframe::NativeOptions {
-        initial_window_size: Some(egui::vec2(620.0, 640.0)),
+        // 浮动控制面板形态：无边框、置顶、透明（圆点状态下只显示圆）
+        decorated: false,
+        always_on_top: true,
+        transparent: true,
+        initial_window_size: Some(egui::vec2(620.0, 660.0)),
         ..Default::default()
     };
 

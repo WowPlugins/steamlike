@@ -8,8 +8,9 @@
 //! 事件是否被吞掉（return LRESULT(1)）的规则：
 //! | 事件 | 处理 |
 //! | --- | --- |
-//! | 交互键 | 吞掉，交给动作线程执行「左键点击 + 右键点击」序列，不透传 |
+//! | 交互键 | 吞掉，交给动作线程执行「解锁 → 居中 → 右键点击 → 恢复锁存」序列，不透传 |
 //! | 长按交换键 | 吞掉，交给动作线程做长按判定；短按则补发一次普通点按 |
+//! | 映射按键 | 吞掉，交给动作线程按短按/长按映射执行目标动作，不透传 |
 //! | WASD | 吞掉并由本程序注入，保证「光标归位 → F11 → WASD」的顺序 |
 //! | 有锁存时的鼠标按键按下 | 吞掉，作为解锁触发（连带吞掉对应的抬起），左右键均可解除 |
 //! | 鼠标移动 | 直接透传给魔兽（不改写，避免光标偏移导致界面点击/hover 失效） |
@@ -48,6 +49,12 @@ enum Cmd {
     UnlockCenter,
     /// 仅用于记录日志：钩子回调内不能加锁，日志改由动作线程打印
     Note(&'static str),
+    /// 映射按键按下（含短按和长按判定）
+    MappingDown(u32),
+    /// 映射按键抬起
+    MappingUp(u32),
+    /// 长按阈值到达（映射按键用）
+    MappingLongPress(u32),
 }
 
 /// 「解锁 → 居中」之间插入的等待（毫秒）
@@ -129,7 +136,7 @@ fn do_swap() {
 
 /// 交互键触发：
 /// 1. 记录左右键锁存状态与光标位置
-/// 2. 若锁定则先解锁 → 等游戏退出 mouselook 后光标居中 → 左键点击一下
+/// 2. 解除左右锁存 → 等游戏退出 mouselook → 光标居中 → 右键点击一次
 /// 3. 光标移回原位置 → 恢复原有锁存状态
 fn do_interact() {
     let left_locked = RT.left_locked.load(Ordering::Relaxed);
@@ -143,6 +150,7 @@ fn do_interact() {
 
     win::center_cursor();
 
+    // 右键点击一次（WoW 中与 NPC/物品交互的标准方式）
     win::inject_mouse_button(BTN_RIGHT, true);
     win::inject_mouse_button(BTN_RIGHT, false);
 
@@ -206,6 +214,22 @@ unsafe extern "system" fn keyboard_proc(ncode: i32, wparam: WPARAM, lparam: LPAR
     if vk as u32 == RT.swap_vk.load(Ordering::Relaxed) {
         queue_cmd(if down { Cmd::SwapDown } else { Cmd::SwapUp });
         return LRESULT(1);
+    }
+
+    // 映射按键：吞掉，交给动作线程做短按/长按判定
+    if RT.key_mapping_enabled.load(Ordering::Relaxed) {
+        let is_mapped = {
+            let mappings = RT.key_mappings.lock().unwrap();
+            mappings.iter().any(|m| m.source_vk == vk as u32 && m.enabled)
+        };
+        if is_mapped {
+            queue_cmd(if down {
+                Cmd::MappingDown(vk as u32)
+            } else {
+                Cmd::MappingUp(vk as u32)
+            });
+            return LRESULT(1);
+        }
     }
 
     // WASD：由本程序接管注入，保证「光标居中 → F11 → WASD」的顺序
@@ -312,29 +336,53 @@ fn queue_cmd(cmd: Cmd) {
 /* ===== 动作线程 ===== */
 
 fn action_thread(rx: Receiver<Cmd>) {
-    // 长按判定状态机
+    // 长按判定状态机（长按交换键用）
     let mut held_at: Option<Instant> = None;
     let mut fired = false;
 
+    // 映射按键长按判定状态机：vk → (按下时间, 是否已触发长按)
+    let mut mapping_held: std::collections::HashMap<u32, (Instant, bool)> = std::collections::HashMap::new();
+
     loop {
-        let cmd = match held_at {
+        // 计算下一个超时事件：长按交换键 或 任意映射按键的长按阈值
+        let mut next_timeout: Option<(Instant, Cmd)> = None;
+
+        // 长按交换键超时
+        if let Some(t0) = held_at {
+            if !fired {
+                let threshold = Duration::from_millis(RT.long_press_ms.load(Ordering::Relaxed) as u64);
+                let deadline = t0 + threshold;
+                if deadline > Instant::now() {
+                    next_timeout = Some((deadline, Cmd::SwapTimeout));
+                }
+            }
+        }
+
+        // 映射按键长按超时
+        for (&vk, &(t0, fired_flag)) in &mapping_held {
+            if !fired_flag {
+                let threshold = Duration::from_millis(RT.long_press_ms.load(Ordering::Relaxed) as u64);
+                let deadline = t0 + threshold;
+                if deadline > Instant::now() {
+                    if next_timeout.map_or(true, |(t, _)| deadline < t) {
+                        next_timeout = Some((deadline, Cmd::MappingLongPress(vk)));
+                    }
+                }
+            }
+        }
+
+        let cmd = match next_timeout {
             None => match rx.recv() {
                 Ok(c) => c,
                 Err(_) => break,
             },
-            Some(t0) if !fired => {
-                let threshold = Duration::from_millis(RT.long_press_ms.load(Ordering::Relaxed) as u64);
-                let deadline = t0 + threshold;
+            Some((deadline, timeout_cmd)) => {
                 match rx.recv_timeout(deadline.saturating_duration_since(Instant::now())) {
                     Ok(c) => c,
-                    Err(RecvTimeoutError::Timeout) => Cmd::SwapTimeout,
+                    Err(RecvTimeoutError::Timeout) => timeout_cmd,
                     Err(RecvTimeoutError::Disconnected) => break,
                 }
             }
-            Some(_) => match rx.recv() {
-                Ok(c) => c,
-                Err(_) => break,
-            },
         };
 
         match cmd {
@@ -367,8 +415,143 @@ fn action_thread(rx: Receiver<Cmd>) {
                 win::center_cursor();
             }
             Cmd::Note(msg) => log(msg),
+            Cmd::MappingDown(vk) => {
+                mapping_held.insert(vk, (Instant::now(), false));
+            }
+            Cmd::MappingUp(vk) => {
+                if let Some((_, fired_flag)) = mapping_held.remove(&vk) {
+                    if !fired_flag {
+                        // 未到阈值就抬起 → 执行短按映射
+                        execute_mapping(vk, false);
+                    }
+                }
+            }
+            Cmd::MappingLongPress(vk) => {
+                if let Some((_, fired_flag)) = mapping_held.get_mut(&vk) {
+                    if !*fired_flag {
+                        *fired_flag = true;
+                        execute_mapping(vk, true);
+                    }
+                }
+            }
         }
     }
+}
+
+/// 执行映射动作
+///
+/// vk 是源按键虚拟键码，is_long_press 表示是否为长按触发。
+/// 从运行时映射列表中查找该按键的映射，若启用则执行对应动作。
+fn execute_mapping(source_vk: u32, is_long_press: bool) {
+    // 总开关关闭时不执行任何映射
+    if !RT.key_mapping_enabled.load(Ordering::Relaxed) {
+        return;
+    }
+
+    let mappings = RT.key_mappings.lock().unwrap();
+    let mapping = match mappings.iter().find(|m| m.source_vk == source_vk && m.enabled) {
+        Some(m) => m.clone(),
+        None => return,
+    };
+    drop(mappings);
+
+    let action = if is_long_press {
+        &mapping.long_press_action
+    } else {
+        &mapping.tap_action
+    };
+
+    match action {
+        crate::config::MappedAction::None => {}
+        crate::config::MappedAction::KeyboardKey { key_code, sub_commands } => {
+            execute_keyboard_key(*key_code as u16, sub_commands);
+        }
+        crate::config::MappedAction::NumpadKey { key_code, sub_commands } => {
+            execute_keyboard_key(*key_code as u16, sub_commands);
+        }
+        crate::config::MappedAction::MouseClick { button, sub_commands } => {
+            execute_mouse_click(*button, sub_commands);
+        }
+        crate::config::MappedAction::MouseToggle { button, sub_commands } => {
+            execute_mouse_toggle(*button, sub_commands);
+        }
+        crate::config::MappedAction::ScrollUp => {
+            win::inject_mouse_wheel(120);
+            log(format!("[映射] {} → 滚轮上滚", crate::ui::key_name(source_vk)));
+        }
+        crate::config::MappedAction::ScrollDown => {
+            win::inject_mouse_wheel(-120);
+            log(format!("[映射] {} → 滚轮下滚", crate::ui::key_name(source_vk)));
+        }
+        crate::config::MappedAction::MouseSwapToggle => {
+            do_swap();
+        }
+        crate::config::MappedAction::MouseReleaseAll => {
+            set_lock(BTN_LEFT, false);
+            set_lock(BTN_RIGHT, false);
+            log("[映射] 释放所有鼠标长按锁存");
+        }
+        crate::config::MappedAction::Interact => {
+            do_interact();
+        }
+        crate::config::MappedAction::OverlayToggle => {
+            let expanded = RT.overlay_expanded.load(Ordering::Relaxed);
+            RT.overlay_expanded.store(!expanded, Ordering::Relaxed);
+            log(format!(
+                "[映射] 悬浮窗{}",
+                if expanded { "收起" } else { "展开" }
+            ));
+        }
+    }
+}
+
+/// 执行键盘按键动作（含子命令组合键）
+///
+/// 顺序：先按下主键 → 依次按下子命令 → 逆序抬起子命令 → 抬起主键。
+/// 与 APK 的 KeyboardMouseMapper 保持一致：需要组合键时把修饰键设为主键、
+/// 字符键设为子命令（如主键 Ctrl + 子命令 C）。
+fn execute_keyboard_key(key_code: u16, sub_commands: &[u32]) {
+    win::inject_key(key_code, true);
+    for &sub in sub_commands {
+        win::inject_key(sub as u16, true);
+    }
+    for &sub in sub_commands.iter().rev() {
+        win::inject_key(sub as u16, false);
+    }
+    win::inject_key(key_code, false);
+    let key_name = crate::ui::key_name(key_code as u32);
+    if sub_commands.is_empty() {
+        log(format!("[映射] 键盘 {}", key_name));
+    } else {
+        let subs: Vec<String> = sub_commands.iter().map(|&c| crate::ui::key_name(c)).collect();
+        log(format!("[映射] 键盘 {} + {}", key_name, subs.join(" + ")));
+    }
+}
+
+/// 执行鼠标点击动作（含子命令组合键）
+fn execute_mouse_click(button: u8, sub_commands: &[u32]) {
+    win::inject_mouse_button(button, true);
+    for &sub in sub_commands {
+        win::inject_key(sub as u16, true);
+    }
+    for &sub in sub_commands.iter().rev() {
+        win::inject_key(sub as u16, false);
+    }
+    win::inject_mouse_button(button, false);
+    let btn_name = crate::ui::mouse_button_name(button);
+    log(format!("[映射] 鼠标点击 {}", btn_name));
+}
+
+/// 执行鼠标长按/锁存动作（含子命令组合键）
+fn execute_mouse_toggle(button: u8, sub_commands: &[u32]) {
+    // 先执行子命令（如果有），再锁存鼠标按钮
+    for &sub in sub_commands {
+        win::inject_key(sub as u16, true);
+        win::inject_key(sub as u16, false);
+    }
+    set_lock(button, true);
+    let btn_name = crate::ui::mouse_button_name(button);
+    log(format!("[映射] 鼠标长按 {}", btn_name));
 }
 
 /* ===== 钩子线程 ===== */
