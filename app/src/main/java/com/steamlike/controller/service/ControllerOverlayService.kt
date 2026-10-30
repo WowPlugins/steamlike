@@ -226,6 +226,10 @@ class ControllerOverlayService : Service() {  // class=类声明；继承 Servic
      * 悬浮窗常驻容器的圆角边框背景，右键长按锁存时切换边框颜色
      */
     private var overlayFrameBackground: GradientDrawable? = null  // var=可变变量；?=可空类型；悬浮窗常驻容器的圆角边框背景
+    /** 当前边框颜色（去重用：颜色未变时不再重设 drawable，避免无意义重绘造成闪烁） */
+    private var currentBorderColor: Int = Integer.MIN_VALUE  // 初始为不可能的色值，保证首次一定应用
+    /** 收起胶囊已显示的文本（去重用：文本未变时不再重设，避免每轮轮询都重绘） */
+    private var lastCollapsedText: String? = null  // var=可变变量；?=可空类型；上一次写入收起胶囊的文本
     /** 当前处于长按锁存状态的鼠标按钮集合（左/右键），用于决定悬浮窗边框颜色 */
     private val lockedMouseToggles = mutableSetOf<MouseButton>()  // val=只读引用；可变集合记录长按锁存的鼠标按钮
     private var gamepadInputView: GamepadInputView? = null  // var=可变变量；?=可空类型；全屏透明焦点输入窗口
@@ -1303,6 +1307,11 @@ class ControllerOverlayService : Service() {  // class=类声明；继承 Servic
                 server.sendKeyEvent(0x2E, false)  // 发送删除键释放事件
             }  // 结束 DEL 分支
             else -> {  // 默认分支：普通字符
+                // 中文等非 ASCII 字符无法用 VK 表示，改走 Unicode 文本注入通道
+                if (ch.code > 0x7F) {  // 语法：if + 码点比较；非 ASCII 字符
+                    server.sendUnicodeText(ch.toString())  // 发送 Unicode 文本包给 Windows 客户端
+                    return  // 不再走 VK 路径
+                }  // 结束非 ASCII 分支
                 val (vk, shift) = BridgeInputInjector.charToWindowsVK(ch) ?: return  // val=只读变量；解构声明；?:=空值合并；字符转 VK 码与是否需要 Shift
                 if (shift) server.sendKeyEvent(0xA0, true)  // VK_LSHIFT  // if 判断；需要 Shift 时先按下左 Shift
                 server.sendKeyEvent(vk, true)  // 发送字符键按下事件
@@ -1777,6 +1786,9 @@ class ControllerOverlayService : Service() {  // class=类声明；继承 Servic
      */
     private fun applyOverlayBorderColor(color: Int) {  // private=私有；fun=函数声明；应用悬浮窗边框颜色
         mainHandler.post {  // 回主线程执行
+            // 颜色未变则跳过：setStroke 会触发 drawable 重绘，高频重复调用会让边框闪
+            if (color == currentBorderColor) return@post  // 相同颜色直接返回
+            currentBorderColor = color  // 记录新颜色
             overlayFrameBackground?.setStroke(dp(2), color)  // ?.=安全调用；设置边框宽度与颜色
             Log.d(TAG, "Overlay border color: #${Integer.toHexString(color)}")  // 打印边框颜色日志
         }  // 结束 post lambda
@@ -1957,8 +1969,12 @@ class ControllerOverlayService : Service() {  // class=类声明；继承 Servic
      * @param activeLayers 激活层名称列表
      */
     private fun updateCollapsedViewText(activeLayers: List<String>) {  // private=私有；fun=函数声明；更新收起悬浮窗的层名显示
+        val text = buildCollapsedText(activeLayers)  // 先构建文本（在主线程外可安全执行）
+        // 文本未变时跳过，避免智能暂停/层刷新等周期性调用反复重绘胶囊
+        if (text == lastCollapsedText) return  // 内容相同直接返回
+        lastCollapsedText = text  // 记录本次文本
         collapsedTextView?.post {  // ?.=安全调用（控件可能为空）；post=向主线程消息队列投递 lambda，在 UI 线程更新文本
-            collapsedTextView?.text = buildCollapsedText(activeLayers)  // ?.=安全调用；设置收起胶囊文本为构建出的层名文本
+            collapsedTextView?.text = text  // ?.=安全调用；设置收起胶囊文本
         }  // 结束 post lambda
     }  // 结束 updateCollapsedViewText 函数
 

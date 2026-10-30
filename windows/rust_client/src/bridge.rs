@@ -16,7 +16,9 @@
 //! - 0x0D 期望客户端版本：Byte1-3 为 APK 的 Cargo.toml 版本，客户端据此判断 exe 是否过期
 //! - 0x20 客户端信息（exe → APK）：Byte1-3 为 exe 编译时的版本号，APK 据此判断客户端是否过期
 //! - 0x21 剪贴板文本（exe → APK）：8 字节头之后跟随变长正文
-//!   Byte1-4 为 UTF-8 字节长度（uint32 LE），Byte5-7 保留，其后紧接文本正文
+//! - 0x22 Unicode 文本（APK → exe）：8 字节头之后跟随 UTF-8 正文，用于软键盘输入中文
+//!   头字节下标 4..7 为 UTF-8 字节长度（uint32 小端），其后紧接文本正文
+//!   exe 收到后写入剪贴板并注入 Ctrl+V 粘贴（直接 Unicode 注入在 WoW 中文界面会乱码）
 
 use std::io::{ErrorKind, Read, Write};
 use std::net::{SocketAddr, TcpStream, ToSocketAddrs};
@@ -173,6 +175,21 @@ fn pump(stream: &mut TcpStream, buf: &mut Vec<u8>) -> bool {
         Ok(n) => {
             buf.extend_from_slice(&tmp[..n]);
             while buf.len() >= PACKET_SIZE {
+                // 变长包（0x22 Unicode 文本）：8 字节头 + 正文，正文长度写在 Byte4..7
+                if buf[0] == 0x22 {
+                    let len = u32::from_le_bytes([buf[4], buf[5], buf[6], buf[7]]) as usize;
+                    if buf.len() < PACKET_SIZE + len {
+                        break; // 正文还没到齐，等下一次读取
+                    }
+                    let body = buf[PACKET_SIZE..PACKET_SIZE + len].to_vec();
+                    buf.drain(..PACKET_SIZE + len);
+                    let text = String::from_utf8_lossy(&body).to_string();
+                    if !text.is_empty() {
+                        win::paste_text(&text);
+                        runtime::log(format!("[键盘] 已粘贴文本 {} 字节", text.len()));
+                    }
+                    continue;
+                }
                 let mut packet = [0u8; PACKET_SIZE];
                 packet.copy_from_slice(&buf[..PACKET_SIZE]);
                 buf.drain(..PACKET_SIZE);

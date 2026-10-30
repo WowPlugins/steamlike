@@ -122,6 +122,7 @@ class InputBridgeServer(  // 语法：class 声明类；InputBridge TCP 服务�
         const val MSG_RUST_VERSION: Byte = 0x0D  // 消息类型：期望客户端版本（下发 Cargo.toml 版本，客户端据此判断 exe 是否过期）
         const val MSG_CLIENT_VERSION: Byte = 0x20  // 消息类型：客户端信息（Windows 客户端上报 exe 编译版本）
         const val MSG_CLIPBOARD_TEXT: Byte = 0x21  // 消息类型：剪贴板文本（8 字节头 + 变长正文，客户端 → APK）
+        const val MSG_UNICODE_TEXT: Byte = 0x22  // 消息类型：Unicode 文本注入（8 字节头 + UTF-8 正文，APK → 客户端）
 
         const val PACKET_SIZE = 8  // 语法：const val 编译期常量；协议数据包固定长度 8 字节
         const val MAX_CLIPBOARD_BYTES = 1 shl 20  // 单个剪贴板文本正文上限（1 MB，防御异常数据）
@@ -197,6 +198,25 @@ class InputBridgeServer(  // 语法：class 声明类；InputBridge TCP 服务�
         packet[3] = if (isDown) 1 else 0  // 语法：if 表达式；写入按下标志（1=按下）
         enqueue(packet)  // 加入发送队列
     }  // 结束 sendKeyEvent 函数
+
+    /**
+     * 发送 Unicode 文本（供软键盘输入中文等无法用 VK 表示的内容）
+     *
+     * 8 字节头 + UTF-8 正文：Byte0=0x22，Byte4..7=UTF-8 字节长度（小端 uint32）。
+     * Windows 客户端用 KEYEVENTF_UNICODE 注入，效果等同于 Winlator 自带键盘打字。
+     */
+    fun sendUnicodeText(text: String) {  // 语法：fun 函数；发送 Unicode 文本注入包
+        if (text.isEmpty()) return  // 空文本直接忽略
+        val body = text.toByteArray(Charsets.UTF_8)  // 正文：UTF-8 编码
+        val packet = ByteArray(PACKET_SIZE + body.size)  // 变长包：头 + 正文
+        packet[0] = MSG_UNICODE_TEXT  // 消息类型：Unicode 文本
+        packet[4] = (body.size and 0xFF).toByte()  // 正文长度低 8 位
+        packet[5] = ((body.size shr 8) and 0xFF).toByte()  // 次低 8 位
+        packet[6] = ((body.size shr 16) and 0xFF).toByte()  // 次高 8 位
+        packet[7] = ((body.size shr 24) and 0xFF).toByte()  // 高 8 位
+        System.arraycopy(body, 0, packet, PACKET_SIZE, body.size)  // 正文紧跟 8 字节头
+        enqueue(packet)  // 加入发送队列
+    }  // 结束 sendUnicodeText 函数
 
     /**
      * 发送鼠标移动事件
@@ -519,7 +539,7 @@ class InputBridgeServer(  // 语法：class 声明类；InputBridge TCP 服务�
                 val batch = ArrayList<ByteArray>()  // 语法：val + ArrayList；本批待发送的数据包
                 batch.add(first)  // 先加入首包
                 messageQueue.drainTo(batch)  // 一次性取走队列中剩余的全部包
-                val merged = ByteArray(batch.size * PACKET_SIZE)  // 合并缓冲区（所有包均为定长 PACKET_SIZE）
+                val merged = ByteArray(batch.sumOf { it.size })  // 合并缓冲区（文本包长度可变，按实际大小求和）
                 var offset = 0  // 写入偏移量
                 for (p in batch) {  // 语法：for 循环；逐个拷贝到合并缓冲区
                     System.arraycopy(p, 0, merged, offset, p.size)  // 语法：System.arraycopy；数组拷贝

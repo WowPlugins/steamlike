@@ -10,18 +10,57 @@
 //! 并且同一内容只会处理一次，天然去重。
 
 use std::io::Write;
-use std::sync::atomic::Ordering;
+use std::sync::atomic::{AtomicU32, Ordering};
 use std::time::Duration;
 
 use windows::Win32::System::SystemInformation::GetLocalTime;
-use winapi::um::winbase::{GlobalLock, GlobalUnlock};
+use winapi::um::winbase::{GlobalAlloc, GlobalFree, GlobalLock, GlobalUnlock, GMEM_MOVEABLE};
 use winapi::um::winuser::{
-    CloseClipboard, GetClipboardData, GetClipboardSequenceNumber, OpenClipboard, CF_UNICODETEXT,
+    CloseClipboard, EmptyClipboard, GetClipboardData, GetClipboardSequenceNumber, OpenClipboard,
+    SetClipboardData, CF_UNICODETEXT,
 };
 
 use crate::bridge;
 use crate::config;
 use crate::runtime::{self, RT};
+
+/// 本程序自己写入剪贴板后的序列号（轮询线程跳过，避免把注入的中文当成游戏复制内容回传手机）
+static OWN_SEQ: AtomicU32 = AtomicU32::new(0);
+
+/// 把文本写入 Windows 剪贴板（用于 APK 软键盘输入中文后粘贴进游戏）
+pub fn write_text(text: &str) -> bool {
+    unsafe {
+        if OpenClipboard(std::ptr::null_mut()) == 0 {
+            return false;
+        }
+        EmptyClipboard();
+        let mut wide: Vec<u16> = text.encode_utf16().collect();
+        wide.push(0);
+        let handle = GlobalAlloc(GMEM_MOVEABLE, wide.len() * 2);
+        if handle.is_null() {
+            CloseClipboard();
+            return false;
+        }
+        let ptr = GlobalLock(handle) as *mut u16;
+        if ptr.is_null() {
+            GlobalFree(handle);
+            CloseClipboard();
+            return false;
+        }
+        std::ptr::copy_nonoverlapping(wide.as_ptr(), ptr, wide.len());
+        GlobalUnlock(handle);
+        // 成功交给系统后内存归剪贴板所有，不能再 GlobalFree
+        if SetClipboardData(CF_UNICODETEXT as u32, handle).is_null() {
+            GlobalFree(handle);
+            CloseClipboard();
+            return false;
+        }
+        CloseClipboard();
+        // 记下写入后的序列号，让轮询线程跳过这次变化
+        OWN_SEQ.store(GetClipboardSequenceNumber(), Ordering::SeqCst);
+        true
+    }
+}
 
 /// 轮询间隔（毫秒）
 const POLL_INTERVAL_MS: u64 = 300;
@@ -40,12 +79,20 @@ pub fn start() {
 fn thread_main() {
     // 启动时先记下当前序列号，避免把已在剪贴板里的旧内容当成新变化发出去
     let mut last_seq = unsafe { GetClipboardSequenceNumber() };
+    // 上次处理过的文本与时间：Winlator 会周期性刷新剪贴板（序列号不停变化但内容相同），
+    // 用内容去重避免每 300ms 都写一次文件和发一次手机
+    let mut last_text: Option<(String, std::time::Instant)> = None;
 
     loop {
         std::thread::sleep(Duration::from_millis(POLL_INTERVAL_MS));
 
         let seq = unsafe { GetClipboardSequenceNumber() };
         if seq == last_seq {
+            continue;
+        }
+        // 自己刚写入的剪贴板（软键盘粘贴用），不计入同步
+        if seq == OWN_SEQ.load(Ordering::SeqCst) {
+            last_seq = seq;
             continue;
         }
         // 开关关闭时记录序列号但不处理，保证重新开启后不会补发关闭期间的内容
@@ -57,9 +104,17 @@ fn thread_main() {
         // 读取失败（别的程序占用剪贴板）或内容不是文本时保留旧序列号，下一轮重试
         let Some(text) = read_text() else { continue };
         last_seq = seq;
-        if text.trim().is_empty() {
+        let trimmed = text.trim();
+        if trimmed.is_empty() {
             continue;
         }
+        // 内容与上次相同且间隔很短 → 视为序列号抖动（Winlator 会把手机剪贴板反复刷进 Wine）
+        if let Some((prev, at)) = &last_text {
+            if prev == trimmed && at.elapsed() < std::time::Duration::from_secs(2) {
+                continue;
+            }
+        }
+        last_text = Some((trimmed.to_string(), std::time::Instant::now()));
 
         // 始终写本地文件（无论是否已连接 APK）
         append_to_file(&text);

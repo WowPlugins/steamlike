@@ -191,18 +191,24 @@ class GamepadInputView(context: Context) : View(context) {  // 语法：class �
             EditorInfo.IME_FLAG_NO_EXTRACT_UI or  // 禁用提取式 UI（不占用全屏输入栏）
             EditorInfo.IME_FLAG_NO_FULLSCREEN  // 禁用全屏输入模式
         outAttrs.inputType = InputType.TYPE_CLASS_TEXT or  // 设置输入类型为普通文本类
-            InputType.TYPE_TEXT_VARIATION_SHORT_MESSAGE or  // 文本变体：短消息（允许回车换行）
+            InputType.TYPE_TEXT_VARIATION_SHORT_MESSAGE or  // 文本变体：短消息（输入法显示「发送」动作键）
             InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS  // 关闭输入法联想/拼写建议
         return object : BaseInputConnection(this, false) {  // 语法：object 匿名对象 + 冒号继承；返回匿名输入连接对象
             override fun commitText(text: CharSequence?, newCursorPosition: Int): Boolean {  // 语法：override 覆写；提交文本回调
                 val s = text?.toString() ?: ""  // 语法：val + ?. 安全调用 + ?: 空合并；转字符串，空则用空串
                 Log.d(TAG, "commitText text='$s' composing='$composingText'")  // 语法：字符串模板；打印提交文本日志
-                // 提交会替换当前组合区：先按组合文本回退，再注入新文本
-                if (composingText.isNotEmpty()) {  // 语法：if 条件判断；组合文本非空时先回退
-                    repeat(composingText.length) { onImeChar?.invoke('\b') }  // 语法：repeat 循环 + lambda + 字符字面量；逐个发送退格清掉组合文本
-                    composingText = ""  // 清空组合文本记录
-                }  // 结束 if 块
-                s.forEach { onImeChar?.invoke(it) }  // 语法：forEach 遍历 + it 隐式参数；逐字符注入新文本
+                // 提交会替换当前组合区：只对差异部分做回退/注入。
+                // 不要「整体退格后重打」——组合文本通常已由 setComposingText 注入过，
+                // 整段重打会让无法映射的字符在回退后补不回来（表现为密码少字符、登录失败）
+                var common = 0  // 新旧文本的相同前缀长度
+                while (common < composingText.length && common < s.length &&  // 未超出两文本长度
+                    composingText[common] == s[common]  // 前缀字符相同
+                ) {  // 循环条件结束
+                    common++  // 相同前缀长度加一
+                }  // 结束 while 循环
+                repeat(composingText.length - common) { onImeChar?.invoke('\b') }  // 回退被替换的部分
+                for (i in common until s.length) onImeChar?.invoke(s[i])  // 注入提交文本的新增部分
+                composingText = ""  // 清空组合文本记录
                 return super.commitText(text, newCursorPosition)  // 调用父类完成默认提交行为
             }  // 结束 commitText 函数
 

@@ -27,6 +27,8 @@ pub const VK_S: u16 = 0x53;
 pub const VK_D: u16 = 0x44;
 pub const VK_F11: u16 = 0x7A;
 pub const VK_F12: u16 = 0x7B;
+pub const VK_CONTROL: u16 = 0x11;
+pub const VK_V: u16 = 0x56;
 
 /* ===== 鼠标按钮编号（与 Android 协议一致） ===== */
 pub const BTN_LEFT: u8 = 0;
@@ -100,6 +102,25 @@ fn send(inputs: &[INPUT]) {
     unsafe {
         SendInput(inputs, std::mem::size_of::<INPUT>() as i32);
     }
+}
+
+/// 通过剪贴板把文本粘贴进游戏
+///
+/// WoW 3.3.5 的中文界面按本地代码页处理输入，用 `KEYEVENTF_UNICODE` 直接注入汉字
+/// 会显示成乱码；改为「写入剪贴板 + Ctrl+V」，与 Winlator 自带键盘打字的效果一致。
+pub fn paste_text(text: &str) {
+    if text.is_empty() {
+        return;
+    }
+    if !crate::clipboard::write_text(text) {
+        return;
+    }
+    // 给目标程序一点时间感知剪贴板更新
+    std::thread::sleep(std::time::Duration::from_millis(30));
+    inject_key(VK_CONTROL, true);
+    inject_key(VK_V, true);
+    inject_key(VK_V, false);
+    inject_key(VK_CONTROL, false);
 }
 
 /// 注入键盘事件

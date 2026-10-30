@@ -1213,7 +1213,7 @@ impl App {
                             ui.selectable_value(sub, *vk, *name);
                         }
                     });
-                if ui.button("✕").clicked() {
+                if ui.button("删除").on_hover_text("删除这条子命令").clicked() {
                     to_remove = Some(i);
                 }
             });
@@ -1288,7 +1288,7 @@ impl App {
                     frame.drag_window();
                 }
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    if ui.button("✕").on_hover_text("退出").clicked() {
+                    if ui.button("×").on_hover_text("退出").clicked() {
                         frame.close();
                     }
                     if ui.button("─").on_hover_text("收起为圆点").clicked() {
