@@ -11,7 +11,7 @@ android {  // 语法：android{} 块，Android 应用模块的配置入口
         minSdk = 24  // 语法：minSdk 最低支持 Android 版本（Android 7.0）
         targetSdk = 37  // 语法：targetSdk 目标 Android 版本（37，决定系统兼容行为）
         versionCode = 1  // 内部版本号（整数，用于版本比较/升级判断）
-        versionName = "0.1.54"  // 对外显示的版本名称
+        versionName = "0.1.55"  // 对外显示的版本名称
 
         // Rust 客户端期望版本（取自 Cargo.toml，只在 Rust 代码/依赖改动时才会变化）
         // APK 用它和 Windows 客户端上报的 exe 版本比对，不一致时提示重新导出客户端

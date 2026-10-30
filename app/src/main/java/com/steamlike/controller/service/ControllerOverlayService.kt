@@ -9,6 +9,8 @@ import android.app.PendingIntent  // 导入待定 Intent 类（延迟执行）
 import android.bluetooth.BluetoothAdapter  // 导入蓝牙适配器类
 import android.bluetooth.BluetoothManager  // 导入蓝牙管理器类
 import android.bluetooth.BluetoothProfile  // 导入蓝牙 profile 接口
+import android.content.ClipData  // 导入剪贴板数据类（写入文本）
+import android.content.ClipboardManager  // 导入剪贴板管理器（写入系统剪贴板）
 import android.content.Context  // 导入上下文类
 import android.content.Intent  // 导入 Intent 类（组件间通信）
 import android.net.Uri  // 导入统一资源标识符类
@@ -488,6 +490,15 @@ class ControllerOverlayService : Service() {  // class=类声明；继承 Servic
                     Log.w(TAG, msg)  // 打印版本不一致日志
                     toast(msg)  // 弹出提示，避免使用过期 exe 才发现功能缺失
                 }  // 结束 onClientVersionMismatch lambda
+                bridgeServer?.onClipboardText = { text ->  // ?.=安全调用；收到 Windows 客户端的剪贴板文本
+                    if (text.isNotEmpty()) {  // 空文本忽略（客户端不会主动发空文本，这里仅防御）
+                        mainHandler.post {  // 回到主线程写入系统剪贴板
+                            val clipboard = getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager  // 获取系统剪贴板服务
+                            clipboard.setPrimaryClip(ClipData.newPlainText("WoW 剪贴板", text))  // 把文本写入 Android 剪贴板
+                        }  // 结束 post lambda
+                        Log.i(TAG, "已同步 Windows 剪贴板文本：${text.length} 字符")  // 打印同步日志（不打印正文，避免日志过长）
+                    }  // 结束非空判断
+                }  // 结束 onClipboardText lambda
 
                 if (bridgeServer?.start() != true) {  // ?.=安全调用；if 判断：服务器启动失败
                     Log.e(TAG, "TCP server start failed")  // 打印服务器启动失败日志

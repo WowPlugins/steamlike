@@ -48,6 +48,9 @@ pub struct ClientConfig {
     /// 拦截路径中 WASD 触发时的归位落点：true = 屏幕左下角之外、下边缘下方 2/3 屏高处，
     /// false = 屏幕正中央（默认屏幕左下角之外）
     pub cursor_park_offscreen: bool,
+    /// 剪贴板同步开关（默认开启）：剪贴板文本始终追加到 exe 目录的 clipboard_log.txt，
+    /// 已连接 APK 时同时发送到手机剪贴板
+    pub clipboard_sync: bool,
 }
 
 impl Default for ClientConfig {
@@ -68,6 +71,7 @@ impl Default for ClientConfig {
             long_press_ms: 500,
             right_button_fkeys: true,
             cursor_park_offscreen: true,
+            clipboard_sync: true,
         }
     }
 }

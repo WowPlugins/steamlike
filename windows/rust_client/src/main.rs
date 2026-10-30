@@ -6,6 +6,7 @@
 //!    交互键点击序列、长按交换左右键锁定、鼠标相对移动转发等。
 
 mod bridge;
+mod clipboard;
 mod config;
 mod hooks;
 mod runtime;
@@ -62,6 +63,7 @@ fn main() -> eframe::Result<()> {
         hooks::set_enabled(true);
     }
     bridge::start();
+    clipboard::start();
 
     if cfg.auto_launch {
         // 自动启动延时：等待期间如果有键鼠输入，可取消本次自动启动（避免打断用户操作）
@@ -113,6 +115,8 @@ fn apply_runtime(cfg: &config::ClientConfig) {
         .store(cfg.long_press_ms.max(50), Ordering::SeqCst);
     RT.cursor_park_offscreen
         .store(cfg.cursor_park_offscreen, Ordering::SeqCst);
+    RT.clipboard_sync
+        .store(cfg.clipboard_sync, Ordering::SeqCst);
     *BRIDGE_TARGET.lock().unwrap() = (cfg.server_ip.clone(), cfg.server_port);
     WANT_CONNECT.store(cfg.auto_connect, Ordering::SeqCst);
 }

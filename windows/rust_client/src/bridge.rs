@@ -15,16 +15,56 @@
 //! - 0x0C 版本同步：Byte1=主版本，Byte2=次版本，Byte3=修订号（APK 下发），界面显示该版本
 //! - 0x0D 期望客户端版本：Byte1-3 为 APK 的 Cargo.toml 版本，客户端据此判断 exe 是否过期
 //! - 0x20 客户端信息（exe → APK）：Byte1-3 为 exe 编译时的版本号，APK 据此判断客户端是否过期
+//! - 0x21 剪贴板文本（exe → APK）：8 字节头之后跟随变长正文
+//!   Byte1-4 为 UTF-8 字节长度（uint32 LE），Byte5-7 保留，其后紧接文本正文
 
 use std::io::{ErrorKind, Read, Write};
 use std::net::{SocketAddr, TcpStream, ToSocketAddrs};
 use std::sync::atomic::Ordering;
+use std::sync::Mutex;
 use std::time::Duration;
 
 use crate::runtime::{self, log, set_status, BRIDGE_TARGET, CONNECTED, WANT_CONNECT};
 use crate::win;
 
 const PACKET_SIZE: usize = 8;
+
+/// 待发送的剪贴板文本包队列（剪贴板线程投递，网络线程取走）
+static OUTBOX: Mutex<Vec<Vec<u8>>> = Mutex::new(Vec::new());
+
+/// 把一段剪贴板文本排队发送给 APK
+///
+/// 未连接 APK 时直接丢弃：文本已经追加到本地文件，不需要补发。
+/// 文本包是变长的（8 字节头 + UTF-8 正文），不走 8 字节定长协议。
+pub fn send_text(text: &str) {
+    if !CONNECTED.load(Ordering::Relaxed) {
+        return;
+    }
+    let bytes = text.as_bytes();
+    let mut packet = Vec::with_capacity(PACKET_SIZE + bytes.len());
+    let mut head = [0u8; PACKET_SIZE];
+    head[0] = 0x21;
+    head[1..5].copy_from_slice(&(bytes.len() as u32).to_le_bytes());
+    packet.extend_from_slice(&head);
+    packet.extend_from_slice(bytes);
+    if let Ok(mut queue) = OUTBOX.lock() {
+        queue.push(packet);
+    }
+}
+
+/// 把队列里的文本包全部写出；返回 false 表示连接已损坏
+fn flush_outbox(stream: &mut TcpStream) -> bool {
+    let packets: Vec<Vec<u8>> = match OUTBOX.lock() {
+        Ok(mut queue) => std::mem::take(&mut *queue),
+        Err(_) => return true,
+    };
+    for packet in packets {
+        if stream.write_all(&packet).is_err() {
+            return false;
+        }
+    }
+    true
+}
 
 /// 客户端版本信息包（0x20）：把 exe 编译时的版本号上报给 APK
 ///
@@ -110,7 +150,9 @@ fn bridge_thread() {
         }
 
         if let Some(s) = stream.as_mut() {
-            if !pump(s, &mut buf) {
+            // 先把剪贴板文本队列发出去（read 有 200ms 超时，最长延迟可接受）
+            let sent = flush_outbox(s);
+            if !sent || !pump(s, &mut buf) {
                 stream = None;
                 connected_to = None;
                 buf.clear();

@@ -409,6 +409,27 @@ impl eframe::App for App {
                 .weak(),
             );
 
+            /* ===== 剪贴板同步 ===== */
+            ui.separator();
+            Self::section(ui, "剪贴板同步");
+            if ui
+                .checkbox(
+                    &mut self.cfg.clipboard_sync,
+                    "启用剪贴板同步（始终记录到本地文件，连接 APK 时同时发送到手机）",
+                )
+                .changed()
+            {
+                dirty = true;
+            }
+            ui.label(
+                egui::RichText::new(format!(
+                    "剪贴板内容变化时追加写入 exe 目录的 clipboard_log.txt（每条带时间戳）；\
+                     已连接 APK 时另把文本发送到手机剪贴板。记录文件：{}",
+                    config::exe_dir().join("clipboard_log.txt").display()
+                ))
+                .weak(),
+            );
+
             /* ===== 日志 ===== */
             ui.separator();
             Self::section(ui, "运行日志");
@@ -468,6 +489,8 @@ impl eframe::App for App {
             .store(self.cfg.long_press_ms.max(50), Ordering::SeqCst);
         RT.cursor_park_offscreen
             .store(self.cfg.cursor_park_offscreen, Ordering::SeqCst);
+        RT.clipboard_sync
+            .store(self.cfg.clipboard_sync, Ordering::SeqCst);
         *BRIDGE_TARGET.lock().unwrap() = (self.cfg.server_ip.clone(), self.cfg.server_port);
         WANT_CONNECT.store(self.cfg.auto_connect && !mismatch, Ordering::SeqCst);
 

@@ -1,6 +1,6 @@
 [package]
 name = "inputbridge_client"
-version = "0.1.53"
+version = "0.1.54"
 edition = "2021"
 description = "InputBridge Client for Winlator (Rust 版) - 键鼠拦截 + TCP 事件注入"
 
@@ -27,6 +27,7 @@ windows = { version = "0.52", features = [
 # 传递依赖，导致 winuser/windef 等模块未编译。这里显式补全所需 feature 以修复编译。
 winapi = { version = "0.3.9", features = [
     "winuser",
+    "winbase",              # GlobalLock / GlobalUnlock（读取剪贴板文本）
     "winnt",
     "windef",
     "minwindef",

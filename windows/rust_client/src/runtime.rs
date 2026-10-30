@@ -34,6 +34,9 @@ pub struct Runtime {
     pub cursor_park_offscreen: AtomicBool,
     /// 交互键序列开始时记录的光标位置（高 32 位 X，低 32 位 Y），供序列末尾还原
     pub saved_cursor: AtomicI64,
+    /// 剪贴板同步开关（默认开启）：开启后剪贴板文本始终追加到本地文件，
+    /// 已连接 APK 时同时发送到手机剪贴板
+    pub clipboard_sync: AtomicBool,
 }
 
 /// `saved_cursor` 的「尚未记录」哨兵值
@@ -50,6 +53,7 @@ pub static RT: Runtime = Runtime {
     last_mouse: AtomicI64::new(0),
     cursor_park_offscreen: AtomicBool::new(true),
     saved_cursor: AtomicI64::new(CURSOR_UNSET),
+    clipboard_sync: AtomicBool::new(true),
 };
 
 /// APK 服务器地址与端口（界面可改，网络线程每次重连时读取）
