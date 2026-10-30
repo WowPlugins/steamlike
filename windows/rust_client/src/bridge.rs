@@ -207,6 +207,10 @@ fn process_packet(data: &[u8; PACKET_SIZE]) {
         0x01 => {
             let vk = u16::from_le_bytes([data[1], data[2]]);
             win::inject_key(vk, data[3] != 0);
+            // 软键盘一次提交整段文本时（例如点输入法的历史候选词），APK 会在同一帧
+            // 发来十几对按下/抬起，全部瞬间注入会让 Wine/WoW 的编辑框吞掉字符
+            // （表现为密码少几位、认证失败）。这里给每个键盘事件留出消化时间
+            std::thread::sleep(std::time::Duration::from_millis(4));
         }
         0x02 => {
             let dx = i16::from_le_bytes([data[1], data[2]]) as i32;

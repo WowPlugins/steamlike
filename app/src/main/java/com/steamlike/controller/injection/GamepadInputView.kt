@@ -160,6 +160,10 @@ class GamepadInputView(context: Context) : View(context) {  // 语法：class �
      * sendKeyEvent(KEYCODE_DEL) 回退重试，抑制该次回退避免重复删除
      */
     private var suppressDelFromDeleteSurrounding = false  // 语法：private var 私有可变变量；抑制删除键回退重试标志
+    /** 软键盘「发送」后的回车抑制截止时刻（毫秒） */
+    // performEditorAction 里已手动注入一次回车，super 还会把回车派发回本 View，
+    // 若再转给游戏就会变成两次回车（登录界面会提交两次导致认证失败），这里在时间窗内吞掉
+    private var suppressEnterUntilMs = 0L  // 语法：private var + Long；置为将来时刻表示正在抑制回车
 
     init {  // 语法：init 初始化块（构造时自动执行）
         // 必须设置可获焦点，才能接收 KeyEvent
@@ -253,6 +257,14 @@ class GamepadInputView(context: Context) : View(context) {  // 语法：class �
                 //   setComposingText 文本通道注入，若这里再经 onImeKey 转发会重复注入
                 //   （表现为"按一个字母出现两个"）
                 if (event.action == KeyEvent.ACTION_DOWN) {  // 语法：if 条件判断；仅处理按下动作
+                    // 「发送」动作已在 performEditorAction 里注入过一次回车，
+                    // 输入法若再走按键通道发回车，同样吞掉，避免重复提交登录
+                    if (event.keyCode == KeyEvent.KEYCODE_ENTER &&  // 语法：if 条件判断；回车键
+                        android.os.SystemClock.uptimeMillis() < suppressEnterUntilMs  // 语法：全限定调用；仍在抑制时间窗内
+                    ) {  // 条件结束
+                        Log.d(TAG, "sendKeyEvent drop duplicated enter (editor action)")  // 打印吞掉重复回车的日志
+                        return super.sendKeyEvent(event)  // 仅交给父类，不再转发到游戏
+                    }  // 结束 if 块
                     when (event.keyCode) {  // 语法：when 分支表达式；按按键码分发处理
                         KeyEvent.KEYCODE_DEL -> {  // 退格键分支
                             if (suppressDelFromDeleteSurrounding) {  // 语法：if 条件判断；处于抑制标志时
@@ -276,6 +288,8 @@ class GamepadInputView(context: Context) : View(context) {  // 语法：class �
                 // 软键盘"发送/回车"动作 → 注入回车
                 val down = KeyEvent(0, 0, KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_ENTER, 0)  // 语法：val + 构造函数；构造回车键按下事件
                 val up = KeyEvent(0, 0, KeyEvent.ACTION_UP, KeyEvent.KEYCODE_ENTER, 0)  // 语法：val + 构造函数；构造回车键释放事件
+                // 先开启抑制窗口，再手动注入：super 随后派发回来的回车不会二次进游戏
+                suppressEnterUntilMs = android.os.SystemClock.uptimeMillis() + 400  // 语法：全限定调用；400ms 内吞掉派发回来的回车
                 onImeKey?.invoke(down)  // 语法：?. 安全调用；转发回车按下事件
                 onImeKey?.invoke(up)  // 语法：?. 安全调用；转发回车释放事件
                 return super.performEditorAction(actionCode)  // 调用父类完成默认动作
@@ -305,6 +319,13 @@ class GamepadInputView(context: Context) : View(context) {  // 语法：class �
     }  // 结束 onKeyPreIme 函数
 
     override fun dispatchKeyEvent(event: KeyEvent): Boolean {  // 语法：override 覆写；分发按键事件
+        // 软键盘「发送」后的时间窗内，吞掉输入连接派发回来的回车（已手动注入过一次）
+        if (event.keyCode == KeyEvent.KEYCODE_ENTER &&  // 语法：if 条件判断；回车键
+            android.os.SystemClock.uptimeMillis() < suppressEnterUntilMs  // 语法：全限定调用；仍在抑制时间窗内
+        ) {  // 条件结束
+            Log.d(TAG, "dispatchKeyEvent drop duplicated enter (editor action)")  // 打印吞掉重复回车的日志
+            return true  // 消费该事件，不再转发给手柄映射器
+        }  // 结束 if 块
         Log.d(TAG, "dispatchKeyEvent act=${event.action} key=${event.keyCode} " +  // 语法：字符串模板 + 字符串拼接；打印按键分发日志
             "src=${event.source} rep=${event.repeatCount} unicode=${event.unicodeChar}")  // 日志续行：来源/重复次数/字符编码
         // 始终转发到映射器，由映射器根据 isCapturing 决定是否处理
