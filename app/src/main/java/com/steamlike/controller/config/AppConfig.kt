@@ -12,8 +12,6 @@ package com.steamlike.controller.config // 包声明：config 配置模块
  * - [captureWhitelist]: 捕获白名单（前台在此列表内时保持手柄捕获，支持多个包名）
  * - [captureEnabled]: 捕获总开关（悬浮窗按钮与 App 内开关双向同步）
  * - [launcherPackage]: 悬浮窗"游戏"按钮拉起的应用包名
- * - [gameExePath]: 游戏 EXE 完整路径（Winlator 内，如 C:\\WoW\\Wow.exe），
- *   随 control.bat 导出：脚本先启动 inputbridge_client.exe，成功后再启动游戏
  *
  * @param serverHost TCP 监听地址
  * @param serverPort TCP 监听端口
@@ -21,8 +19,6 @@ package com.steamlike.controller.config // 包声明：config 配置模块
  * @param captureWhitelist 捕获白名单包名列表（多个）
  * @param captureEnabled 捕获总开关
  * @param launcherPackage 悬浮窗拉起的目标应用包名
- * @param gameExePath 游戏 EXE 路径（Winlator 内），空表示不自动启动游戏
- * @param gameExeHistory 游戏 EXE 历史路径列表（最近的在前，供主界面下拉直接选择）
  */
 data class AppConfig( // 运行时配置数据类（语法：data class=数据类，自动生成 equals/hashCode/copy）
     val serverHost: String = DEFAULT_HOST, // 服务器监听地址（语法：val=只读属性；默认参数引用伴生常量）
@@ -30,9 +26,7 @@ data class AppConfig( // 运行时配置数据类（语法：data class=数据�
     val smartPauseEnabled: Boolean = true, // 智能暂停开关（默认开启）
     val captureWhitelist: List<String> = DEFAULT_WHITELIST, // 捕获白名单包名列表（默认 Winlator 系列）
     val captureEnabled: Boolean = true, // 捕获总开关（默认开启）
-    val launcherPackage: String = DEFAULT_LAUNCHER, // 悬浮窗拉起的目标应用包名
-    val gameExePath: String = "", // 游戏 EXE 完整路径（Winlator 内），空表示不自动启动游戏
-    val gameExeHistory: List<String> = emptyList() // 游戏 EXE 历史路径（最近的在前，供主界面下拉快速选择）
+    val launcherPackage: String = DEFAULT_LAUNCHER // 悬浮窗拉起的目标应用包名
 ) { // 结束主构造参数，开始类体
     companion object { // 伴生对象：存放默认常量与工具方法（语法：companion object=类级成员容器）
         const val DEFAULT_HOST = "0.0.0.0" // 默认监听地址（语法：const val=编译期常量）

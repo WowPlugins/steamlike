@@ -100,10 +100,10 @@ class HelpActivity : AppCompatActivity() { // 语法：class=类声明，继承 
 
         container.addView(makeCard("快速开始（Windows 端）", // 创建“快速开始（Windows 端）”说明卡片
             "1. 点「导出 Windows 客户端」，从 Download/AControler\n" // 正文：导出 Windows 客户端
-                + "   取出 inputbridge_client.exe 与 control.bat\n" // 正文：取出客户端程序与启动脚本
+                + "   取出 inputbridge_client.exe\n" // 正文：取出客户端程序
                 + "2. 复制到 Winlator 的 C 盘\n" // 正文：复制到 C 盘
-                + "3. 运行 control.bat start（或直接运行 exe）\n" // 正文：启动方式
-                + "4. 保持窗口打开，切回游戏")) // 正文：保持客户端运行
+                + "3. 直接运行 inputbridge_client.exe\n" // 正文：启动方式
+                + "4. 在客户端界面选择魔兽 exe；保持窗口打开，切回游戏")) // 正文：保持客户端运行
 
         // ===== 三、悬浮窗状态图标 =====
         container.addView(makeCard("悬浮窗状态图标", // 创建“悬浮窗状态图标”说明卡片
@@ -178,7 +178,7 @@ class HelpActivity : AppCompatActivity() { // 语法：class=类声明，继承 
         container.addView(makeCard("配置管理", // 创建“配置管理”说明卡片
             "· 导出 / 导入：JSON 完整备份（含运行时设置）\n" // 正文：导出/导入说明
                 + "· 重置配置：恢复默认 WoW 预设\n" // 正文：重置配置
-                + "· 游戏 EXE 路径：导出后 control.bat 先启动客户端，成功后再自动启动游戏")) // 正文：EXE 路径与启动顺序
+                + "· 游戏 EXE 路径在 Windows 客户端界面中选择")) // 正文：游戏路径在客户端设置
 
         setContentView(root) // 语法：setContentView=把构建好的根布局设为页面内容
     } // 结束 buildUi 函数

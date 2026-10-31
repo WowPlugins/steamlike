@@ -79,9 +79,10 @@ pub fn start() {
 fn thread_main() {
     // 启动时先记下当前序列号，避免把已在剪贴板里的旧内容当成新变化发出去
     let mut last_seq = unsafe { GetClipboardSequenceNumber() };
-    // 上次处理过的文本与时间：Winlator 会周期性刷新剪贴板（序列号不停变化但内容相同），
-    // 用内容去重避免每 300ms 都写一次文件和发一次手机
-    let mut last_text: Option<(String, std::time::Instant)> = None;
+    // 上次处理过的文本：Winlator 会周期性刷新剪贴板（序列号不停变化但内容相同），
+    // 而且发给手机后手机写回剪贴板又会被 Winlator 同步回来；只按内容去重，
+    // 不设时间窗口，避免同一段文本被反复发送导致手机端反复弹出剪贴板提示
+    let mut last_text: Option<String> = None;
 
     loop {
         std::thread::sleep(Duration::from_millis(POLL_INTERVAL_MS));
@@ -108,13 +109,11 @@ fn thread_main() {
         if trimmed.is_empty() {
             continue;
         }
-        // 内容与上次相同且间隔很短 → 视为序列号抖动（Winlator 会把手机剪贴板反复刷进 Wine）
-        if let Some((prev, at)) = &last_text {
-            if prev == trimmed && at.elapsed() < std::time::Duration::from_secs(2) {
-                continue;
-            }
+        // 内容与上次已同步的文本相同 → 视为序列号抖动或回环（手机写回剪贴板后被 Winlator 同步回来），直接跳过
+        if last_text.as_deref() == Some(trimmed) {
+            continue;
         }
-        last_text = Some((trimmed.to_string(), std::time::Instant::now()));
+        last_text = Some(trimmed.to_string());
 
         // 始终写本地文件（无论是否已连接 APK）
         append_to_file(&text);

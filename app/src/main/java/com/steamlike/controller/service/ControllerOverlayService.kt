@@ -496,7 +496,11 @@ class ControllerOverlayService : Service() {  // class=类声明；继承 Servic
                     if (text.isNotEmpty()) {  // 空文本忽略（客户端不会主动发空文本，这里仅防御）
                         mainHandler.post {  // 回到主线程写入系统剪贴板
                             val clipboard = getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager  // 获取系统剪贴板服务
-                            clipboard.setPrimaryClip(ClipData.newPlainText("WoW 剪贴板", text))  // 把文本写入 Android 剪贴板
+                            // 内容已相同则不再重写，避免 Winlator 回环同步时反复触发系统的剪贴板/选区提示
+                            val current = clipboard.primaryClip?.getItemAt(0)?.text?.toString()  // 读取当前剪贴板文本（无权限时可能为 null）
+                            if (current != text) {  // 仅内容不同才写入
+                                clipboard.setPrimaryClip(ClipData.newPlainText("WoW 剪贴板", text))  // 把文本写入 Android 剪贴板
+                            }  // 结束内容比较
                         }  // 结束 post lambda
                         Log.i(TAG, "已同步 Windows 剪贴板文本：${text.length} 字符")  // 打印同步日志（不打印正文，避免日志过长）
                     }  // 结束非空判断

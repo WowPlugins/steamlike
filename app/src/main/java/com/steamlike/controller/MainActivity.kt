@@ -67,10 +67,6 @@ class MainActivity : AppCompatActivity() { // 声明主界面 Activity，继承 
     private lateinit var captureStatusText: TextView // 捕获状态显示文本
     /** 悬浮窗"游戏"按钮拉起应用包名输入框 */
     private lateinit var launcherEditText: EditText // 悬浮窗“游戏”按钮拉起应用包名输入框
-    /** 游戏 EXE 路径显示文本 */
-    private lateinit var gameExeText: TextView // 游戏 EXE 路径显示文本
-    /** 游戏 EXE 历史路径下拉框（选择历史路径直接切换） */
-    private var gameExeSpinner: Spinner? = null // var=可变变量；?=可空类型；历史路径下拉控件引用
     /** 抑制捕获开关监听标志（程序化同步状态时避免循环触发） */
     private var suppressCaptureListener = false // 抑制捕获开关监听标志（语法：var 可变变量）
     /** TCP监听地址输入框 */
@@ -125,21 +121,6 @@ class MainActivity : AppCompatActivity() { // 声明主界面 Activity，继承 
             sendConfigIntent(ControllerOverlayService.ACTION_IMPORT_CONFIG, uri) // 发送导入配置 Intent 给服务
         } // 结束 uri 非空判断
     } // 结束打开文档回调 lambda
-
-    /**
-     * SAF 打开文档启动器（选择游戏 EXE 路径）
-     *
-     * 用户从 Download 目录选择游戏 exe，解析为 Android 路径后
-     * 转换为 Winlator 内部路径（Download 映射为 D 盘）保存到配置。
-     */
-    private val openExeLauncher = registerForActivityResult( // 注册“选择游戏 EXE”启动器（语法：val 只读变量 + 回调注册）
-        ActivityResultContracts.StartActivityForResult() // 以结果形式启动 Activity 的契约
-    ) { result -> // 回调 lambda，接收 Activity 结果（语法：lambda 回调）
-        val uri = result.data?.data // 从结果 Intent 中取 URI（语法：val + ?. 安全调用）
-        if (result.resultCode == RESULT_OK && uri != null) { // 结果正常且 URI 非空（语法：&& 逻辑与）
-            handleExeSelection(uri) // 处理选中的游戏 EXE 文件
-        } // 结束结果判断
-    } // 结束 EXE 选择回调 lambda
 
     override fun onCreate(savedInstanceState: Bundle?) { // 覆写 Activity 创建回调（语法：override 覆写 + fun 函数声明）
         super.onCreate(savedInstanceState) // 调用父类创建逻辑（语法：super 调用父类）
@@ -364,41 +345,6 @@ class MainActivity : AppCompatActivity() { // 声明主界面 Activity，继承 
         val winCard = UiKit.card(this) // 创建“Windows 客户端”卡片
         winCard.addView(UiKit.sectionTitle(this, "Windows 客户端")) // 添加卡片标题
         winCard.addView(UiKit.spacer(this, 6)) // 添加 6dp 间距
-
-        // 游戏 EXE 路径（导出后 control.bat 先启动客户端、成功后再启动游戏）
-        winCard.addView(UiKit.label(this, "游戏 EXE 路径（Winlator 内完整路径）")) // 添加 EXE 路径标签
-        winCard.addView(UiKit.spacer(this, 4)) // 添加 4dp 间距
-        gameExeText = UiKit.caption( // 创建游戏 EXE 路径显示文本
-            this, // 上下文参数
-            appCfg.gameExePath.ifBlank { "未设置（control.bat 将只启动输入桥接客户端）" }, // 路径为空时显示提示文字（语法：ifBlank 空值兜底）
-            0xFFCCCCCC.toInt(), 12f // 浅灰文字、12sp 字号
-        ) // 结束 caption 调用
-        winCard.addView(gameExeText) // 把路径文本加入卡片
-        winCard.addView(UiKit.spacer(this, 6)) // 添加 6dp 间距
-        // 历史路径下拉：直接选择之前用过的路径（无需再走文件选择器）
-        val exeSpinner = Spinner(this).apply { // 创建历史路径下拉框并配置（语法：apply{}=作用域函数）
-            onItemSelectedListener = object : AdapterView.OnItemSelectedListener { // 设置选择监听（语法：object : 接口匿名实现）
-                override fun onItemSelected(parent: AdapterView<*>?, v: View?, position: Int, id: Long) { // 选中某项时
-                    val target = parent?.getItemAtPosition(position) as? String ?: return // 取选中路径（语法：as?=安全类型转换）
-                    val cur = AppConfigStore.load(this@MainActivity).gameExePath // 读取当前游戏路径
-                    if (target == cur) return // 与当前路径一致则无需处理
-                    AppConfigStore.save(this@MainActivity, // 保存选中的历史路径
-                        AppConfigStore.load(this@MainActivity).copy(gameExePath = target)) // 复制配置并更新游戏路径
-                    if (::gameExeText.isInitialized) gameExeText.text = target // 同步界面显示文本
-                    toastLog("已选择历史路径: $target") // 弹出切换提示（语法：字符串模板）
-                } // 结束 onItemSelected 方法
-                override fun onNothingSelected(parent: AdapterView<*>?) {} // 无选中项时不处理（语法：空函数体）
-            } // 结束匿名监听对象
-        } // 结束 Spinner apply 块
-        gameExeSpinner = exeSpinner // 记录控件引用供后续刷新
-        winCard.addView(exeSpinner) // 把历史路径下拉框加入卡片
-        refreshGameExeSpinner() // 初始填充历史路径（无历史时自动隐藏）
-        winCard.addView(UiKit.spacer(this, 6)) // 添加 6dp 间距
-        winCard.addView(UiKit.button(this, "选择游戏 EXE 路径", { // 创建“选择游戏 EXE”按钮（语法：lambda 点击回调）
-            // 弹出系统文件选择器，直接定位到 Download 目录
-            openExeLauncher.launch(buildOpenExeIntent()) // 启动文件选择器
-        })) // 结束按钮回调
-        winCard.addView(UiKit.spacer(this, 8)) // 添加 8dp 间距
         winCard.addView(UiKit.button(this, "导出 Windows 客户端到 Download/AControler", { // 创建导出客户端按钮（语法：lambda 点击回调）
             exportFilesToDownload() // 执行导出操作
         })) // 结束按钮回调
@@ -843,129 +789,10 @@ class MainActivity : AppCompatActivity() { // 声明主界面 Activity，继承 
             smartPauseEnabled = smartPauseSwitch.isChecked, // 智能暂停开关状态
             captureWhitelist = AppConfig.parseWhitelist(whitelistEditText.text.toString()), // 解析白名单包名列表
             captureEnabled = captureSwitch.isChecked, // 捕获开关状态
-            launcherPackage = launcherEditText.text.toString().trim().ifBlank { AppConfig.DEFAULT_LAUNCHER }, // 拉起应用包名，为空时用默认值
-            // 游戏 EXE 路径由"选择游戏 EXE 路径"对话框维护，保存其它设置时保留
-            gameExePath = AppConfigStore.load(this).gameExePath // 读取已有游戏路径并保留
+            launcherPackage = launcherEditText.text.toString().trim().ifBlank { AppConfig.DEFAULT_LAUNCHER } // 拉起应用包名，为空时用默认值
         ) // 结束 AppConfig 构造
         AppConfigStore.save(this, cfg) // 持久化配置到文件
     } // 结束 saveRuntimeConfig 函数
-
-    /**
-     * 构建打开文件选择器的 Intent
-     *
-     * 注：不传 EXTRA_INITIAL_URI 跳转 Download——该设备上的系统文件选择器
-     * （com.google.android.documentsui）在带初始目录跳转时存在面包屑动画
-     * 崩溃 bug（RecyclerView: Tmp detached view），去掉跳转可正常打开选择器。
-     */
-    private fun buildOpenExeIntent(): Intent { // 构建打开文件选择器的 Intent
-        return Intent(Intent.ACTION_OPEN_DOCUMENT).apply { // 创建打开文档 Intent 并进入 apply 作用域
-            addCategory(Intent.CATEGORY_OPENABLE) // 限定可打开的文件
-            type = "*/*" // 允许所有文件类型
-        } // 结束 Intent apply 块
-    } // 结束 buildOpenExeIntent 函数
-
-    /**
-     * 处理用户选择的游戏 EXE 文件
-     *
-     * 1. 解析 SAF URI 得到 Android 真实路径（须在 Download 目录下）
-     * 2. 转换为 Winlator 内部路径：Download 目录映射为 D 盘
-     * 3. 保存到配置（导出 control.bat 时嵌入，脚本先启动客户端、成功后再启动游戏）
-     *
-     * @param uri SAF 返回的文件 URI
-     */
-    private fun handleExeSelection(uri: Uri) { // 处理用户选择的游戏 EXE 文件
-        val androidPath = resolveFileAbsolutePath(uri) // 解析 URI 为 Android 绝对路径（语法：val 只读变量）
-        if (androidPath == null) { // 解析失败时进入（语法：if 判断 + == 比较）
-            toastLog("无法获取文件路径，请从 Download 目录选择 EXE", long = true) // 提示路径获取失败
-            return // 提前返回
-        } // 结束解析失败判断
-        val downloadDir = Environment.getExternalStoragePublicDirectory( // 获取公共下载目录
-            Environment.DIRECTORY_DOWNLOADS // 下载目录类型
-        ).absolutePath // 取其绝对路径字符串
-        if (!androidPath.startsWith(downloadDir)) { // 所选文件不在 Download 目录时进入（语法：if + ! 取反）
-            toastLog("请选择 Download 目录下的 EXE 文件（该目录在 Winlator 中映射为 D 盘）", long = true) // 提示选择位置错误
-            return // 提前返回
-        } // 结束目录判断
-        // 相对 Download 的路径 → D 盘路径
-        val rel = androidPath.removePrefix(downloadDir).trimStart('/', '\\') // 去掉 Download 前缀和开头分隔符（语法：链式调用）
-        val winPath = "D:\\" + rel.replace('/', '\\') // 转换为 Winlator D 盘路径（语法：字符串拼接）
-
-        val old = AppConfigStore.load(this) // 读取现有运行时配置
-        // 更新历史路径：新路径置顶、去重、最多保留 10 条
-        val newHistory = (listOf(winPath) + old.gameExeHistory.filter { it != winPath }).take(10) // 语法：listOf 拼接 + filter 过滤 + take 截取前 10
-        val cfg = old.copy(gameExePath = winPath, gameExeHistory = newHistory) // 复制配置并更新游戏路径与历史（语法：data class 的 copy 方法）
-        AppConfigStore.save(this, cfg) // 持久化配置
-        if (::gameExeText.isInitialized) { // 若 gameExeText 已初始化（语法：:: 属性引用 + isInitialized 判断）
-            gameExeText.text = winPath // 更新界面显示的路径
-        } // 结束初始化判断
-        refreshGameExeSpinner() // 刷新历史路径下拉框内容
-        toastLog("游戏路径已保存（Winlator D 盘）: $winPath") // 弹出保存成功提示（语法：字符串模板）
-    } // 结束 handleExeSelection 函数
-
-    /**
-     * 刷新游戏 EXE 历史路径下拉框
-     *
-     * 读取配置中的历史路径重建下拉内容，并选中当前路径；
-     * 历史为空时隐藏该下拉框。
-     */
-    private fun refreshGameExeSpinner() { // private=私有；fun=函数声明；刷新游戏 EXE 历史下拉
-        val spinner = gameExeSpinner ?: return // 控件未创建则直接返回（语法：?:=空值合并）
-        val cfg = AppConfigStore.load(this) // 读取运行时配置
-        val history = cfg.gameExeHistory // 取历史路径列表
-        if (history.isEmpty()) { // 无历史路径时进入（语法：if 判断）
-            spinner.visibility = View.GONE // 隐藏下拉框
-            return // 提前返回
-        } // 结束空判断
-        spinner.visibility = View.VISIBLE // 显示下拉框
-        spinner.adapter = ArrayAdapter(this, android.R.layout.simple_spinner_item, history).also { // 设置适配器（语法：also=作用域函数）
-            it.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item) // 设置下拉展开项布局
-        } // 结束 also 块
-        spinner.setSelection(history.indexOf(cfg.gameExePath).coerceAtLeast(0)) // 选中当前路径（语法：indexOf=查找索引；coerceAtLeast=下限保护）
-    } // 结束 refreshGameExeSpinner 函数
-
-    /**
-     * 解析 SAF content:// URI 为 Android 文件系统绝对路径
-     *
-     * 优先用 MediaStore 的 DATA 列；Android 10+ 部分文件无 DATA 时
-     * 用 RELATIVE_PATH + DISPLAY_NAME 拼出绝对路径。
-     *
-     * @param uri 文件 URI
-     * @return 绝对路径；解析失败返回 null
-     */
-    private fun resolveFileAbsolutePath(uri: Uri): String? { // 解析 content URI 为绝对路径，失败返回 null（语法：可空返回类型）
-        // 1. 尝试 DATA 列（多数 MediaStore 文件可用）
-        contentResolver.query( // 查询 MediaStore
-            uri, // 查询的 URI
-            arrayOf(MediaStore.MediaColumns.DATA), // 只查询 DATA 列
-            null, null, null // 无选择条件、无排序等
-        )?.use { cursor -> // 非空时自动关闭游标（语法：?.use 安全调用 + 资源自动关闭）
-            if (cursor.moveToFirst()) { // 有数据时进入（语法：if 判断）
-                val data = cursor.getString(0) // 读取 DATA 列值（语法：val 只读变量）
-                if (!data.isNullOrEmpty() && File(data).exists()) return data // 路径有效且文件存在则直接返回（语法：&& 逻辑与 + 提前 return）
-            } // 结束有数据判断
-        } // 结束 use 块
-        // 2. RELATIVE_PATH + DISPLAY_NAME（Android 10+ Downloads 集合）
-        contentResolver.query( // 再次查询 MediaStore
-            uri, // 查询的 URI
-            arrayOf(MediaStore.MediaColumns.DISPLAY_NAME, MediaStore.MediaColumns.RELATIVE_PATH), // 查询文件名与相对路径两列
-            null, null, null // 无过滤条件
-        )?.use { cursor -> // 非空时自动关闭游标
-            if (cursor.moveToFirst()) { // 有数据时进入
-                val name = cursor.getString(0) ?: return null // 读文件名，为空则返回 null（语法：?: 空值合并 + return）
-                var rel = cursor.getString(1) ?: "" // 读相对路径，为空用空串（语法：var 可变变量 + ?: 兜底）
-                // RELATIVE_PATH 形如 "Download/AControler/"，去掉开头的 Download/
-                rel = rel.removePrefix("${Environment.DIRECTORY_DOWNLOADS}/") // 去掉开头的 Download/ 前缀（语法：字符串模板）
-                val downloadDir = Environment.getExternalStoragePublicDirectory( // 获取公共下载目录
-                    Environment.DIRECTORY_DOWNLOADS // 下载目录类型
-                ).absolutePath // 取其绝对路径
-                val file = File(downloadDir, rel + name) // 拼出完整文件路径
-                if (file.exists()) return file.absolutePath // 文件存在则返回绝对路径
-            } // 结束有数据判断
-        } // 结束 use 块
-        // 3. file:// 直接路径
-        if (uri.scheme == "file") return uri.path // 若是 file:// 协议直接返回路径（语法：if 判断 + return）
-        return null // 全部失败返回 null
-    } // 结束 resolveFileAbsolutePath 函数
 
     /**
      * 捕获开关变化 → 持久化 + 通知服务（悬浮窗同步）
@@ -1100,7 +927,7 @@ class MainActivity : AppCompatActivity() { // 声明主界面 Activity，继承 
     // ====================================================================
     // Windows 客户端文件导出
     // ====================================================================
-    // 将打包在 APK assets 中的 inputbridge_client.exe 和 control.bat
+    // 将打包在 APK assets 中的 inputbridge_client.exe
     // 释放到 Download/AControler 目录，方便用户通过文件管理器或 ADB 取出，
     // 复制到 Winlator 的 C 盘使用。
     //
@@ -1112,35 +939,23 @@ class MainActivity : AppCompatActivity() { // 声明主界面 Activity，继承 
     /** 导出目标子目录名 */
     private val exportDirName = "AControler" // 导出目标子目录名（语法：val 只读变量）
 
-    /** control.bat 模板中游戏 EXE 路径占位符（导出时替换为实际路径） */
-    private val GAME_EXE_PLACEHOLDER = "__GAME_EXE__" // 游戏 EXE 路径占位符（语法：val 常量）
-
     /** 需要导出的文件列表 (assetName → displayName) */
     private val exportFiles = listOf( // 需要导出的文件列表（语法：val + listOf 列表）
-        "inputbridge_client.exe" to "inputbridge_client.exe", // 导出 exe（语法：to 创建键值对）
-        "control.bat" to "control.bat", // 导出 bat 启动脚本
-        "control.ps1" to "control.ps1" // 导出 PowerShell 脚本
+        "inputbridge_client.exe" to "inputbridge_client.exe" // 导出 exe（语法：to 创建键值对）
     ) // 结束列表
 
     /**
      * 导出 Windows 客户端文件到 Download/AControler 目录
      *
-     * 从 APK 的 assets 中读取 exe、control.bat 和 control.ps1，写入到公共 Download/AControler 目录。
-     * control.bat 和 control.ps1 导出时嵌入用户配置的游戏 EXE 路径（脚本先启动客户端，成功后再启动游戏）。
+     * 从 APK 的 assets 中读取 exe，写入到公共 Download/AControler 目录。
      */
     private fun exportFilesToDownload() { // 导出 Windows 客户端文件到 Download/AControler
         val results = mutableListOf<String>() // 收集各文件导出结果（语法：val + mutableListOf 可变列表）
-        val gameExe = AppConfigStore.load(this).gameExePath // 读取游戏 EXE 路径
 
         for ((assetName, displayName) in exportFiles) { // 遍历待导出文件（语法：for 循环 + 解构键值对）
-            // 从 assets 读取文件字节（control.bat 和 control.ps1 模板嵌入游戏路径）
+            // 从 assets 读取文件字节
             val bytes = try { // 尝试读取（语法：try 异常处理）
-                if (assetName == "control.bat" || assetName == "control.ps1") { // 脚本类文件时进入（语法：if + || 逻辑或）
-                    val template = assets.open(assetName).use { it.readBytes().toString(Charsets.UTF_8) } // 读取模板文本（语法：use 自动关闭资源）
-                    template.replace(GAME_EXE_PLACEHOLDER, gameExe).toByteArray(Charsets.UTF_8) // 替换占位符后转字节
-                } else { // 非脚本文件分支
-                    assets.open(assetName).use { it.readBytes() } // 直接读取原始字节
-                } // 结束文件类型分支
+                assets.open(assetName).use { it.readBytes() } // 读取原始字节（语法：use 自动关闭资源）
             } catch (e: Exception) { // 读取异常时进入（语法：catch 捕获异常）
                 toastLog("读取 $assetName 失败: ${e.message}", long = true) // 弹出失败提示（语法：字符串模板）
                 return // 提前返回
@@ -1169,13 +984,8 @@ class MainActivity : AppCompatActivity() { // 声明主界面 Activity，继承 
         // 汇总提示
         val allSuccess = results.all { it.contains("OK") } // 判断是否全部成功（语法：lambda + all 判断）
         val msg = if (allSuccess) { // 全部成功时（语法：if 条件分支）
-            "已导出 ${exportFiles.size + 1} 个文件到 Download/$exportDirName 目录:\n" + // 成功提示第一行（exe+两个脚本+version.txt）
-            results.joinToString("\n") { "  $it" } + "\n" + // 拼接各文件结果（语法：joinToString + lambda）
-            if (gameExe.isBlank()) { // 游戏路径为空时（语法：if 嵌套表达式）
-                "未设置游戏路径，control.bat/control.ps1 只启动客户端、不启动游戏。\n可在“选择游戏 EXE 路径”设置后重新导出。" // 提醒设置脚本中的游戏路径
-            } else { // 路径非空分支
-                "游戏路径已写入 control.bat/control.ps1：$gameExe" // 提示路径已写入启动脚本
-            } // 结束路径判断
+            "已导出 ${exportFiles.size + 1} 个文件到 Download/$exportDirName 目录:\n" + // 成功提示第一行（exe+version.txt）
+            results.joinToString("\n") { "  $it" } // 拼接各文件结果（语法：joinToString + lambda）
         } else { // 有失败时进入
             "导出部分失败:\n" + results.joinToString("\n") { "  $it" } // 拼接失败明细
         } // 结束全部成功判断

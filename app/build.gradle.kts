@@ -11,7 +11,7 @@ android {  // 语法：android{} 块，Android 应用模块的配置入口
         minSdk = 24  // 语法：minSdk 最低支持 Android 版本（Android 7.0）
         targetSdk = 37  // 语法：targetSdk 目标 Android 版本（37，决定系统兼容行为）
         versionCode = 1  // 内部版本号（整数，用于版本比较/升级判断）
-        versionName = "0.1.74"  // 对外显示的版本名称
+        versionName = "0.1.76"  // 对外显示的版本名称
 
         // Rust 客户端期望版本（取自 Cargo.toml，只在 Rust 代码/依赖改动时才会变化）
         // APK 用它和 Windows 客户端上报的 exe 版本比对，不一致时提示重新导出客户端
@@ -62,26 +62,22 @@ dependencies {  // 语法：dependencies{} 块，声明本模块的依赖
 // ====================================================================
 // 在 APK 编译前自动执行：
 //   1. cargo build --release 编译 windows/rust_client → 打包到 assets（cargo 可用时）
-//   2. 同步 windows/control.bat / control.ps1 → 打包到 assets（脚本始终与源码一致）
-// 这样 APK 内置的 exe 和脚本每次都与源码同步，无需手动复制。
+//
+// 这样 APK 内置的 exe 每次都与源码同步，无需手动复制。
 //
 // 依赖: Rust 工具链 (cargo，如 M:\msys64\ucrt64\bin\cargo.exe 或系统 PATH 中的 cargo)
-// 如 cargo 不可用，exe 编译跳过（使用 assets 中已有的 exe），脚本仍会同步。
+// 如 cargo 不可用，exe 编译跳过（使用 assets 中已有的 exe）。
 // ====================================================================
 
 tasks.register("compileWindowsExe") {  // 语法：tasks.register("任务名"){...} 注册自定义 Gradle 任务（在 APK 编译前自动执行）
     group = "build"  // 任务分组：build（在 gradlew tasks 列表中归入 build 组）
-    description = "Builds Windows inputbridge_client.exe (Rust) and syncs scripts to assets"  // 任务说明（显示在 gradlew tasks 列表）
+    description = "Builds Windows inputbridge_client.exe (Rust) and copies it to assets"  // 任务说明（显示在 gradlew tasks 列表）
 
     val rustProjectDir = rootProject.file("windows/rust_client")  // Rust 工程目录（Cargo.toml 所在处）
     val manifestFile = rustProjectDir.resolve("Cargo.toml")  // 语法：File.resolve(...) 拼接子路径；Cargo.toml 清单文件
     val releaseExe = rustProjectDir.resolve("target/release/inputbridge_client.exe")  // cargo 构建产物路径
     val outputExe = rootProject.file("windows/inputbridge_client.exe")  // 编译输出 exe 的归档路径（windows 目录下）
     val assetsExe = file("src/main/assets/inputbridge_client.exe")  // 定位 APK assets 中的 exe 目标路径（file() 相对当前模块）
-    val controlSource = rootProject.file("windows/control.bat")  // 定位根项目下 control.bat 源脚本
-        val assetsControl = file("src/main/assets/control.bat")  // 定位 APK assets 中 control.bat 的目标路径
-        val controlPs1Source = rootProject.file("windows/control.ps1")  // 定位根项目下 control.ps1 源脚本
-        val assetsPs1Control = file("src/main/assets/control.ps1")  // 定位 APK assets 中 control.ps1 的目标路径
 
     // 搜索 cargo 路径（Rust 工具链）
     val cargoCandidates = listOf(  // 语法：listOf(...) 创建不可变列表；列出常见的 cargo 安装位置候选
@@ -104,9 +100,7 @@ tasks.register("compileWindowsExe") {  // 语法：tasks.register("任务名"){.
     inputs.dir(rustProjectDir.resolve("src"))  // 输入：Rust 源码目录（.rs 文件内容变化才需重编）
     inputs.file(manifestFile)  // 输入：Cargo.toml（依赖/特性变化会影响产物）
     inputs.file(rustProjectDir.resolve("Cargo.lock"))  // 输入：Cargo.lock（依赖版本锁定变化会影响产物）
-    inputs.file(rootProject.file("windows/control.bat"))  // 输入：control.bat 脚本源
-    inputs.file(rootProject.file("windows/control.ps1"))  // 输入：control.ps1 脚本源
-    outputs.files(outputExe, assetsExe, assetsControl, assetsPs1Control)  // 输出：exe 归档与 assets 副本 + 两个脚本副本
+    outputs.files(outputExe, assetsExe)  // 输出：exe 归档与 assets 副本
 
     doLast {  // 语法：doLast{} 块，任务执行阶段的末尾执行其中代码（真正干活的动作）
         // 1. 编译 exe（cargo 可用时）
@@ -144,24 +138,6 @@ tasks.register("compileWindowsExe") {  // 语法：tasks.register("任务名"){.
                 logger.lifecycle("Copied to assets: ${assetsExe.absolutePath}")  // 日志：已复制到 assets
             }  // 结束构建成功分支
         }  // 结束 cargo 可用分支
-
-        // 2. 始终同步 control.bat 脚本到 assets（保证 APK 内脚本与源码一致）
-        if (controlSource.exists()) {  // 语法：if 条件判断；若根项目存在 control.bat
-            assetsControl.parentFile.mkdirs()  // 创建 assets 目录（不存在时）
-            controlSource.copyTo(assetsControl, overwrite = true)  // 复制 control.bat 到 assets（覆盖）
-            logger.lifecycle("Copied control.bat to assets: ${assetsControl.absolutePath}")  // 日志：已同步 control.bat
-        } else {  // 源码不存在
-            logger.warn("windows/control.bat not found, keeping existing assets/control.bat")  // 警告日志：保留 assets 中已有的 control.bat
-        }  // 结束 control.bat 同步分支
-
-        // 3. 同步 control.ps1 脚本到 assets（保证 APK 内脚本与源码一致）
-        if (controlPs1Source.exists()) {  // 语法：if 条件判断；若根项目存在 control.ps1
-            assetsPs1Control.parentFile.mkdirs()  // 创建 assets 目录（不存在时）
-            controlPs1Source.copyTo(assetsPs1Control, overwrite = true)  // 复制 control.ps1 到 assets（覆盖）
-            logger.lifecycle("Copied control.ps1 to assets: ${assetsPs1Control.absolutePath}")  // 日志：已同步 control.ps1
-        } else {  // 源码不存在
-            logger.warn("windows/control.ps1 not found, keeping existing assets/control.ps1")  // 警告日志：保留 assets 中已有的 control.ps1
-        }  // 结束 control.ps1 同步分支
     }  // 结束 doLast 块
 }  // 结束 compileWindowsExe 任务
 

@@ -1,6 +1,6 @@
 [package]
 name = "inputbridge_client"
-version = "0.1.74"
+version = "0.1.75"
 edition = "2021"
 description = "InputBridge Client for Winlator (Rust 版) - 键鼠拦截 + TCP 事件注入"
 

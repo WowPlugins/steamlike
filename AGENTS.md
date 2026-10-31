@@ -22,7 +22,7 @@ The `compileWindowsExe` task runs before `preBuild`. It searches for gcc in orde
 3. `C:/MinGW/bin/gcc.exe`
 4. System PATH
 
-If gcc is not found, compilation is skipped silently (uses existing `app/src/main/assets/inputbridge_client.exe`). The compiled exe is always copied to `app/src/main/assets/inputbridge_client.exe`, and `windows/control.bat` / `windows/control.ps1` are synced to assets too.
+If gcc is not found, compilation is skipped silently (uses existing `app/src/main/assets/inputbridge_client.exe`). The compiled exe is always copied to `app/src/main/assets/inputbridge_client.exe`. The APK export only bundles the exe plus `version.txt`; `control.bat` / `control.ps1` are no longer exported.
 
 To compile manually outside Gradle:
 ```bash
