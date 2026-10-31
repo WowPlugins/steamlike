@@ -67,6 +67,8 @@ pub struct ClientConfig {
     pub window_x: Option<i32>,
     /// 上次退出时窗口左上角的 Y 坐标（物理像素，None = 未记录）
     pub window_y: Option<i32>,
+    /// 启动时恢复上次退出时的窗口位置（默认关闭：每次启动使用系统默认位置）
+    pub restore_window_pos: bool,
 }
 
 impl Default for ClientConfig {
@@ -94,6 +96,7 @@ impl Default for ClientConfig {
             overlay_compact_enabled: false,
             window_x: None,
             window_y: None,
+            restore_window_pos: false,
         }
     }
 }

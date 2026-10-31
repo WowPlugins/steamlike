@@ -402,11 +402,13 @@ impl eframe::App for App {
             crate::win::round_own_window(&title, radius);
         }
 
-        // 恢复上次退出时的窗口位置（只做一次；尺寸由面板形态决定，随 overlay_expanded 一起恢复）
+        // 恢复上次退出时的窗口位置（只做一次；受开关控制，默认不恢复）
         if !self.pos_restored {
             self.pos_restored = true;
-            if let (Some(x), Some(y)) = (self.cfg.window_x, self.cfg.window_y) {
-                crate::win::move_own_window(&title, x, y);
+            if self.cfg.restore_window_pos {
+                if let (Some(x), Some(y)) = (self.cfg.window_x, self.cfg.window_y) {
+                    crate::win::move_own_window(&title, x, y);
+                }
             }
         }
 
@@ -833,6 +835,23 @@ impl App {
                     "关闭（默认）：小圆点 ⇄ 完整主界面；打开：小圆点 ⇄ 小面板 ⇄ 完整主界面。",
                 )
                 .weak(),
+            );
+
+            /* ===== 窗口位置 ===== */
+            ui.separator();
+            Self::section(ui, "窗口位置");
+            if ui
+                .checkbox(
+                    &mut self.cfg.restore_window_pos,
+                    "启动时恢复上次退出时的窗口位置",
+                )
+                .changed()
+            {
+                *dirty = true;
+            }
+            ui.label(
+                egui::RichText::new("关闭（默认）：每次启动都使用系统默认位置，不恢复上次的坐标。")
+                    .weak(),
             );
     }
 
