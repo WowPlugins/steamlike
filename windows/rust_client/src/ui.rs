@@ -471,8 +471,6 @@ impl eframe::App for App {
         // 界面参数即时同步到运行期状态
         RT.intercept_enabled
             .store(self.cfg.intercept_enabled && !mismatch, Ordering::SeqCst);
-        RT.right_button_fkeys
-            .store(self.cfg.right_button_fkeys, Ordering::SeqCst);
         RT.interaction_vk
             .store(self.cfg.interaction_vk, Ordering::SeqCst);
         RT.swap_vk.store(self.cfg.swap_vk, Ordering::SeqCst);
@@ -611,15 +609,6 @@ impl App {
                 if std::path::Path::new(self.cfg.wow_path.trim()).is_file() {
                     self.launch_error = None;
                 }
-            }
-            if ui
-                .checkbox(
-                    &mut self.cfg.wow_path_from_config_json,
-                    "从 config.json 读取游戏路径（关闭则使用上方界面选择的路径）",
-                )
-                .changed()
-            {
-                *dirty = true;
             }
             if ui
                 .checkbox(&mut self.cfg.auto_launch, "启动本程序时自动启动魔兽")
@@ -767,15 +756,6 @@ impl App {
                     *dirty = true;
                 }
             });
-            if ui
-                .checkbox(
-                    &mut self.cfg.right_button_fkeys,
-                    "右键锁定使用 F11/F12（关闭则发送真实鼠标右键长按）",
-                )
-                .changed()
-            {
-                *dirty = true;
-            }
             if ui
                 .checkbox(
                     &mut self.cfg.cursor_park_offscreen,

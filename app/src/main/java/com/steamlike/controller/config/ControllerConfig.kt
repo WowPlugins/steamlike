@@ -243,7 +243,6 @@ object ControllerConfig { // 单例对象：配置的 JSON 序列化/反序列�
         json.put("lookAcceleration", settings.lookAcceleration) // 写入视角加速度
         json.put("longPressThresholdMs", settings.longPressThresholdMs) // 写入长按判定阈值
         json.put("longPressFallbackToShort", settings.longPressFallbackToShort) // 写入长按回退开关
-        json.put("rightButtonUseFunctionKeys", settings.rightButtonUseFunctionKeys) // 写入右键 F11/F12 模式开关
         json.put("wasdAutoRightLock", settings.wasdAutoRightLock) // 写入 WASD 自动锁定右键开关
         json.put("wasdAutoCenterMouse", settings.wasdAutoCenterMouse) // 写入 WASD 自动锁定前的鼠标居中开关
         json.put("cursorParkOffscreen", settings.cursorParkOffscreen) // 写入居中落点开关（是否停放到屏幕外下方）
@@ -259,7 +258,6 @@ object ControllerConfig { // 单例对象：配置的 JSON 序列化/反序列�
             lookAcceleration = json.optDouble("lookAcceleration", 1.5).toFloat(), // 读取加速度并转 Float
             longPressThresholdMs = json.optInt("longPressThresholdMs", 500), // 读取长按阈值（语法：optInt=带默认值读取整数）
             longPressFallbackToShort = json.optBoolean("longPressFallbackToShort", false), // 读取长按回退开关
-            rightButtonUseFunctionKeys = json.optBoolean("rightButtonUseFunctionKeys", true), // 读取右键 F11/F12 模式开关（默认开启）
             wasdAutoRightLock = json.optBoolean("wasdAutoRightLock", true), // 读取 WASD 自动锁定右键开关（默认开启）
             wasdAutoCenterMouse = json.optBoolean("wasdAutoCenterMouse", true), // 读取 WASD 自动锁定前的鼠标居中开关（默认开启）
             cursorParkOffscreen = json.optBoolean("cursorParkOffscreen", true) // 读取居中落点开关（默认停放到屏幕外下方）

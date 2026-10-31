@@ -743,7 +743,7 @@ class KeyboardMouseMapper( // 语法：class 类声明，定义键盘/鼠标映�
     private fun handleMouseToggle(button: ControllerButton, mouseButton: MouseButton) { // 语法：private fun 私有函数，处理鼠标长按切换映射
         markMouseActionLayer(button, mouseButton) // 记录当前激活层内长按过鼠标左右键（用于层停用时决定是否释放）
         val locked = toggledMouseButtons.contains(mouseButton) // 当前是否已锁存（语法：contains 集合包含判断）
-        setMouseLockState(mouseButton, !locked) // 反转锁存状态（右键内部改发 F11/F12）——解除锁定必须在居中之前立即发出
+        setMouseLockState(mouseButton, !locked) // 反转锁存状态——解除锁定必须在居中之前立即发出
         // 解除锁定时在解锁之后再居中：解锁报文立即发出（让游戏尽快退出 mouselook），
         // 居中延后 [unlockCenterDelayMs] 再发，避免被游戏侧的光标接管覆盖（鼠标长按交换不受此影响）
         if (locked) { // 语法：if 分支，仅从锁定变为解除时需要在解锁后居中
@@ -884,23 +884,19 @@ class KeyboardMouseMapper( // 语法：class 类声明，定义键盘/鼠标映�
      * 设置某个鼠标按钮的长按锁存状态（幂等）
      *
      * 与当前状态一致时不发送任何事件，并同步全局锁存集合与悬浮窗边框回调。
-     * - 左键：锁定时发送 MouseDown，释放时发送 MouseUp
-     * - 右键：默认发送 F11（锁定）/ F12（解锁），由游戏内绑定实现右键锁定/解锁；
-     *   关闭「右键 F11/F12 模式」开关后，改为发送真实鼠标右键按下/松开
+     * - 左右键：锁定时发送 MouseDown，释放时发送 MouseUp
      *
      * @param button 鼠标按钮
      * @param locked 目标状态（true=锁定，false=释放）
      */
     private fun setMouseLockState(button: MouseButton, locked: Boolean) { // 语法：private fun 私有函数，设置鼠标长按锁存状态
         if (toggledMouseButtons.contains(button) == locked) return // 状态一致，无需变更
-        // 右键是否用 F11/F12 替代真实鼠标事件（默认开启，可在主界面「鼠标右键模式」中关闭）
-        val useFunctionKeys = button == MouseButton.RIGHT && steamInput.profile.globalSettings.rightButtonUseFunctionKeys // 语法：&& 逻辑与；仅右键且开关开启时为 true
         if (locked) { // 需要锁定
-            if (useFunctionKeys) injector.sendVkKeyPress(VK_F11) else injector.sendMouseDown(button) // 锁定：发 F11 或真实鼠标按下
+            injector.sendMouseDown(button) // 锁定：发送真实鼠标按下
             toggledMouseButtons.add(button) // 记入锁存集合
             onMouseToggleChanged?.invoke(button, true) // 通知回调已锁定（语法：?. 安全调用）
         } else { // 需要释放
-            if (useFunctionKeys) injector.sendVkKeyPress(VK_F12) else injector.sendMouseUp(button) // 解锁：发 F12 或真实鼠标松开
+            injector.sendMouseUp(button) // 解锁：发送真实鼠标松开
             toggledMouseButtons.remove(button) // 移出锁存集合
             onMouseToggleChanged?.invoke(button, false) // 通知回调已释放
         } // 结束状态分支
@@ -1148,11 +1144,5 @@ class KeyboardMouseMapper( // 语法：class 类声明，定义键盘/鼠标映�
 
         /** 精细移动模式下右摇杆位移的缩放系数（0.2 = 正常速度的 20%） */
         private const val FINE_MOVE_FACTOR = 0.2f // 语法：const val 编译期常量，精细移动缩放系数
-
-        /** 右键锁定时附带发送的按键（VK_F11） */
-        private const val VK_F11 = 0x7A // 语法：const val 编译期常量，Windows 虚拟键码 F11
-
-        /** 右键解锁时附带发送的按键（VK_F12） */
-        private const val VK_F12 = 0x7B // 语法：const val 编译期常量，Windows 虚拟键码 F12
     } // 结束伴生对象
 } // 结束 KeyboardMouseMapper 类

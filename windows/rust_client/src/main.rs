@@ -48,14 +48,6 @@ fn main() -> eframe::Result<()> {
     ));
 
     let cfg = config::load();
-    runtime::log(format!(
-        "游戏路径来源：{}",
-        if cfg.wow_path_from_config_json {
-            "config.json"
-        } else {
-            "界面选择"
-        }
-    ));
     apply_runtime(&cfg);
 
     hooks::start();
@@ -111,8 +103,6 @@ fn main() -> eframe::Result<()> {
 fn apply_runtime(cfg: &config::ClientConfig) {
     RT.intercept_enabled
         .store(cfg.intercept_enabled, Ordering::SeqCst);
-    RT.right_button_fkeys
-        .store(cfg.right_button_fkeys, Ordering::SeqCst);
     RT.interaction_vk
         .store(cfg.interaction_vk, Ordering::SeqCst);
     RT.swap_vk.store(cfg.swap_vk, Ordering::SeqCst);

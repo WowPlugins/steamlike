@@ -11,7 +11,7 @@
 //! | 交互键 | 吞掉，交给动作线程执行「解锁 → 居中 → 右键点击 → 恢复锁存」序列，不透传 |
 //! | 长按交换键 | 吞掉，交给动作线程做长按判定；短按则补发一次普通点按 |
 //! | 映射按键 | 吞掉，交给动作线程按短按/长按映射执行目标动作，不透传 |
-//! | WASD | 吞掉并由本程序注入，保证「光标归位 → F11 → WASD」的顺序 |
+//! | WASD | 吞掉并由本程序注入，保证「光标归位 → 右键锁定 → WASD」的顺序 |
 //! | 有锁存时的鼠标按键按下 | 吞掉，作为解锁触发（连带吞掉对应的抬起），左右键均可解除 |
 //! | 鼠标移动 | 直接透传给魔兽（不改写，避免光标偏移导致界面点击/hover 失效） |
 //! | 其它 | 直接透传给魔兽 |
@@ -27,7 +27,7 @@ use windows::Win32::System::Threading::GetCurrentThreadId;
 use windows::Win32::UI::WindowsAndMessaging::*;
 
 use crate::runtime::{log, pack_pos, RT};
-use crate::win::{self, BTN_LEFT, BTN_RIGHT, MAGIC, VK_F11, VK_F12};
+use crate::win::{self, BTN_LEFT, BTN_RIGHT, MAGIC};
 
 /* ===== 钩子线程消息 ===== */
 const WM_APP_INSTALL: u32 = 0x8001; // WM_APP + 1
@@ -77,8 +77,7 @@ static SWALLOW_RIGHT_UP: AtomicBool = AtomicBool::new(false);
 
 /// 设置某个鼠标按钮的长按锁存状态（幂等），返回是否真的发生了变化
 ///
-/// 右键默认发送 F11（锁定）/ F12（解锁），关闭「右键 F11/F12 模式」后
-/// 改为发送真实鼠标右键按下/松开；左键始终发送真实鼠标左键按下/松开。
+/// 左右键都发送真实的鼠标按下/松开事件。
 ///
 /// 注意：本函数会在钩子回调里被调用，因此**不能打印日志**（钩子回调必须保持无锁）。
 pub fn set_lock(button: u8, locked: bool) -> bool {
@@ -92,13 +91,7 @@ pub fn set_lock(button: u8, locked: bool) -> bool {
     if flag.load(Ordering::Relaxed) == locked {
         return false;
     }
-    if button == BTN_RIGHT && RT.right_button_fkeys.load(Ordering::Relaxed) {
-        let vk = if locked { VK_F11 } else { VK_F12 };
-        win::inject_key(vk, true);
-        win::inject_key(vk, false);
-    } else {
-        win::inject_mouse_button(button, locked);
-    }
+    win::inject_mouse_button(button, locked);
     flag.store(locked, Ordering::Relaxed);
     true
 }
@@ -232,7 +225,7 @@ unsafe extern "system" fn keyboard_proc(ncode: i32, wparam: WPARAM, lparam: LPAR
         }
     }
 
-    // WASD：由本程序接管注入，保证「光标居中 → F11 → WASD」的顺序
+    // WASD：由本程序接管注入，保证「光标居中 → 右键锁定 → WASD」的顺序
     if let Some(slot) = win::wasd_index(vk) {
         if down {
             if win::WASD_TAKEN[slot].swap(true, Ordering::Relaxed) {

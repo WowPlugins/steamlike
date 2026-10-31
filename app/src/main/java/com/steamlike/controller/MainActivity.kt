@@ -628,47 +628,6 @@ class MainActivity : AppCompatActivity() { // 声明主界面 Activity，继承 
         )) // 结束按钮创建
         container.addView(longPressCard) // 把长按映射卡片加入内容容器
 
-        // ===== 鼠标右键模式卡片 =====
-        val rightModeCard = UiKit.card(this) // 创建“鼠标右键模式”卡片
-        rightModeCard.addView(UiKit.sectionTitle(this, "鼠标右键模式")) // 添加卡片标题
-        rightModeCard.addView(UiKit.spacer(this, 4)) // 添加 4dp 间距
-        rightModeCard.addView(UiKit.caption( // 添加设置说明文字
-            this, // 上下文参数
-            ("鼠标右键长按（锁定视角）与解锁动作的发送方式：\n" // 说明第一段
-                + "• 开启：发送 F11（锁定）/ F12（解锁）按键，由游戏内绑定接收\n" // 说明第二段
-                + "• 关闭：直接发送真实鼠标右键按下 / 松开"), // 说明第三段
-            0xFF999999.toInt(), 11f // 灰色文字、11sp 字号
-        )) // 结束 caption 调用
-        rightModeCard.addView(UiKit.spacer(this, 8)) // 添加 8dp 间距
-
-        // 右键发送方式开关（默认发送 F11/F12）
-        val rightFunctionKeysSwitch = UiKit.switchRow( // 创建开关行（语法：return 返回 Switch 控件）
-            this, "右键锁定 / 解锁发送 F11 / F12", currentSettings.rightButtonUseFunctionKeys // 标题与当前状态
-        ) {} // 空回调，保存时统一读取状态
-        rightModeCard.addView(rightFunctionKeysSwitch) // 把开关加入卡片
-        rightModeCard.addView(UiKit.spacer(this, 6)) // 添加 6dp 间距
-
-        // 保存按钮
-        rightModeCard.addView(UiKit.button( // 添加“保存右键模式”按钮
-            this, // 上下文参数
-            "保存右键模式", // 按钮文字
-            onClick = { // 点击回调（语法：lambda）
-                if (!Settings.canDrawOverlays(this@MainActivity)) { // 未授予悬浮窗权限时进入（语法：! 取反）
-                    toastLog("请先授予悬浮窗权限并启动服务", long = true) // 提示先授权
-                } else { // 已授权时进入
-                    ensureServiceRunning() // 确保映射服务已启动
-                    val intent = Intent(this@MainActivity, ControllerOverlayService::class.java).apply { // 构建更新设置 Intent 并进入 apply 作用域
-                        action = ControllerOverlayService.ACTION_UPDATE_SETTINGS // 设置动作：更新全局设置
-                        putExtra(ControllerOverlayService.EXTRA_RIGHT_BUTTON_FUNCTION_KEYS, rightFunctionKeysSwitch.isChecked) // 携带右键 F11/F12 模式开关状态
-                    } // 结束 Intent apply 块
-                    ContextCompat.startForegroundService(this@MainActivity, intent) // 启动前台服务执行设置更新
-                    toastLog("正在保存右键模式...") // 弹出保存提示
-                } // 结束 else 分支
-            }, // 结束点击回调
-            style = UiKit.Style.PRIMARY // 按钮使用主色调样式
-        )) // 结束按钮创建
-        container.addView(rightModeCard) // 把鼠标右键模式卡片加入内容容器
-
         // ===== WASD 自动锁定卡片 =====
         val wasdLockCard = UiKit.card(this) // 创建“WASD 自动锁定”卡片
         wasdLockCard.addView(UiKit.sectionTitle(this, "WASD 自动锁定")) // 添加卡片标题
@@ -1197,16 +1156,6 @@ class MainActivity : AppCompatActivity() { // 声明主界面 Activity，继承 
             results.add("$displayName: ${if (success) "OK" else "FAIL"} (${bytes.size} bytes)") // 记录本次导出结果（语法：字符串模板 + if 表达式）
         } // 结束 for 循环
 
-        // 额外导出 config.json（含 wowPath），Windows 客户端启动时读取并据此拉起游戏进程
-        val configJson = "{\n\t\"wowPath\":${jsonStringValue(gameExe)}\n}" // 生成 config.json 内容（语法：字符串拼接 + 转义符）
-        val configBytes = configJson.toByteArray(Charsets.UTF_8) // 转成 UTF-8 字节
-        val configSuccess = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) { // 系统版本分支（语法：if 条件分支）
-            exportViaMediaStore(configBytes, "config.json") // 用 MediaStore 方式写入
-        } else { // 旧系统分支
-            exportViaLegacyFile(configBytes, "config.json") // 用传统文件方式写入
-        } // 结束版本分支
-        results.add("config.json: ${if (configSuccess) "OK" else "FAIL"} (${configBytes.size} bytes)") // 记录 config.json 导出结果
-
         // 额外导出 version.txt（Windows 客户端启动时读取该文件显示版本号，
         // 因此仅提升版本号无需重新编译/导出 exe）
         val versionBytes = "${BuildConfig.VERSION_NAME}\n".toByteArray(Charsets.UTF_8) // 版本号文本（语法：字符串模板）
@@ -1220,41 +1169,18 @@ class MainActivity : AppCompatActivity() { // 声明主界面 Activity，继承 
         // 汇总提示
         val allSuccess = results.all { it.contains("OK") } // 判断是否全部成功（语法：lambda + all 判断）
         val msg = if (allSuccess) { // 全部成功时（语法：if 条件分支）
-            "已导出 ${exportFiles.size + 2} 个文件到 Download/$exportDirName 目录:\n" + // 成功提示第一行（exe+两个脚本+config.json+version.txt）
+            "已导出 ${exportFiles.size + 1} 个文件到 Download/$exportDirName 目录:\n" + // 成功提示第一行（exe+两个脚本+version.txt）
             results.joinToString("\n") { "  $it" } + "\n" + // 拼接各文件结果（语法：joinToString + lambda）
             if (gameExe.isBlank()) { // 游戏路径为空时（语法：if 嵌套表达式）
-                "config.json 的 wowPath 为空，Windows 客户端启动时会报错退出。\n请先在“选择游戏 EXE 路径”设置游戏路径后重新导出。" // 提醒需先设置游戏路径
+                "未设置游戏路径，control.bat/control.ps1 只启动客户端、不启动游戏。\n可在“选择游戏 EXE 路径”设置后重新导出。" // 提醒设置脚本中的游戏路径
             } else { // 路径非空分支
-                "游戏路径已写入 config.json 与 control.bat/control.ps1：$gameExe" // 提示路径已写入
+                "游戏路径已写入 control.bat/control.ps1：$gameExe" // 提示路径已写入启动脚本
             } // 结束路径判断
         } else { // 有失败时进入
             "导出部分失败:\n" + results.joinToString("\n") { "  $it" } // 拼接失败明细
         } // 结束全部成功判断
         toastLog(msg, long = true) // 弹出汇总提示
     } // 结束 exportFilesToDownload 函数
-
-    /**
-     * JSON 字符串值（带引号与转义），用于生成 config.json 中的路径字段
-     *
-     * Windows 路径中的反斜杠 `\` 会转义为 `\\`，双引号转义为 `\"`，
-     * 保证生成的 config.json 是合法 JSON。
-     */
-    private fun jsonStringValue(s: String): String = buildString { // 生成 JSON 字符串值（语法：表达式体函数 + buildString）
-        append('"') // 追加开引号
-        for (c in s) { // 遍历每个字符（语法：for 循环）
-            when (c) { // 按字符分支处理（语法：when 分支语句）
-                '\\' -> append("\\\\") // 反斜杠转义为两个反斜杠
-                '"' -> append("\\\"") // 双引号转义
-                '\n' -> append("\\n") // 换行转义
-                '\r' -> append("\\r") // 回车转义
-                '\t' -> append("\\t") // 制表符转义
-                '\b' -> append("\\b") // 退格转义
-                '\u000C' -> append("\\f") // 换页符转义
-                else -> append(c) // 其他字符原样追加
-            } // 结束 when 分支
-        } // 结束 for 循环
-        append('"') // 追加收尾引号
-    } // 结束 jsonStringValue 函数
 
     /**
      * 通过 MediaStore.Downloads 写入文件到子目录 (Android 10+)，强制覆盖同名文件

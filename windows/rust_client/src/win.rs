@@ -26,8 +26,7 @@ pub const VK_W: u16 = 0x57;
 pub const VK_A: u16 = 0x41;
 pub const VK_S: u16 = 0x53;
 pub const VK_D: u16 = 0x44;
-pub const VK_F11: u16 = 0x7A;
-pub const VK_F12: u16 = 0x7B;
+
 pub const VK_CONTROL: u16 = 0x11;
 pub const VK_V: u16 = 0x56;
 

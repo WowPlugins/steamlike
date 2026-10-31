@@ -16,8 +16,6 @@ use windows::Win32::System::SystemInformation::GetLocalTime;
 pub struct Runtime {
     /// 拦截总开关（默认关闭）
     pub intercept_enabled: AtomicBool,
-    /// 右键锁定方式：true = 发送 F11/F12，false = 真实鼠标右键长按
-    pub right_button_fkeys: AtomicBool,
     /// 交互键虚拟键码
     pub interaction_vk: AtomicU32,
     /// 长按交换键虚拟键码
@@ -51,7 +49,6 @@ pub const CURSOR_UNSET: i64 = i64::MIN;
 
 pub static RT: Runtime = Runtime {
     intercept_enabled: AtomicBool::new(false),
-    right_button_fkeys: AtomicBool::new(true),
     interaction_vk: AtomicU32::new(0x58), // X
     swap_vk: AtomicU32::new(0x31),        // 1
     long_press_ms: AtomicU32::new(500),
