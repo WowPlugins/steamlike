@@ -640,16 +640,27 @@ impl App {
                     *dirty = true;
                 }
             });
+            if ui
+                .checkbox(
+                    &mut self.cfg.minimize_on_launch,
+                    "启动魔兽后自动收起为小圆点（悬浮窗）",
+                )
+                .changed()
+            {
+                *dirty = true;
+            }
             if ui.button("立即启动魔兽").clicked() {
                 match config::check_wow_path(&self.cfg) {
                     Ok(path) => {
                         self.launch_error = None;
                         config::remember_path(&mut self.cfg, &path);
-                        // 启动后自动收起到小圆点，避免大面板挡住游戏画面
-                        self.cfg.overlay_expanded = false;
-                        self.full_editor = false;
-                        RT.overlay_expanded.store(false, Ordering::Relaxed);
-                        *dirty = true;
+                        // 开关开启时才收起到小圆点；默认保持当前界面
+                        if self.cfg.minimize_on_launch {
+                            self.cfg.overlay_expanded = false;
+                            self.full_editor = false;
+                            RT.overlay_expanded.store(false, Ordering::Relaxed);
+                            *dirty = true;
+                        }
                         crate::launch_game(&self.cfg);
                     }
                     Err(e) => {
@@ -1449,6 +1460,9 @@ impl App {
                         frame.drag_window();
                     }
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        if ui.button("×").on_hover_text("退出").clicked() {
+                            frame.close();
+                        }
                         if ui.button("─").on_hover_text("收起为圆点").clicked() {
                             self.cfg.overlay_expanded = false;
                             RT.overlay_expanded.store(false, Ordering::Relaxed);

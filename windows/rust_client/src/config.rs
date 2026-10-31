@@ -24,6 +24,8 @@ pub struct ClientConfig {
     pub auto_launch_delay_ms: u32,
     /// 自动启动等待期间有键鼠输入则取消本次自动启动（默认开启）
     pub skip_launch_on_input: bool,
+    /// 点击「立即启动魔兽」后是否自动收起为小圆点（默认关闭，保持当前界面）
+    pub minimize_on_launch: bool,
     /// APK 服务器 IP
     pub server_ip: String,
     /// APK 服务器端口
@@ -72,6 +74,7 @@ impl Default for ClientConfig {
             auto_launch: true,
             auto_launch_delay_ms: 1000,
             skip_launch_on_input: true,
+            minimize_on_launch: false,
             server_ip: DEFAULT_IP.to_string(),
             server_port: DEFAULT_PORT,
             auto_connect: true,
