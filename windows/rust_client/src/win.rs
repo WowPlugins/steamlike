@@ -117,11 +117,14 @@ pub fn paste_text(text: &str) {
         return;
     }
     // 给目标程序一点时间感知剪贴板更新
-    std::thread::sleep(std::time::Duration::from_millis(30));
+    std::thread::sleep(std::time::Duration::from_millis(50));
     inject_key(VK_CONTROL, true);
     inject_key(VK_V, true);
     inject_key(VK_V, false);
     inject_key(VK_CONTROL, false);
+    // 粘贴后等待目标程序真正读取剪贴板：剪贴板是全局资源，
+    // 下一段文本若过早写入会覆盖内容，表现为丢字/重字
+    std::thread::sleep(std::time::Duration::from_millis(150));
 }
 
 /// 注入键盘事件

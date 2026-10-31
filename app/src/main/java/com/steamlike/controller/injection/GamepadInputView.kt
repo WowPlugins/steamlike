@@ -133,6 +133,15 @@ class GamepadInputView(context: Context) : View(context) {  // 语法：class �
     var onImeChar: ((Char) -> Unit)? = null  // 语法：var + lambda 类型 + ?可空；IME 单字符回调
 
     /**
+     * IME 整段文本回调（中文等非 ASCII 连续字符合并成一个文本包）
+     *
+     * 非 ASCII 字符在 Windows 侧是通过「写剪贴板 + Ctrl+V」粘贴注入的，
+     * 逐字粘贴时剪贴板会被下一个字符过早覆盖，表现为丢字/重字；
+     * 因此把同一段连续非 ASCII 字符合并成一个包，一次粘贴注入。
+     */
+    var onImeText: ((String) -> Unit)? = null
+
+    /**
      * IME 特殊按键事件回调（回车/方向键等控制键）
      *
      * 退格/删除按键已被 InputConnection 显式处理（转为 onImeChar 的 '\b'），
@@ -152,8 +161,13 @@ class GamepadInputView(context: Context) : View(context) {  // 语法：class �
     /** 窗口 insets 显示键盘已收起（键盘自身隐藏按钮/下滑收起等）→ 通知服务端恢复捕获 */
     var onImeHidden: (() -> Unit)? = null  // 语法：var + lambda 类型 + ?可空；键盘收起回调
 
-    /** 当前 IME 组合文本（用于 diff 计算，避免组合过程重复注入字符） */
-    private var composingText = ""  // 语法：private var 私有可变变量；当前 IME 组合文本
+    /**
+     * 已经实际注入到游戏的文本（用于 diff 计算，避免重复注入）。
+     *
+     * 注意：中文候选等非 ASCII 组合文本不会在组合阶段注入，
+     * 因此这里记录的是真正发到 Windows 的内容，而不是输入法的组合文本。
+     */
+    private var injectedText = ""  // 语法：private var 私有可变变量；已注入到游戏的文本
 
     /**
      * 抑制标志：deleteSurroundingText 已处理退格后，输入法可能以
@@ -184,6 +198,36 @@ class GamepadInputView(context: Context) : View(context) {  // 语法：class �
 
     override fun onCheckIsTextEditor(): Boolean = true  // 语法：override 覆写 + 单表达式函数体；声明本 View 是文本编辑器（支持绑定 IME）
 
+    /** 计算两段文本的公共前缀长度 */
+    private fun commonPrefixLength(a: String, b: String): Int {  // 语法：private fun 私有函数
+        var n = 0  // 公共前缀长度
+        while (n < a.length && n < b.length && a[n] == b[n]) n++  // 逐字符比较
+        return n  // 返回公共前缀长度
+    }  // 结束 commonPrefixLength 函数
+
+    /**
+     * 把注入内容从 [from] 回退成 [to]：公共前缀之后先退格，再注入新增部分。
+     *
+     * 连续非 ASCII 字符合并成一个整段文本包（[onImeText]），一次剪贴板粘贴完成，
+     * 避免逐字粘贴时剪贴板被下一段文本过早覆盖导致丢字/重字。
+     */
+    private fun emitDiff(from: String, to: String) {  // 语法：private fun；按差异注入文本
+        val common = commonPrefixLength(from, to)  // 相同前缀长度
+        repeat(from.length - common) { onImeChar?.invoke('\b') }  // 回退被替换的部分
+        var i = common  // 从差异起点开始注入
+        while (i < to.length) {  // 遍历新增内容
+            if (to[i].code > 0x7F) {  // 非 ASCII：合并连续字符合成一个文本包
+                var j = i  // 连续非 ASCII 结束位置
+                while (j < to.length && to[j].code > 0x7F) j++  // 向后扫描连续非 ASCII
+                onImeText?.invoke(to.substring(i, j))  // 整段发送一次粘贴
+                i = j  // 跳过已注入部分
+            } else {  // ASCII：逐字符走 VK 通道
+                onImeChar?.invoke(to[i])  // 发送单个字符
+                i++  // 前进一个字符
+            }  // 结束 if-else
+        }  // 结束 while 循环
+    }  // 结束 emitDiff 函数
+
     /**
      * 为软键盘提供 InputConnection，使键盘能绑定到本窗口并捕获输入
      *
@@ -200,36 +244,28 @@ class GamepadInputView(context: Context) : View(context) {  // 语法：class �
         return object : BaseInputConnection(this, false) {  // 语法：object 匿名对象 + 冒号继承；返回匿名输入连接对象
             override fun commitText(text: CharSequence?, newCursorPosition: Int): Boolean {  // 语法：override 覆写；提交文本回调
                 val s = text?.toString() ?: ""  // 语法：val + ?. 安全调用 + ?: 空合并；转字符串，空则用空串
-                Log.d(TAG, "commitText text='$s' composing='$composingText'")  // 语法：字符串模板；打印提交文本日志
+                Log.d(TAG, "commitText text='$s' injected='$injectedText'")  // 语法：字符串模板；打印提交文本日志
                 // 提交会替换当前组合区：只对差异部分做回退/注入。
                 // 不要「整体退格后重打」——组合文本通常已由 setComposingText 注入过，
                 // 整段重打会让无法映射的字符在回退后补不回来（表现为密码少字符、登录失败）
-                var common = 0  // 新旧文本的相同前缀长度
-                while (common < composingText.length && common < s.length &&  // 未超出两文本长度
-                    composingText[common] == s[common]  // 前缀字符相同
-                ) {  // 循环条件结束
-                    common++  // 相同前缀长度加一
-                }  // 结束 while 循环
-                repeat(composingText.length - common) { onImeChar?.invoke('\b') }  // 回退被替换的部分
-                for (i in common until s.length) onImeChar?.invoke(s[i])  // 注入提交文本的新增部分
-                composingText = ""  // 清空组合文本记录
+                emitDiff(injectedText, s)  // 回退差异部分，注入新增部分（非 ASCII 连续字符合并成一个粘贴包）
+                injectedText = ""  // 清空已注入文本记录
                 return super.commitText(text, newCursorPosition)  // 调用父类完成默认提交行为
             }  // 结束 commitText 函数
 
             override fun setComposingText(text: CharSequence?, newCursorPosition: Int): Boolean {  // 语法：override 覆写；设置组合文本回调
                 val newText = text?.toString() ?: ""  // 语法：val + ?. 安全调用 + ?: 空合并；转字符串，空则用空串
-                Log.d(TAG, "setComposingText text='$newText' oldComposing='$composingText'")  // 语法：字符串模板；打印组合文本日志
-                // 与旧组合文本求差异：缩短的部分回退，新增的部分注入，
+                Log.d(TAG, "setComposingText text='$newText' injected='$injectedText'")  // 语法：字符串模板；打印组合文本日志
+                // 中文候选等非 ASCII 组合文本不在组合阶段注入：候选会随拼音不断变化，
+                // 逐次「退格 + 剪贴板粘贴」会让剪贴板在被游戏读取前就被覆盖（丢字/重字）。
+                // 等 commitText 时再按差异一次性粘贴整段最终文本。
+                if (newText.any { it.code > 0x7F }) {  // 语法：any + lambda；组合文本含非 ASCII 字符
+                    return super.setComposingText(text, newCursorPosition)  // 仅记录组合文本，不注入游戏
+                }  // 结束非 ASCII 分支
+                // 与已注入文本求差异：缩短的部分回退，新增的部分注入，
                 // 使英文逐字输入时字符能即时到达游戏
-                var common = 0  // 语法：var 可变变量；新旧文本相同前缀长度计数器
-                while (common < composingText.length && common < newText.length &&  // 语法：while 循环 + && 逻辑与；未超出两文本长度时继续
-                    composingText[common] == newText[common]  // 比较当前位置前缀字符是否相同
-                ) {  // while 循环条件结束，进入循环体
-                    common++  // 相同前缀长度加一
-                }  // 结束 while 循环
-                repeat(composingText.length - common) { onImeChar?.invoke('\b') }  // 语法：repeat + lambda；把被缩短的部分用退格回退
-                for (i in common until newText.length) onImeChar?.invoke(newText[i])  // 语法：for 循环 + until 区间；注入新增的字符
-                composingText = newText  // 更新组合文本记录
+                emitDiff(injectedText, newText)  // 回退被缩短的部分并注入新增字符
+                injectedText = newText  // 更新已注入文本记录
                 return super.setComposingText(text, newCursorPosition)  // 调用父类完成默认组合行为
             }  // 结束 setComposingText 函数
 
@@ -238,6 +274,9 @@ class GamepadInputView(context: Context) : View(context) {  // 语法：class �
                 // 显式转发退格/删除
                 repeat(beforeLength) { onImeChar?.invoke('\b') }  // 语法：repeat + lambda；光标前字符逐个发退格
                 repeat(afterLength) { onImeChar?.invoke('\u007F') }  // 语法：repeat + lambda；光标后字符逐个发 Delete（\u007F）
+                // 同步已注入文本记录，避免后续 commitText 再次回退这些字符
+                if (beforeLength > 0) injectedText = injectedText.dropLast(minOf(beforeLength, injectedText.length))  // 语法：dropLast + minOf；截掉被删掉的前缀
+                if (afterLength > 0) injectedText = ""  // 光标后删除：后续内容无法精确跟踪，清空记录
                 // 非编辑框连接 deleteSurroundingText 会返回 false，输入法常随后以
                 // sendKeyEvent(KEYCODE_DEL) 回退重试；标记抑制该次回退避免重复删除
                 if (beforeLength > 0 || afterLength > 0) {  // 语法：if + || 逻辑或；存在删除操作时置抑制标志
@@ -271,9 +310,15 @@ class GamepadInputView(context: Context) : View(context) {  // 语法：class �
                                 suppressDelFromDeleteSurrounding = false  // 消费该次回退并清除标志
                             } else {  // 语法：else 分支；未抑制时
                                 onImeChar?.invoke('\b')  // 语法：?. 安全调用；发送退格字符
+                                if (injectedText.isNotEmpty()) {  // 同步已注入文本记录
+                                    injectedText = injectedText.dropLast(1)  // 去掉被退格删掉的最后一个字符
+                                }  // 结束 if 块
                             }  // 结束 if-else 内层块
                         }  // 结束 KEYCODE_DEL 分支
-                        KeyEvent.KEYCODE_FORWARD_DEL -> onImeChar?.invoke('\u007F')  // Delete 键分支：发送向前删除字符
+                        KeyEvent.KEYCODE_FORWARD_DEL -> {  // Delete 键分支：发送向前删除字符
+                            onImeChar?.invoke('\u007F')  // 发送向前删除字符
+                            injectedText = ""  // 光标后删除：后续内容无法精确跟踪，清空记录
+                        }  // 结束 KEYCODE_FORWARD_DEL 分支
                         else -> {  // 语法：else 兜底分支
                             if (event.keyCode in CONTROL_KEY_CODES) onImeKey?.invoke(event)  // 语法：in 成员判断；控制键经按键事件通道转发
                             else Log.d(TAG, "sendKeyEvent drop printable key=${event.keyCode} " +  // 语法：else + 字符串模板拼接；可打印键丢弃并打印日志

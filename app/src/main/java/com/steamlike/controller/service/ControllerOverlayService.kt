@@ -988,6 +988,7 @@ class ControllerOverlayService : Service() {  // class=类声明；继承 Servic
             }  // 结束 onGenericMotion lambda
             // IME 软键盘输入 → TCP → Windows SendInput 注入 WoW
             view.onImeChar = { ch -> forwardImeChar(ch) }  // lambda {ch->}；设置 IME 字符输入回调
+            view.onImeText = { seg -> forwardImeText(seg) }  // lambda {seg->}；设置 IME 整段文本回调
             view.onImeKey = { event -> forwardImeKey(event) }  // lambda {event->}；设置 IME 按键事件回调
             // 键盘被隐藏（点击键盘自身隐藏按钮/返回键/输入法失活）→ 恢复捕获。
             // 系统不会给应用直接回调，由 GamepadInputView 通过 insets 变化 /
@@ -1320,6 +1321,18 @@ class ControllerOverlayService : Service() {  // class=类声明；继承 Servic
             }  // 结束默认分支
         }  // 结束 when 分支
     }  // 结束 forwardImeChar 函数
+
+    /**
+     * 转发 IME 整段非 ASCII 文本（中文等）到 Windows 一次性粘贴注入。
+     *
+     * 逐字粘贴时全局剪贴板会被下一个字符过早覆盖，导致丢字/重字；
+     * 整段发送只触发一次「写剪贴板 + Ctrl+V」。
+     */
+    private fun forwardImeText(text: String) {  // private=私有；fun=函数声明；转发整段 IME 文本
+        val server = bridgeServer ?: return  // 服务器为空则直接返回
+        Log.d(TAG, "forwardImeText '$text'")  // 打印整段文本内容
+        server.sendUnicodeText(text)  // 发送 Unicode 文本包给 Windows 客户端
+    }  // 结束 forwardImeText 函数
 
     /**
      * 转发 IME 特殊按键事件到 Windows 注入
