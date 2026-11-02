@@ -162,6 +162,13 @@ class GamepadInputView(context: Context) : View(context) {  // 语法：class �
     var onImeHidden: (() -> Unit)? = null  // 语法：var + lambda 类型 + ?可空；键盘收起回调
 
     /**
+     * 软键盘「发送」动作回调：用户点击输入法的发送/回车动作键后触发。
+     *
+     * 此时回车已注入游戏，服务端据此自动收起键盘（避免发送后键盘仍遮挡画面）。
+     */
+    var onImeActionSent: (() -> Unit)? = null  // 语法：var + lambda 类型 + ?可空；IME 发送动作回调
+
+    /**
      * 已经实际注入到游戏的文本（用于 diff 计算，避免重复注入）。
      *
      * 注意：中文候选等非 ASCII 组合文本不会在组合阶段注入，
@@ -337,6 +344,8 @@ class GamepadInputView(context: Context) : View(context) {  // 语法：class �
                 suppressEnterUntilMs = android.os.SystemClock.uptimeMillis() + 400  // 语法：全限定调用；400ms 内吞掉派发回来的回车
                 onImeKey?.invoke(down)  // 语法：?. 安全调用；转发回车按下事件
                 onImeKey?.invoke(up)  // 语法：?. 安全调用；转发回车释放事件
+                // 发送动作完成 → 通知服务端收起键盘（发送后键盘不再遮挡游戏画面）
+                onImeActionSent?.invoke()  // 语法：?. 安全调用；通知发送完成
                 return super.performEditorAction(actionCode)  // 调用父类完成默认动作
             }  // 结束 performEditorAction 函数
 

@@ -381,6 +381,15 @@ class ControllerOverlayService : Service() {  // class=类声明；继承 Servic
     @Volatile  // 注解：标记字段为 volatile，保证多线程可见性
     private var isKeyboardShowing = false  // var=可变变量；系统键盘是否正在显示
 
+    /**
+     * 显示键盘后的 IME 信号宽限窗口（毫秒时间戳）。
+     *
+     * 系统在 showSoftInput 后会立刻关闭旧的 InputConnection（重建连接），
+     * 触发 onImeClosed → handleImeHidden，但此时键盘其实仍在显示。
+     * 宽限期内忽略该关闭信号，避免把 [isKeyboardShowing] 误置为 false。
+     */
+    private var imeShowGraceUntilMs = 0L  // var=可变变量；宽限期结束时间戳
+
     override fun onBind(intent: Intent?): IBinder? = null  // override=覆写父类方法；fun=函数声明；绑定服务时返回 null（本服务不支持绑定），?=可空参数
 
     override fun onCreate() {  // override=覆写父类方法；fun=函数声明；服务创建时回调
@@ -506,7 +515,15 @@ class ControllerOverlayService : Service() {  // class=类声明；继承 Servic
                     }  // 结束非空判断
                 }  // 结束 onClipboardText lambda
                 bridgeServer?.onToggleKeyboardRequest = {  // ?.=安全调用；收到 Windows 客户端「切换键盘」反向通知
-                    mainHandler.post { toggleSystemKeyboard() }  // 回主线程切换软键盘显示/隐藏
+                    Log.i(TAG, "0x23 toggle keyboard request received, isKeyboardShowing=$isKeyboardShowing")  // 记录反向通知到达时的键盘状态
+                    mainHandler.post {  // 回主线程切换软键盘显示/隐藏
+                        // 捕获暂停时 1x1 焦点窗口已被移除，IME 没有可绑定的窗口 → 先恢复捕获
+                        if (gamepadInputView == null) {  // if 判断：焦点窗口不存在
+                            Log.i(TAG, "0x23: focus window missing, resuming capture first")  // 记录自动恢复捕获
+                            resumeCapturing()  // 重建焦点窗口
+                        }  // 结束 if 块
+                        toggleSystemKeyboard()  // 再切换键盘
+                    }  // 结束 post lambda
                 }  // 结束 onToggleKeyboardRequest lambda
 
                 if (bridgeServer?.start() != true) {  // ?.=安全调用；if 判断：服务器启动失败
@@ -1002,11 +1019,19 @@ class ControllerOverlayService : Service() {  // class=类声明；继承 Servic
             view.onImeChar = { ch -> forwardImeChar(ch) }  // lambda {ch->}；设置 IME 字符输入回调
             view.onImeText = { seg -> forwardImeText(seg) }  // lambda {seg->}；设置 IME 整段文本回调
             view.onImeKey = { event -> forwardImeKey(event) }  // lambda {event->}；设置 IME 按键事件回调
+            // 输入法「发送」动作（回车已注入游戏）→ 自动收起键盘
+            view.onImeActionSent = { mainHandler.post { hideSystemKeyboardAfterSend() } }  // lambda；设置发送后收起键盘回调
             // 键盘被隐藏（点击键盘自身隐藏按钮/返回键/输入法失活）→ 恢复捕获。
             // 系统不会给应用直接回调，由 GamepadInputView 通过 insets 变化 /
             // 连接关闭 / 返回键三种信号驱动
-            view.onImeHidden = { mainHandler.post { handleImeHidden() } }  // lambda；设置键盘隐藏回调（回主线程）
-            view.onImeClosed = { mainHandler.post { handleImeHidden() } }  // lambda；设置 IME 连接关闭回调（回主线程）
+            view.onImeHidden = { mainHandler.post {  // lambda；设置键盘隐藏回调（回主线程）
+                // 与 onImeClosed 同理：显示键盘的过渡阶段 insets 会先报一次不可见，宽限期内忽略
+                if (android.os.SystemClock.uptimeMillis() >= imeShowGraceUntilMs) handleImeHidden()  // 宽限期外才视为真收起
+            } }
+            view.onImeClosed = { mainHandler.post {  // lambda；设置 IME 连接关闭回调（回主线程）
+                // 显示键盘后系统会重建输入连接并关闭旧连接，宽限期内不代表键盘已收起
+                if (android.os.SystemClock.uptimeMillis() >= imeShowGraceUntilMs) handleImeHidden()  // 宽限期外才视为真收起
+            } }
             view.onImeBackPressed = { mainHandler.post { handleImeHidden() } }  // lambda；设置返回键隐藏回调（回主线程）
         }  // 结束 also 块
 
@@ -1050,7 +1075,7 @@ class ControllerOverlayService : Service() {  // class=类声明；继承 Servic
         // 无障碍转发路径已弃用（该设备未授予按键过滤能力）
         GamepadAccessibilityService.onPausedKeyEvent = null  // 清空无障碍按键转发回调
         updateCaptureButtonState()  // 更新捕获按钮状态
-        Log.i(TAG, "Capturing paused (focus window removed)")  // 打印暂停捕获日志
+        Log.i(TAG, "Capturing paused (focus window removed), caller=${Throwable().stackTrace.drop(1).take(3).joinToString(" <- ") { "${it.className.substringAfterLast('.')}.${it.methodName}:${it.lineNumber}" }}")  // 打印暂停捕获日志（含调用来源，便于排查误暂停）
     }  // 结束 pauseCapturing 函数
 
     fun resumeCapturing() {  // fun=函数声明（公开）；恢复手柄捕获
@@ -1262,15 +1287,59 @@ class ControllerOverlayService : Service() {  // class=类声明；继承 Servic
         } else {  // else 分支：键盘未显示
             // 键盘未显示 → 弹出键盘（保持捕获，不暂停）
             isKeyboardShowing = true  // 标记键盘显示中
+            imeShowGraceUntilMs = android.os.SystemClock.uptimeMillis() + 1200  // 1200ms 内忽略系统重建连接的关闭信号
             mainHandler.post {  // 回主线程弹出键盘
-                gamepadInputView?.let { view ->  // ?.=安全调用；?.let{}=非空时执行 lambda
-                    view.requestFocus()  // 先请求窗口焦点
-                    imm.showSoftInput(view, 0)  // 弹出软键盘
-                }  // 结束 let lambda
+                val view = gamepadInputView  // 取出 1x1 焦点窗口视图
+                if (view == null) Log.w(TAG, "Keyboard requested but gamepadInputView is null")  // 暂停捕获时焦点窗口不存在
+                else requestShowKeyboard(imm, view, 0)  // 弹出软键盘（窗口焦点未就绪时自动重试）
                 Log.i(TAG, "Keyboard requested (capture kept active)")  // 打印弹出键盘日志
             }  // 结束 post lambda
         }  // 结束 if-else 块
     }  // 结束 toggleSystemKeyboard 函数
+
+    /**
+     * 弹出软键盘（带重试）
+     *
+     * 首次弹出时 1x1 焦点窗口可能尚未拿到焦点（或前台刚切到游戏窗口），
+     * showSoftInput 会被系统忽略，表现为「第一次不弹、之后正常」。
+     * 因此每 200ms 重试一次，最多尝试 3 次；键盘已显示则停止。
+     */
+    private fun requestShowKeyboard(imm: InputMethodManager, view: View, attempt: Int) {  // private=私有；弹出键盘并重试
+        if (!isKeyboardShowing) return  // if 判断：期间已被收起则停止重试
+        if (isImeVisible(view)) return  // if 判断：键盘已显示则不再重复弹出
+        view.requestFocus()  // 请求窗口焦点（IME 只能绑定有焦点的窗口）
+        val accepted = imm.showSoftInput(view, 0)  // 弹出软键盘（返回值表示系统是否受理请求）
+        Log.i(TAG, "showKeyboard attempt=$attempt hasFocus=${view.hasWindowFocus()} accepted=$accepted imeVisible=${isImeVisible(view)}")  // 打印弹出结果，便于定位首次失败原因
+        if (attempt < 2) {  // if 判断：最多重试 2 次（共 3 次尝试）
+            mainHandler.postDelayed({ requestShowKeyboard(imm, view, attempt + 1) }, 200)  // 200ms 后再试
+        }  // 结束 if 块
+    }  // 结束 requestShowKeyboard 函数
+
+    /** 判断 IME 是否实际可见（Android 11+ 用窗口 insets；低版本退回状态标记） */
+    private fun isImeVisible(view: View): Boolean =
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {  // if 表达式：Android 11 及以上
+            view.rootWindowInsets?.isVisible(WindowInsets.Type.ime()) == true  // 按 IME insets 可见性判断
+        } else {  // else 分支：低版本回退
+            isKeyboardShowing  // 使用显示标记
+        }  // 结束 if 表达式
+
+    /**
+     * 输入法「发送」动作后收起键盘
+     *
+     * 回车已由 GamepadInputView 注入游戏，这里只负责隐藏软键盘并复用
+     * [handleImeHidden] 的状态清理（清标记、恢复捕获、重新请求焦点）。
+     */
+    private fun hideSystemKeyboardAfterSend() {  // private=私有；fun=函数声明；发送后收起键盘
+        if (!isKeyboardShowing) return  // if 判断：键盘未显示则无需收起
+        val imm = getSystemService(Context.INPUT_METHOD_SERVICE) as? InputMethodManager  // 获取输入法管理器
+        if (imm == null) {  // if 判断：无法获取输入法管理器
+            handleImeHidden()  // 至少完成状态清理
+            return  // 提前返回
+        }  // 结束 if 块
+        imm.hideSoftInputFromWindow(gamepadInputView?.windowToken, 0)  // ?.=安全调用；隐藏软键盘
+        handleImeHidden()  // 统一清理：清除显示标记、恢复捕获、重新请求焦点
+        Log.i(TAG, "Keyboard hidden after send action")  // 打印发送后收起键盘日志
+    }  // 结束 hideSystemKeyboardAfterSend 函数
 
     /**
      * IME 键盘已被隐藏（点击键盘自身隐藏按钮/返回键/输入法失活）→ 恢复捕获。
