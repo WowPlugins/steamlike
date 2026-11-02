@@ -193,6 +193,14 @@ sealed class MappedAction { // 映射动作密封类（语法：sealed class 密
     data object ToggleKeyboard : MappedAction() // 切换安卓系统键盘动作
 
     /**
+     * 先发送回车，再切换安卓系统键盘显示/隐藏
+     *
+     * 触发顺序：先把 Enter 发给游戏（打开/发送聊天），再切换软键盘。
+     * 这样第一次触发会打开聊天框并弹出键盘，第二次触发则发送聊天并收起键盘。
+     */
+    data object ToggleKeyboardEnter : MappedAction() // 回车+切换键盘动作
+
+    /**
      * 切换手柄捕获状态
      *
      * 按下时切换 GamepadInputView 的显示/隐藏（暂停/恢复手柄事件捕获）。
@@ -299,6 +307,7 @@ data class KeyMapping( // 按键映射定义（语法：data class 数据类）
         is MappedAction.MouseScrollDown -> "滚轮下滚" // 滚轮下滚描述
         is MappedAction.ToggleOverlay -> "切换悬浮窗" // 切换悬浮窗描述
         is MappedAction.ToggleKeyboard -> "切换键盘" // 切换键盘描述
+        is MappedAction.ToggleKeyboardEnter -> "回车+切换键盘" // 先发回车再切换键盘描述
         is MappedAction.ToggleCapture -> "切换捕获" // 切换捕获描述
     } // 结束 when
 

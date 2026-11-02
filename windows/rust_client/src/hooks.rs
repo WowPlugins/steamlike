@@ -495,6 +495,13 @@ fn execute_mapping(source_vk: u32, is_long_press: bool) {
                 if expanded { "收起" } else { "展开" }
             ));
         }
+        crate::config::MappedAction::ToggleKeyboardEnter => {
+            // 顺序固定：先把回车发给游戏（打开/发送聊天），再通知 APK 切换软键盘
+            win::inject_key(0x0D, true);
+            win::inject_key(0x0D, false);
+            crate::bridge::send_toggle_keyboard();
+            log("[映射] 回车 + 切换安卓键盘");
+        }
     }
 }
 

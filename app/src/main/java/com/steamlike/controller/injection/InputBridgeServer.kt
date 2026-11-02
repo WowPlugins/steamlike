@@ -123,6 +123,7 @@ class InputBridgeServer(  // 语法：class 声明类；InputBridge TCP 服务�
         const val MSG_CLIENT_VERSION: Byte = 0x20  // 消息类型：客户端信息（Windows 客户端上报 exe 编译版本）
         const val MSG_CLIPBOARD_TEXT: Byte = 0x21  // 消息类型：剪贴板文本（8 字节头 + 变长正文，客户端 → APK）
         const val MSG_UNICODE_TEXT: Byte = 0x22  // 消息类型：Unicode 文本注入（8 字节头 + UTF-8 正文，APK → 客户端）
+        const val MSG_TOGGLE_KEYBOARD: Byte = 0x23  // 消息类型：切换安卓键盘（客户端 → APK，无载荷，用于 Rust 映射反向通知）
 
         const val PACKET_SIZE = 8  // 语法：const val 编译期常量；协议数据包固定长度 8 字节
         const val MAX_CLIPBOARD_BYTES = 1 shl 20  // 单个剪贴板文本正文上限（1 MB，防御异常数据）
@@ -139,6 +140,7 @@ class InputBridgeServer(  // 语法：class 声明类；InputBridge TCP 服务�
     var onServerError: ((String) -> Unit)? = null  // 语法：var + lambda 类型 + ?可空；服务器错误回调
     var onClientVersionMismatch: ((String) -> Unit)? = null  // 语法：var + lambda 类型 + ?可空；客户端 exe 版本与 APK 期望不一致回调
     var onClipboardText: ((String) -> Unit)? = null  // 语法：var + lambda 类型 + ?可空；收到 Windows 客户端剪贴板文本回调
+    var onToggleKeyboardRequest: (() -> Unit)? = null  // 语法：var + lambda 类型 + ?可空；收到 Windows 客户端「切换键盘」反向通知回调
 
     /**
      * 启动TCP服务器
@@ -513,6 +515,11 @@ class InputBridgeServer(  // 语法：class 声明类；InputBridge TCP 服务�
      * 不一致说明 Winlator 里的 exe 没有更新，需要重新导出并复制。
      */
     private fun handleClientPacket(packet: ByteArray) {  // 语法：private fun 私有函数；处理客户端上报的数据包
+        // 反向通知：切换安卓键盘（Rust 侧映射触发时投递，无需手柄连接，走 TCP 连接即可）
+        if (packet[0] == MSG_TOGGLE_KEYBOARD) {  // 切换键盘包
+            onToggleKeyboardRequest?.invoke()  // 通知外部切换软键盘（由回调切回主线程执行）
+            return  // 该包无其它载荷
+        }  // 结束切换键盘分支
         if (packet[0] != MSG_CLIENT_VERSION) return  // 只处理客户端信息包
         val clientVersion = "${packet[1]}.${packet[2]}.${packet[3]}"  // 拼成 主.次.修订 版本号
         if (clientVersion != BuildConfig.RUST_CLIENT_VERSION) {  // 与 APK 期望版本比对

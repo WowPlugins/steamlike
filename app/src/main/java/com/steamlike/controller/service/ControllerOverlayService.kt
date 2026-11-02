@@ -505,6 +505,9 @@ class ControllerOverlayService : Service() {  // class=类声明；继承 Servic
                         Log.i(TAG, "已同步 Windows 剪贴板文本：${text.length} 字符")  // 打印同步日志（不打印正文，避免日志过长）
                     }  // 结束非空判断
                 }  // 结束 onClipboardText lambda
+                bridgeServer?.onToggleKeyboardRequest = {  // ?.=安全调用；收到 Windows 客户端「切换键盘」反向通知
+                    mainHandler.post { toggleSystemKeyboard() }  // 回主线程切换软键盘显示/隐藏
+                }  // 结束 onToggleKeyboardRequest lambda
 
                 if (bridgeServer?.start() != true) {  // ?.=安全调用；if 判断：服务器启动失败
                     Log.e(TAG, "TCP server start failed")  // 打印服务器启动失败日志
@@ -572,6 +575,14 @@ class ControllerOverlayService : Service() {  // class=类声明；继承 Servic
                 // 按键映射动作回调（ToggleOverlay / ToggleKeyboard / ToggleCapture）
                 mapper?.onToggleOverlay = { mainHandler.post { toggleOverlayView() } }  // ?.=安全调用；lambda；切换悬浮窗视图（回主线程）
                 mapper?.onToggleKeyboard = { mainHandler.post { toggleSystemKeyboard() } }  // ?.=安全调用；lambda；切换系统键盘（回主线程）
+                // 回车+切换键盘：先发回车给游戏（打开/发送聊天），再切换软键盘显示/隐藏
+                mapper?.onToggleKeyboardEnter = {  // ?.=安全调用；lambda；回车后切换键盘
+                    mainHandler.post {  // 回主线程执行（键盘操作必须在主线程）
+                        bridgeServer?.sendKeyEvent(0x0D, true)  // VK_RETURN 按下
+                        bridgeServer?.sendKeyEvent(0x0D, false)  // VK_RETURN 释放（只发一次，避免双回车）
+                        toggleSystemKeyboard()  // 再切换安卓软键盘
+                    }  // 结束 post lambda
+                }  // 结束 onToggleKeyboardEnter lambda
                 mapper?.onToggleCapture = { mainHandler.post { toggleCaptureState() } }  // ?.=安全调用；lambda；切换捕获状态（回主线程）
 
                 // 鼠标长按切换/交换（MouseToggle / MouseSwapToggle）：

@@ -16,6 +16,7 @@
 //! - 0x0D 期望客户端版本：Byte1-3 为 APK 的 Cargo.toml 版本，客户端据此判断 exe 是否过期
 //! - 0x20 客户端信息（exe → APK）：Byte1-3 为 exe 编译时的版本号，APK 据此判断客户端是否过期
 //! - 0x21 剪贴板文本（exe → APK）：8 字节头之后跟随变长正文
+//! - 0x23 切换安卓键盘（exe → APK）：8 字节定长包、无载荷，用于映射动作反向通知
 //! - 0x22 Unicode 文本（APK → exe）：8 字节头之后跟随 UTF-8 正文，用于软键盘输入中文
 //!   头字节下标 4..7 为 UTF-8 字节长度（uint32 小端），其后紧接文本正文
 //!   exe 收到后写入剪贴板并注入 Ctrl+V 粘贴（直接 Unicode 注入在 WoW 中文界面会乱码）
@@ -33,6 +34,21 @@ const PACKET_SIZE: usize = 8;
 
 /// 待发送的剪贴板文本包队列（剪贴板线程投递，网络线程取走）
 static OUTBOX: Mutex<Vec<Vec<u8>>> = Mutex::new(Vec::new());
+
+/// 通知 APK 切换安卓软键盘显示/隐藏（0x23，8 字节定长包，无载荷）
+///
+/// Rust 映射在 Windows 侧执行，无法直接控制 Android 输入法，只能通过这条反向通知
+/// 让 APK 切换软键盘。未连接 APK 时直接丢弃，不影响本地的回车注入。
+pub fn send_toggle_keyboard() {
+    if !CONNECTED.load(Ordering::Relaxed) {
+        return;
+    }
+    let mut packet = [0u8; PACKET_SIZE];
+    packet[0] = 0x23;
+    if let Ok(mut queue) = OUTBOX.lock() {
+        queue.push(packet.to_vec());
+    }
+}
 
 /// 把一段剪贴板文本排队发送给 APK
 ///

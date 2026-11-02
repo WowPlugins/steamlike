@@ -123,6 +123,8 @@ pub enum MappedAction {
     Interact,
     /// 悬浮窗展开/收起
     OverlayToggle,
+    /// 先发送回车，再切换安卓软键盘显示/隐藏
+    ToggleKeyboardEnter,
 }
 
 impl Default for MappedAction {
@@ -184,6 +186,7 @@ impl MappedAction {
             Self::MouseReleaseAll => "释放鼠标长按".to_string(),
             Self::Interact => "交互键".to_string(),
             Self::OverlayToggle => "悬浮窗展开/收起".to_string(),
+            Self::ToggleKeyboardEnter => "回车+切换键盘".to_string(),
         }
     }
 }

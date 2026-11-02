@@ -375,6 +375,9 @@ object ControllerConfig { // 单例对象：配置的 JSON 序列化/反序列�
             is MappedAction.ToggleKeyboard -> { // 切换键盘类型
                 json.put("type", "toggleKeyboard") // 写入类型标识
             } // 结束切换键盘分支
+            is MappedAction.ToggleKeyboardEnter -> { // 回车+切换键盘类型
+                json.put("type", "toggleKeyboardEnter") // 写入类型标识
+            } // 结束回车+切换键盘分支
             is MappedAction.ToggleCapture -> { // 切换捕获类型
                 json.put("type", "toggleCapture") // 写入类型标识
             } // 结束切换捕获分支
@@ -424,6 +427,7 @@ object ControllerConfig { // 单例对象：配置的 JSON 序列化/反序列�
             "mouseScrollDown" -> MappedAction.MouseScrollDown // 滚轮下滚：直接返回单例对象
             "toggleOverlay" -> MappedAction.ToggleOverlay // 切换悬浮窗：直接返回单例对象
             "toggleKeyboard" -> MappedAction.ToggleKeyboard // 切换键盘：直接返回单例对象
+            "toggleKeyboardEnter" -> MappedAction.ToggleKeyboardEnter // 回车+切换键盘：直接返回单例对象
             "toggleCapture" -> MappedAction.ToggleCapture // 切换捕获：直接返回单例对象
             else -> null // 未知类型返回 null
         } // 结束 when 表达式

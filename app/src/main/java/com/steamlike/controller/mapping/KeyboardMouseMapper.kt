@@ -237,6 +237,14 @@ class KeyboardMouseMapper( // 语法：class 类声明，定义键盘/鼠标映�
     var onToggleKeyboard: (() -> Unit)? = null // 语法：var+函数类型+? 可空回调，切换系统键盘时触发
 
     /**
+     * 回车+切换系统键盘回调
+     *
+     * 当映射到 ToggleKeyboardEnter 动作的手柄按钮按下时调用。
+     * 由 ControllerOverlayService 设置：先发送回车，再切换软键盘显示/隐藏。
+     */
+    var onToggleKeyboardEnter: (() -> Unit)? = null // 语法：var+函数类型+? 可空回调，回车后切换系统键盘时触发
+
+    /**
      * 切换捕获状态回调
      *
      * 当映射到 ToggleCapture 动作的手柄按钮按下时调用。
@@ -427,6 +435,7 @@ class KeyboardMouseMapper( // 语法：class 类声明，定义键盘/鼠标映�
             // 切换动作：始终处理
             is MappedAction.ToggleOverlay -> { onToggleOverlay?.invoke(); return } // 悬浮窗切换动作：触发回调后返回（语法：is 类型匹配 + 分号并列多语句）
             is MappedAction.ToggleKeyboard -> { onToggleKeyboard?.invoke(); return } // 系统键盘切换动作：触发回调后返回（语法：is 类型匹配）
+            is MappedAction.ToggleKeyboardEnter -> { onToggleKeyboardEnter?.invoke(); return } // 回车+键盘切换动作：触发回调后返回
             is MappedAction.ToggleCapture -> { onToggleCapture?.invoke(); return } // 捕获切换动作：触发回调后返回（语法：is 类型匹配）
             else -> {} // 其他动作不在切换分支处理（语法：else 兜底分支）
         } // 结束切换动作 when
@@ -448,6 +457,7 @@ class KeyboardMouseMapper( // 语法：class 类声明，定义键盘/鼠标映�
             is MappedAction.MouseScrollDown -> handleMouseScroll(-SCROLL_DELTA) // 鼠标下滚动作：传入负增量
             is MappedAction.ToggleOverlay, // 悬浮窗切换动作（此处重复列出，上面已处理）
             is MappedAction.ToggleKeyboard, // 系统键盘切换动作（此处重复列出，上面已处理）
+            is MappedAction.ToggleKeyboardEnter, // 回车+键盘切换动作（此处重复列出，上面已处理）
             is MappedAction.ToggleCapture -> {} // 已处理 // 捕获切换动作：上面已处理
         } // 结束非切换动作 when
     } // 结束 handleMapping 函数
@@ -508,6 +518,7 @@ class KeyboardMouseMapper( // 语法：class 类声明，定义键盘/鼠标映�
             is MappedAction.MouseScrollDown -> handleMouseScroll(-SCROLL_DELTA) // 滚轮下滚：发送一次下滚
             is MappedAction.ToggleOverlay -> onToggleOverlay?.invoke() // 切换悬浮窗（语法：?. 安全调用）
             is MappedAction.ToggleKeyboard -> onToggleKeyboard?.invoke() // 切换系统键盘
+            is MappedAction.ToggleKeyboardEnter -> onToggleKeyboardEnter?.invoke() // 回车+切换系统键盘
             is MappedAction.ToggleCapture -> onToggleCapture?.invoke() // 切换捕获
             else -> {} // 其余动作（键盘/小键盘/鼠标点击为保持型，层切换/摇杆不处理）
         } // 结束 when

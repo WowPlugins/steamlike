@@ -1000,6 +1000,11 @@ impl App {
                 self.edit_tap_value = 0;
                 self.edit_tap_subs.clear();
             }
+            crate::config::MappedAction::ToggleKeyboardEnter => {
+                self.edit_tap_type = 11;
+                self.edit_tap_value = 0;
+                self.edit_tap_subs.clear();
+            }
             _ => {
                 self.edit_tap_type = 0;
                 self.edit_tap_value = 0;
@@ -1059,6 +1064,11 @@ impl App {
                 self.edit_long_press_value = 0;
                 self.edit_long_press_subs.clear();
             }
+            crate::config::MappedAction::ToggleKeyboardEnter => {
+                self.edit_long_press_type = 11;
+                self.edit_long_press_value = 0;
+                self.edit_long_press_subs.clear();
+            }
             _ => {
                 self.edit_long_press_type = 0;
                 self.edit_long_press_value = 0;
@@ -1108,6 +1118,7 @@ impl App {
             8 => crate::config::MappedAction::MouseReleaseAll,
             9 => crate::config::MappedAction::Interact,
             10 => crate::config::MappedAction::OverlayToggle,
+            11 => crate::config::MappedAction::ToggleKeyboardEnter,
             _ => crate::config::MappedAction::None,
         }
     }
@@ -1119,7 +1130,7 @@ impl App {
         let action_types = [
             "未设置", "键盘按键", "数字小键盘", "鼠标点击", "鼠标长按",
             "滚轮上滚", "滚轮下滚", "鼠标长按交换", "释放鼠标长按",
-            "交互键", "悬浮窗展开/收起",
+            "交互键", "悬浮窗展开/收起", "回车+切换键盘",
         ];
         // 长按与短按支持完全相同的动作类型
         let long_press_types = action_types;
