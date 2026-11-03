@@ -9,6 +9,8 @@
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />  <!-- 语法：FOREGROUND_SERVICE 前台服务权限（Android 9+ 启动前台服务必须） -->
     <!-- 前台服务 specialUse 类型权限 (Android 14+ 要求) -->
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />  <!-- 语法：FOREGROUND_SERVICE_SPECIAL_USE 特殊用途前台服务权限（Android 14+ 使用 specialUse 类型必须） -->
+    <!-- 前台服务 mediaProjection 类型权限 (Android 14+ 使用 MediaProjection 截屏必须) -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PROJECTION" />  <!-- 语法：FOREGROUND_SERVICE_MEDIA_PROJECTION 截屏前台服务权限（聊天框信标检测需要截屏） -->
     <!-- 网络权限 (TCP 桥接服务器) -->
     <uses-permission android:name="android.permission.INTERNET" />  <!-- 语法：INTERNET 网络访问权限（TCP 桥接服务器通信需要） -->
     <!-- 使用情况访问权限 (智能暂停: 检测前台应用自动移除/恢复焦点窗口) -->
@@ -110,7 +112,7 @@
         <service
             android:name=".service.ControllerOverlayService"
             android:exported="false"
-            android:foregroundServiceType="specialUse">
+            android:foregroundServiceType="specialUse|mediaProjection">
             <!-- 语法：property 节点，为组件声明附加属性
                  android:name=android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE：specialUse 前台服务的子类型属性名（系统固定）；
                  android:value=游戏手柄输入映射：子类型说明（在系统设置中展示） -->

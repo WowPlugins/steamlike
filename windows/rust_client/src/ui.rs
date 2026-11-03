@@ -708,6 +708,11 @@ impl App {
             {
                 *dirty = true;
             }
+            ui.label(
+                egui::RichText::new("聊天框信标调试开关在 WoW 内：界面 → 插件 → SteamLike 信标，或 /slbeacon")
+                    .small()
+                    .weak(),
+            );
             let status = runtime::status_snapshot();
             let color = if CONNECTED.load(Ordering::Relaxed) {
                 egui::Color32::from_rgb(0x1B, 0x8A, 0x2E)

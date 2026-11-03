@@ -5,6 +5,7 @@
 //! 2. 可选拦截本地键鼠事件（总开关默认关闭），实现 WASD 自动锁定右键、
 //!    交互键点击序列、长按交换左右键锁定、鼠标相对移动转发等。
 
+mod addon;
 mod bridge;
 mod clipboard;
 mod config;
@@ -49,6 +50,7 @@ fn main() -> eframe::Result<()> {
 
     let cfg = config::load();
     apply_runtime(&cfg);
+    addon::ensure_installed(&cfg.wow_path);
 
     hooks::start();
     if cfg.intercept_enabled {
