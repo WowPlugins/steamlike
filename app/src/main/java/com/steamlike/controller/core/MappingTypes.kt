@@ -97,6 +97,16 @@ sealed class MappedAction { // 映射动作密封类（语法：sealed class 密
     data class NumpadKey(val keyCode: Int) : MappedAction() // 数字小键盘按键动作
 
     /**
+     * 解锁+居中+按键动作
+     *
+     * 按下时先解除左右键的鼠标长按锁定（退出 mouselook），把光标移到屏幕中央，
+     * 然后发送指定的原始按键。顺序由 Windows 客户端统一执行，保证中间不被锁存干扰。
+     *
+     * @param keyCode Android [KeyEvent.KEYCODE_*] 常量（解锁居中后要发送的按键）
+     */
+    data class UnlockThenKey(val keyCode: Int) : MappedAction() // 解锁+居中+按键动作
+
+    /**
      * 鼠标移动动作（摇杆专用）
      *
      * 将摇杆映射为鼠标相对移动，用于控制光标位置。
@@ -309,6 +319,7 @@ data class KeyMapping( // 按键映射定义（语法：data class 数据类）
         is MappedAction.ToggleKeyboard -> "切换键盘" // 切换键盘描述
         is MappedAction.ToggleKeyboardEnter -> "回车+切换键盘" // 先发回车再切换键盘描述
         is MappedAction.ToggleCapture -> "切换捕获" // 切换捕获描述
+        is MappedAction.UnlockThenKey -> "解锁+居中+${keyCodeToName(action.keyCode)}" // 解锁鼠标锁定后居中并发送按键描述
     } // 结束 when
 
     companion object { // 伴生对象（语法：companion object 静态成员容器）

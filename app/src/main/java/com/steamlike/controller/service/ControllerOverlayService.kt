@@ -19,6 +19,10 @@ import android.app.usage.UsageStatsManager  // 导入使用情况统计管理器
 import android.graphics.PixelFormat  // 导入像素格式类
 import android.graphics.drawable.GradientDrawable  // 导入渐变绘制类（圆角背景）
 import android.graphics.drawable.StateListDrawable  // 导入状态列表绘制类（按下态背景）
+import android.text.Spannable  // 导入 Spannable 接口（给胶囊文本局部上色）
+import android.text.SpannableString  // 导入可着色文本类
+import android.text.style.ForegroundColorSpan  // 导入前景色区间样式（电量后缀上色）
+import android.os.BatteryManager  // 导入电池管理器（读取手机电量百分比）
 import android.os.Build  // 导入系统版本类
 import android.os.IBinder  // 导入 Binder 接口
 import android.os.Process  // 导入进程类
@@ -216,6 +220,12 @@ class ControllerOverlayService : Service() {  // class=类声明；继承 Servic
         private const val COLOR_MAPPING_ACTIVE = 0xFF2196F3.toInt()  // const val=编译期常量；按键映射列表项高亮色（蓝色）
         /** 手柄电量文本颜色（浅绿色，区别于层名与操作集颜色） */
         private const val COLOR_BATTERY_TEXT = 0xFF8BC34A.toInt()  // const val=编译期常量；电量文本颜色
+        /** 手机电量充足（≥50%）颜色：绿色 */
+        private const val COLOR_BATTERY_HIGH = 0xFF8BC34A.toInt()  // const val=编译期常量；电量充足颜色
+        /** 手机电量偏低（20%~49%）颜色：橙色 */
+        private const val COLOR_BATTERY_MID = 0xFFFFB74D.toInt()  // const val=编译期常量；电量偏低颜色
+        /** 手机电量告急（<20%）颜色：红色 */
+        private const val COLOR_BATTERY_LOW = 0xFFEF5350.toInt()  // const val=编译期常量；电量告急颜色
         /** 手柄电量刷新间隔（毫秒）：电量变化缓慢，60 秒刷新一次足够 */
         private const val BATTERY_REFRESH_INTERVAL_MS = 60_000L  // const val=编译期常量；60_000L=Long 字面量（下划线分隔便于阅读）
     }  // 结束 companion object 伴生对象
@@ -275,6 +285,10 @@ class ControllerOverlayService : Service() {  // class=类声明；继承 Servic
      * 未连接手柄（或系统低于 Android 14）时该行隐藏，电量未知时显示"未知"。
      */
     private var batteryText: TextView? = null  // var=可变变量；?=可空类型；手柄电量文本视图
+    /** 手机电量百分比（-1 表示尚未读取到） */
+    private var phoneBatteryPercent: Int = -1  // var=可变变量；手机电量百分比
+    /** 展开面板中的手机电量文本视图 */
+    private var phoneBatteryText: TextView? = null  // ?=可空类型；手机电量文本视图
     private val mainHandler = android.os.Handler(android.os.Looper.getMainLooper())  // val=只读变量；主线程消息处理器，用于跨线程回主线程更新 UI
 
     /**
@@ -1239,11 +1253,17 @@ class ControllerOverlayService : Service() {  // class=类声明；继承 Servic
      */
     private fun unlockMouseFromOverlay() {  // private=私有；fun=函数声明；请求客户端解锁鼠标锁定
         val server = bridgeServer  // val=只读变量；取 TCP 服务器引用
-        if (server == null) {  // if 判断：服务器未创建（服务异常）
+        // 锁定状态在 Windows 客户端本地维护，必须经 TCP 通知；未连接时明确提示，
+        // 否则用户只会看到「点了没反应」（悬浮窗圆点为橙色也代表客户端未连接）
+        if (server == null || !server.hasClients()) {  // if 判断：服务器不存在或无客户端连接
             toast("客户端未连接，无法解锁")  // 提示无法解锁
             return  // 提前返回
         }  // 结束 if 块
         server.sendUnlockMouse()  // 发送解锁报文（客户端侧立即松开左右键锁存并延时居中）
+        // 边框高亮只跟随客户端上报的锁存状态；解锁报文发出后立即恢复普通边框，
+        // 否则会出现「按钮已经解锁生效，边框却仍是红色高亮」的不一致
+        lockedMouseToggles.clear()  // 清空本地锁存集合
+        applyOverlayBorderColor(COLOR_OVERLAY_BORDER_NORMAL)  // 恢复普通态边框颜色
         Log.i(TAG, "Unlock mouse requested from overlay")  // 打印解锁请求日志
     }  // 结束 unlockMouseFromOverlay 函数
 
@@ -1588,6 +1608,7 @@ class ControllerOverlayService : Service() {  // class=类声明；继承 Servic
                     Log.i(TAG, "Capture UI resync: isCapturing=$isCapturing")  // 打印自愈日志
                     updateCaptureButtonState()  // 重新刷新按钮/胶囊
                 }  // 结束 if 块
+                refreshPhoneBattery()  // 顺带刷新手机电量（收起与展开都要显示）
                 mainHandler.postDelayed(this, controllerMonitorIntervalMs)  // 延迟一个周期后再次轮询（自重复）
             }  // 结束 run 函数
         }  // 结束匿名对象
@@ -1933,6 +1954,32 @@ class ControllerOverlayService : Service() {  // class=类声明；继承 Servic
     }  // 结束 applyBatteryText 函数
 
     /**
+     * 刷新手机电量显示（收起胶囊的后缀 + 展开面板的一行）
+     *
+     * 由手柄状态轮询（每 2 秒）顺带调用，百分比变化时才更新文本，
+     * 避免高频重绘；收起与展开两种形态都显示电量。
+     */
+    private fun refreshPhoneBattery() {  // private=私有；fun=函数声明；刷新手机电量
+        val manager = getSystemService(BATTERY_SERVICE) as? BatteryManager  // 获取电池服务（语法：as? 安全转换）
+        val percent = manager?.getIntProperty(BatteryManager.BATTERY_PROPERTY_CAPACITY) ?: -1  // 读取电量百分比，失败为 -1
+        if (percent == phoneBatteryPercent) return  // 数值未变化，无需刷新
+        // 记录旧颜色档位：数值不变但档位变化（如 50→49）时也要重刷胶囊
+        val oldColor = if (phoneBatteryPercent in 0..100) batteryColor(phoneBatteryPercent) else 0  // 旧档位颜色
+        phoneBatteryPercent = percent  // 记录最新电量百分比
+        val text = if (percent in 0..100) "手机电量: ${percent}%" else ""  // 展开面板显示文本
+        val color = if (percent in 0..100) batteryColor(percent) else COLOR_BATTERY_TEXT  // 按档位取色
+        phoneBatteryText?.post {  // post=向主线程投递更新
+            phoneBatteryText?.text = text  // 更新展开面板电量文本
+            phoneBatteryText?.setTextColor(color)  // 应用分级颜色（绿/橙/红）
+            phoneBatteryText?.visibility = if (text.isEmpty()) View.GONE else View.VISIBLE  // 读不到时隐藏该行
+        }  // 结束 post lambda
+        updateCollapsedViewText(  // 刷新收起胶囊（文本含电量后缀）
+            mapper?.getActiveLayers() ?: emptyList(),  // 激活层列表
+            force = color != oldColor  // 档位变化时强制刷新（纯文本去重会漏掉颜色变化）
+        )  // 结束 updateCollapsedViewText 调用
+    }  // 结束 refreshPhoneBattery 函数
+
+    /**
      * 处理鼠标按钮长按锁存状态变化，刷新悬浮窗边框颜色
      *
      * 左键锁存优先显示绿色，其次右键锁存显示红色，都未锁存恢复普通态。
@@ -2072,7 +2119,7 @@ class ControllerOverlayService : Service() {  // class=类声明；继承 Servic
             .start()  // 启动动画
         isExpanded = false  // 标记收起状态
         // 新胶囊已按当前捕获状态渲染：同步记录，避免后续去重逻辑与视图内容不一致
-        lastCollapsedText = pillText  // 记录胶囊当前文本
+        lastCollapsedText = pillText.toString()  // 记录胶囊当前文本（SpannableString 取纯文本用于去重比较）
         lastUiCapturing = isCapturing  // 记录 UI 已反映的捕获状态
     }  // 结束 showCollapsedNow 函数
 
@@ -2122,12 +2169,12 @@ class ControllerOverlayService : Service() {  // class=类声明；继承 Servic
      * @param activeLayers 激活层名称列表
      * @return 显示文本
      */
-    private fun buildCollapsedText(activeLayers: List<String>): String {  // private=私有；fun=函数声明；构建收起悬浮窗的显示文本
+    private fun buildCollapsedText(activeLayers: List<String>): CharSequence {  // 构建收起悬浮窗的显示文本（电量后缀按电量分级着色）
         // 捕获状态图标（▶捕获中 / ⏸已暂停）：任何连接状态下都显示，收起时也能确认映射是否生效
         val captureIcon = if (isCapturing) "▶" else "⏸"  // val=只读变量；if 表达式；按捕获状态选择图标
         // 手柄未连接时优先提示，避免用户误以为映射未生效是配置问题
         if (!controllerConnected) {  // if=条件判断；手柄未连接时进入分支
-            return "🎮 未连接 $captureIcon"  // 返回"未连接 + 捕获状态图标"提示文本
+            return collapsedTextWithBattery("🎮 未连接 $captureIcon")  // 返回"未连接 + 捕获状态图标 + 电量"提示文本
         }  // 结束 if 分支
         // 优先显示中文/自定义显示名，未匹配到则用内部名
         val displayMap = getLayerDisplayNames().toMap()  // val=只读变量；取层显示名列表并转 Map（键=内部名，值=显示名）
@@ -2136,9 +2183,40 @@ class ControllerOverlayService : Service() {  // class=类声明；继承 Servic
         } else {  // 否则（有激活层）
             displayMap[activeLayers.last()] ?: activeLayers.last()  // 取最上层（最后激活）的显示名；?:=空值合并，无显示名时回退内部名
         }  // 结束 if 表达式
-        // 层名后只追加捕获状态图标
-        return "$layerName $captureIcon"  // return=返回；字符串模板"$var"拼接层名与捕获图标
+        // 层名后只追加捕获状态图标与手机电量
+        return collapsedTextWithBattery("$layerName $captureIcon")  // 层名 + 捕获图标 + 分级着色的电量后缀
     }  // 结束 buildCollapsedText 函数
+
+    /**
+     * 给收起胶囊文本追加电量后缀，并按电量档位着色
+     *
+     * @param base 层名与捕获图标组成的前缀
+     * @return 电量未知时返回原前缀，否则返回带颜色区间的 SpannableString
+     */
+    private fun collapsedTextWithBattery(base: String): CharSequence {  // 语法：CharSequence 可返回 String 或 SpannableString
+        if (phoneBatteryPercent !in 0..100) return base  // 电量未知时直接返回前缀
+        val suffix = " · ${phoneBatteryPercent}%"  // 电量后缀（与层名用中点分隔）
+        val spannable = SpannableString(base + suffix)  // 创建可着色文本
+        spannable.setSpan(  // 给电量后缀区间设置前景色
+            ForegroundColorSpan(batteryColor(phoneBatteryPercent)),  // 按电量档位取色
+            base.length,  // 区间起点：前缀长度
+            base.length + suffix.length,  // 区间终点：整段文本长度
+            Spannable.SPAN_EXCLUSIVE_EXCLUSIVE  // 样式不向外扩展
+        )  // 结束 setSpan
+        return spannable  // 返回带颜色的文本
+    }  // 结束 collapsedTextWithBattery 函数
+
+    /**
+     * 手机电量对应的显示颜色（高/中/低三档）
+     *
+     * @param percent 电量百分比
+     * @return ≥50% 绿色、20%~49% 橙色、<20% 红色
+     */
+    private fun batteryColor(percent: Int): Int = when {  // when{}=按条件选择颜色表达式
+        percent >= 50 -> COLOR_BATTERY_HIGH  // 充足 → 绿色
+        percent >= 20 -> COLOR_BATTERY_MID  // 偏低 → 橙色
+        else -> COLOR_BATTERY_LOW  // 告急 → 红色
+    }  // 结束颜色选择 when
 
     /**
      * 更新收起悬浮窗的层名显示
@@ -2153,8 +2231,8 @@ class ControllerOverlayService : Service() {  // class=类声明；继承 Servic
         // 文本未变时跳过，避免智能暂停/层刷新等周期性调用反复重绘胶囊；
         // 捕获状态切换必须传 force=true：胶囊视图可能刚被重建（lastCollapsedText 与实际
         // 显示内容不一致），去重会吞掉这一次关键更新，导致状态显示滞后
-        if (!force && text == lastCollapsedText) return  // 内容相同直接返回
-        lastCollapsedText = text  // 记录本次文本
+        if (!force && text.toString() == lastCollapsedText) return  // 内容相同直接返回（电量档位变化时调用方会传 force）
+        lastCollapsedText = text.toString()  // 记录本次文本（取纯文本用于去重比较）
         collapsedTextView?.post {  // ?.=安全调用（控件可能为空）；post=向主线程消息队列投递 lambda，在 UI 线程更新文本
             collapsedTextView?.text = text  // ?.=安全调用；设置收起胶囊文本
         }  // 结束 post lambda
@@ -2267,6 +2345,17 @@ class ControllerOverlayService : Service() {  // class=类声明；继承 Servic
         }  // 结束 apply lambda
         container.addView(batteryText)  // 把电量文本加入容器
         refreshBatteryText()  // 展开面板后立即后台读取一次电量
+
+        // 手机电量（展开状态下同样显示，与收起胶囊的电量后缀同源）
+        phoneBatteryText = TextView(this).apply {  // apply=作用域函数；创建手机电量文本控件
+            text = if (phoneBatteryPercent in 0..100) "手机电量: ${phoneBatteryPercent}%" else ""  // 已有数值时直接显示
+            setTextColor(if (phoneBatteryPercent in 0..100) batteryColor(phoneBatteryPercent) else COLOR_BATTERY_TEXT)  // 首次按电量档位上色
+            textSize = 11f  // 设置字号 11sp
+            setPadding(0, 0, 0, dp(2))  // 设置底部内边距 2dp
+            visibility = if (phoneBatteryPercent in 0..100) View.VISIBLE else View.GONE  // 无数据时隐藏该行
+        }  // 结束 apply lambda
+        container.addView(phoneBatteryText)  // 把手机电量文本加入容器
+        refreshPhoneBattery()  // 展开面板后立即刷新一次
 
         // 操作层堆栈
         layerText = TextView(this).apply {  // apply=作用域函数；创建操作层堆栈文本控件并赋值给成员字段

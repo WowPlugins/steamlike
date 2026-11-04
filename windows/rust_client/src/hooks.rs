@@ -35,7 +35,7 @@ const WM_APP_UNINSTALL: u32 = 0x8002;
 const WM_APP_QUIT: u32 = 0x8003;
 
 /* ===== 动作线程指令 ===== */
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone)]
 enum Cmd {
     /// 交互键按下
     Interact,
@@ -47,6 +47,8 @@ enum Cmd {
     SwapTimeout,
     /// 解除鼠标长按锁定后的延时居中（钩子回调里不能阻塞，故交给动作线程延时执行）
     UnlockCenter,
+    /// 解锁锁定 → 延时居中 → 发送原始按键（可带子命令组合键）
+    UnlockKey(u16, Vec<u32>),
     /// 仅用于记录日志：钩子回调内不能加锁，日志改由动作线程打印
     Note(&'static str),
     /// 映射按键按下（含短按和长按判定）
@@ -127,6 +129,21 @@ fn do_swap() {
     }
 }
 
+/// 解锁锁定 → 延时居中 → 发送原始按键（在动作线程执行，可安全阻塞）
+///
+/// 顺序固定：先松开左右键让游戏退出 mouselook → 等游戏处理完 → 光标居中 → 按键。
+pub fn do_unlock_key(vk: u16, sub_commands: &[u32]) {
+    win::inject_mouse_button(BTN_LEFT, false);
+    win::inject_mouse_button(BTN_RIGHT, false);
+    RT.left_locked.store(false, Ordering::Relaxed);
+    RT.right_locked.store(false, Ordering::Relaxed);
+    std::thread::sleep(Duration::from_millis(UNLOCK_CENTER_DELAY_MS));
+    win::center_cursor();
+    if vk != 0 {
+        execute_keyboard_key(vk, sub_commands);
+    }
+}
+
 /// APK 悬浮窗「解锁鼠标」按钮触发：解除左右键的长按锁定
 ///
 /// 由网络线程在收到 0x26 报文时调用。解锁立即发出（让游戏尽快退出 mouselook），
@@ -134,14 +151,17 @@ fn do_swap() {
 pub fn unlock_from_apk() {
     let left_locked = RT.left_locked.load(Ordering::Relaxed);
     let right_locked = RT.right_locked.load(Ordering::Relaxed);
-    if !left_locked && !right_locked {
-        log("[锁存] APK 请求解锁：当前未锁定，忽略");
-        return;
-    }
-    set_lock(BTN_LEFT, false);
-    set_lock(BTN_RIGHT, false);
+    // 不信任锁存标志：游戏可能自行放开了右键（标志与实际按键状态不一致），
+    // 这里无条件补发松开事件，保证一定能退出 mouselook
+    win::inject_mouse_button(BTN_LEFT, false);
+    win::inject_mouse_button(BTN_RIGHT, false);
+    RT.left_locked.store(false, Ordering::Relaxed);
+    RT.right_locked.store(false, Ordering::Relaxed);
     queue_cmd(Cmd::UnlockCenter);
-    log("[锁存] APK 请求解锁：已解除鼠标锁定");
+    log(format!(
+        "[锁存] APK 请求解锁：已松开左右键（原状态 左={} 右={}）",
+        left_locked, right_locked
+    ));
 }
 
 /// 交互键触发：
@@ -191,6 +211,11 @@ fn release_all_owned() {
 
 /* ===== 钩子回调 ===== */
 
+/// 当前键鼠输入事件计数（自动启动延时内对比该值判断用户是否操作过）
+pub fn input_seq() -> u64 {
+    RT.input_seq.load(Ordering::Relaxed)
+}
+
 unsafe extern "system" fn keyboard_proc(ncode: i32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
     if ncode < 0 {
         return CallNextHookEx(HHOOK(0), ncode, wparam, lparam);
@@ -201,6 +226,9 @@ unsafe extern "system" fn keyboard_proc(ncode: i32, wparam: WPARAM, lparam: LPAR
     if kb.dwExtraInfo == MAGIC {
         return CallNextHookEx(HHOOK(0), ncode, wparam, lparam);
     }
+    // 真实键鼠输入计数：用于「自动启动延时内是否有输入」判断，
+    // 不依赖 GetLastInputInfo（Wine/Winlator 下其时间基准可能与 GetTickCount 不同，会恒定误报）
+    RT.input_seq.fetch_add(1, Ordering::Relaxed);
     if !RT.intercept_enabled.load(Ordering::Relaxed) {
         return CallNextHookEx(HHOOK(0), ncode, wparam, lparam);
     }
@@ -278,6 +306,8 @@ unsafe extern "system" fn mouse_proc(ncode: i32, wparam: WPARAM, lparam: LPARAM)
         }
         return CallNextHookEx(HHOOK(0), ncode, wparam, lparam);
     }
+    // 真实键鼠输入计数（同键盘钩子：供自动启动前的输入检测使用）
+    RT.input_seq.fetch_add(1, Ordering::Relaxed);
     if !RT.intercept_enabled.load(Ordering::Relaxed) {
         return CallNextHookEx(HHOOK(0), ncode, wparam, lparam);
     }
@@ -374,14 +404,14 @@ fn action_thread(rx: Receiver<Cmd>) {
                 let threshold = Duration::from_millis(RT.long_press_ms.load(Ordering::Relaxed) as u64);
                 let deadline = t0 + threshold;
                 if deadline > Instant::now() {
-                    if next_timeout.map_or(true, |(t, _)| deadline < t) {
+                    if next_timeout.as_ref().map_or(true, |(t, _)| deadline < *t) {
                         next_timeout = Some((deadline, Cmd::MappingLongPress(vk)));
                     }
                 }
             }
         }
 
-        let cmd = match next_timeout {
+        let cmd = match next_timeout.take() {
             None => match rx.recv() {
                 Ok(c) => c,
                 Err(_) => break,
@@ -419,6 +449,7 @@ fn action_thread(rx: Receiver<Cmd>) {
                 }
             }
             Cmd::Interact => do_interact(),
+            Cmd::UnlockKey(vk, subs) => do_unlock_key(vk, &subs),
             Cmd::UnlockCenter => {
                 // 解锁已由钩子回调立即发出，这里等游戏处理完退出 mouselook 再把光标放到屏幕正中央
                 std::thread::sleep(Duration::from_millis(UNLOCK_CENTER_DELAY_MS));
@@ -503,6 +534,12 @@ fn execute_mapping(source_vk: u32, is_long_press: bool) {
         }
         crate::config::MappedAction::Interact => {
             do_interact();
+        }
+        crate::config::MappedAction::UnlockKey {
+            key_code,
+            sub_commands,
+        } => {
+            queue_cmd(Cmd::UnlockKey(*key_code as u16, sub_commands.clone()));
         }
         crate::config::MappedAction::OverlayToggle => {
             let expanded = RT.overlay_expanded.load(Ordering::Relaxed);

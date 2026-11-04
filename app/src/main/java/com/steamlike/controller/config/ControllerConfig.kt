@@ -381,6 +381,10 @@ object ControllerConfig { // 单例对象：配置的 JSON 序列化/反序列�
             is MappedAction.ToggleCapture -> { // 切换捕获类型
                 json.put("type", "toggleCapture") // 写入类型标识
             } // 结束切换捕获分支
+            is MappedAction.UnlockThenKey -> { // 解锁+居中+按键类型
+                json.put("type", "unlockThenKey") // 写入类型标识
+                json.put("keyCode", action.keyCode) // 写入解锁后要发送的按键码
+            } // 结束解锁+居中+按键分支
         } // 结束 when 表达式
         return json // 返回 JSON 对象
     } // 结束 actionToJson 函数
@@ -429,6 +433,10 @@ object ControllerConfig { // 单例对象：配置的 JSON 序列化/反序列�
             "toggleKeyboard" -> MappedAction.ToggleKeyboard // 切换键盘：直接返回单例对象
             "toggleKeyboardEnter" -> MappedAction.ToggleKeyboardEnter // 回车+切换键盘：直接返回单例对象
             "toggleCapture" -> MappedAction.ToggleCapture // 切换捕获：直接返回单例对象
+            "unlockThenKey" -> { // 解锁+居中+按键类型
+                val keyCode = json.getInt("keyCode") // 读取解锁后要发送的按键码
+                MappedAction.UnlockThenKey(keyCode) // 构造解锁+居中+按键动作
+            } // 结束解锁+居中+按键分支
             else -> null // 未知类型返回 null
         } // 结束 when 表达式
     } // 结束 parseAction 函数

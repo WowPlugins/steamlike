@@ -780,10 +780,10 @@ class LayerEditActivity : AppCompatActivity() { // 定义操作层编辑 Activit
         // ===== 设置动作类型 Spinner =====
         // 0=未设置(取消映射), 1=键盘按键, 2=鼠标点击, 3=鼠标长按, 4=切换操作层,
         // 5=滚轮上滚, 6=滚轮下滚, 7=切换悬浮窗, 8=切换键盘, 9=切换捕获, 10=切换层+按键, 11=数字小键盘, 12=鼠标长按交换,
-        // 13=释放鼠标长按, 14=交互键, 15=鼠标精细移动, 16=回车+切换键盘
+        // 13=释放鼠标长按, 14=交互键, 15=鼠标精细移动, 16=回车+切换键盘, 17=解锁+居中+按键
         val actionTypes = listOf("未设置", "键盘按键", "鼠标点击", "鼠标长按", "切换操作层", // 定义动作类型选项列表（语法：listOf=列表工厂）
             "滚轮上滚", "滚轮下滚", "切换悬浮窗", "切换键盘", "切换捕获", "切换层+按键", "数字小键盘", "鼠标长按交换", "释放鼠标长按", "交互键", // 动作类型列表续行
-            "鼠标精细移动", "回车+切换键盘") // 动作类型列表续行（共 17 种）
+            "鼠标精细移动", "回车+切换键盘", "解锁+居中+按键") // 动作类型列表续行（共 18 种）
         // 设置动作类型下拉框的适配器（语法：ArrayAdapter=数组适配器，also{}=作用域函数）
         spinnerActionType.adapter = ArrayAdapter(this, android.R.layout.simple_spinner_item, actionTypes).also {
             it.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item) // 设置下拉展开项的布局资源
@@ -797,7 +797,7 @@ class LayerEditActivity : AppCompatActivity() { // 定义操作层编辑 Activit
 
         // ===== 长按动作类型 Spinner =====
         // 长按可选类型：排除「切换操作层」「切层+按键」（层切换按键保持原有「按住即切层」语义）
-        val longPressTypeIndices = listOf(0, 1, 2, 3, 5, 6, 7, 8, 9, 11, 12, 13, 14, 15, 16) // 长按可选动作类型索引列表（语法：listOf 列表）；含精细移动(15)：长按达到阈值进入，松开退出
+        val longPressTypeIndices = listOf(0, 1, 2, 3, 5, 6, 7, 8, 9, 11, 12, 13, 14, 15, 16, 17) // 长按可选动作类型索引列表（语法：listOf 列表）；含精细移动(15)、解锁+居中+按键(17)
         spinnerLongPressType.adapter = ArrayAdapter(this, android.R.layout.simple_spinner_item, // 设置长按类型下拉框适配器
             longPressTypeIndices.map { actionTypes[it] }).also { // 用可选项索引映射出显示名（语法：map lambda）
             it.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item) // 设置下拉展开项的布局资源
@@ -847,6 +847,10 @@ class LayerEditActivity : AppCompatActivity() { // 定义操作层编辑 Activit
                     val pos = numpadKeyOptions.indexOfFirst { it.second == action.keyCode } // 查找与小键盘键码匹配的选项下标
                     if (pos >= 0) valueSpinner.setSelection(pos) // 找到则设置动作值下拉框选中项
                 } // 结束数字小键盘分支
+                is MappedAction.UnlockThenKey -> { // 若为解锁+居中+按键动作
+                    val pos = keyboardKeyOptions.indexOfFirst { it.second == action.keyCode } // 查找与按键码匹配的选项下标
+                    if (pos >= 0) valueSpinner.setSelection(pos) // 找到则设置动作值下拉框选中项
+                } // 结束解锁+居中+按键分支
                 else -> {} // 其它类型无需设置动作值
             } // 结束恢复定位 when 块
         } // 结束 restoreValueSelectionFor 局部函数
@@ -877,6 +881,7 @@ class LayerEditActivity : AppCompatActivity() { // 定义操作层编辑 Activit
             is MappedAction.ToggleOverlay -> position == 7 // 切换悬浮窗 → 类型 7
             is MappedAction.ToggleKeyboard -> position == 8 // 切换键盘 → 类型 8
             is MappedAction.ToggleKeyboardEnter -> position == 16 // 回车+切换键盘 → 类型 16
+            is MappedAction.UnlockThenKey -> position == 17 // 解锁+居中+按键 → 类型 17
             is MappedAction.ToggleCapture -> position == 9 // 切换捕获 → 类型 9
             is MappedAction.MouseMove, is MappedAction.LookAround -> position == 0 // 摇杆专用 → 未设置(0)
             null -> position == 0 // 未映射 → 未设置(0)
@@ -921,7 +926,7 @@ class LayerEditActivity : AppCompatActivity() { // 定义操作层编辑 Activit
                 initialActionType == 9 || initialActionType == 12 || // 或为切换捕获(9)、鼠标长按交换(12)
                 initialActionType == 13 || initialActionType == 14 || // 或为释放鼠标长按(13)、交互键(14)
                 initialActionType == 15 || // 或为鼠标精细移动(15)
-                initialActionType == 16) // 或为回车+切换键盘(16)
+                initialActionType == 16) // 或为回车+切换键盘(16)；解锁+居中+按键(17) 需要子命令，故不隐藏
                 View.GONE else View.VISIBLE // 上述类型隐藏子命令区，否则显示（语法：if...else 表达式，View.GONE=隐藏且不占位）
 
         // 额外按键区域仅「切换层+按键」类型显示
@@ -939,7 +944,7 @@ class LayerEditActivity : AppCompatActivity() { // 定义操作层编辑 Activit
                         position == 7 || position == 8 || position == 9 || position == 12 || // 或为切换悬浮窗/键盘/捕获/鼠标长按交换
                         position == 13 || position == 14 || // 或为释放鼠标长按(13)、交互键(14)
                         position == 15 || // 或为鼠标精细移动(15)
-                        position == 16) // 或为回车+切换键盘(16)
+                        position == 16) // 或为回车+切换键盘(16)；解锁+居中+按键(17) 需要子命令，故不隐藏
                         View.GONE else View.VISIBLE // 隐藏子命令区，否则显示
                 // 额外按键区域仅「切换层+按键」类型显示
                 layoutExtraKey.visibility = if (position == 10) View.VISIBLE else View.GONE // 仅切层+按键类型显示附加按键区
@@ -1668,6 +1673,7 @@ class LayerEditActivity : AppCompatActivity() { // 定义操作层编辑 Activit
         is MappedAction.MouseReleaseAll -> 13 // 释放鼠标长按 → 类型 13
         is MappedAction.MouseClickSequence -> 14 // 交互键 → 类型 14
         is MappedAction.MouseFineMove -> 15 // 鼠标精细移动 → 类型 15
+        is MappedAction.UnlockThenKey -> 17 // 解锁+居中+按键 → 类型 17
         is MappedAction.MouseMove, is MappedAction.LookAround -> 0 // 摇杆专用 → 未设置（语法：多类型分支）
         null -> 0 // 未映射 → 未设置
     } // 结束 when 表达式
@@ -1756,6 +1762,10 @@ class LayerEditActivity : AppCompatActivity() { // 定义操作层编辑 Activit
                 label.text = "按住时右摇杆精细移动（松开恢复正常速度）" // 更新动作标签文字
                 listOf("（鼠标精细移动）") // 返回占位选项
             } // 结束鼠标精细移动分支
+            17 -> {  // 解锁+居中+按键 // 解锁鼠标锁定后居中并发送指定按键
+                label.text = "选择要发送的按键:" // 更新动作标签文字
+                keyboardKeyOptions.map { it.first } // 返回所有键盘按键显示名
+            } // 结束解锁+居中+按键分支
             else -> emptyList() // 其它类型返回空列表（语法：else=默认分支）
         } // 结束选项列表 when 表达式
 
@@ -1804,6 +1814,7 @@ class LayerEditActivity : AppCompatActivity() { // 定义操作层编辑 Activit
             13 -> MappedAction.MouseClickSequence // 交互键动作：临时释放锁存后左右键依次点击
             14 -> MappedAction.MouseFineMove // 鼠标精细移动动作：按住期间缩小右摇杆位移
             15 -> MappedAction.ToggleKeyboardEnter // 回车+切换键盘动作：先发回车再切换软键盘
+            16 -> MappedAction.UnlockThenKey(keyboardKeyOptions[valuePosition].second) // 解锁+居中+按键（列表位置 17 → 此处索引 16）
             4 -> MappedAction.MouseScrollUp   // 滚轮上滚 // 滚轮上滚动作
             5 -> MappedAction.MouseScrollDown  // 滚轮下滚 // 滚轮下滚动作
             6 -> MappedAction.ToggleOverlay   // 切换悬浮窗 // 切换悬浮窗动作

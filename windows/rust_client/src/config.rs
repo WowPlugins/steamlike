@@ -127,6 +127,11 @@ pub enum MappedAction {
     ShowKeyboard,
     /// 先发送回车，再切换安卓软键盘显示/隐藏
     ToggleKeyboardEnter,
+    /// 解锁鼠标锁定 → 光标居中 → 发送原始按键（按键与子命令均可任意配置）
+    UnlockKey {
+        key_code: u32,
+        sub_commands: Vec<u32>,
+    },
 }
 
 impl Default for MappedAction {
@@ -190,6 +195,21 @@ impl MappedAction {
             Self::OverlayToggle => "悬浮窗展开/收起".to_string(),
             Self::ShowKeyboard => "显示安卓键盘".to_string(),
             Self::ToggleKeyboardEnter => "回车+切换键盘".to_string(),
+            Self::UnlockKey {
+                key_code,
+                sub_commands,
+            } => {
+                let main = crate::ui::key_name(*key_code);
+                if sub_commands.is_empty() {
+                    format!("解锁+居中+{}", main)
+                } else {
+                    let subs: Vec<String> = sub_commands
+                        .iter()
+                        .map(|&c| crate::ui::key_name(c))
+                        .collect();
+                    format!("解锁+居中+{} + {}", main, subs.join(" + "))
+                }
+            }
         }
     }
 }

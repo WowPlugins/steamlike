@@ -63,11 +63,13 @@ fn main() -> eframe::Result<()> {
         let _ = std::thread::Builder::new()
             .name("auto_launch".to_string())
             .spawn(move || {
-                let baseline = win::current_tick();
+                // 基线用钩子侧的输入计数，而不是 GetLastInputInfo：
+                // Wine/Winlator 下该 API 的时间基准可能与 GetTickCount 不同，导致恒判为「有输入」
+                let baseline = hooks::input_seq();
                 std::thread::sleep(std::time::Duration::from_millis(
                     launch_cfg.auto_launch_delay_ms as u64,
                 ));
-                if launch_cfg.skip_launch_on_input && win::input_since(baseline) {
+                if launch_cfg.skip_launch_on_input && hooks::input_seq() != baseline {
                     runtime::log("自动启动等待期间检测到键鼠输入，本次不启动魔兽");
                     return;
                 }
@@ -76,10 +78,14 @@ fn main() -> eframe::Result<()> {
     }
 
     let options = eframe::NativeOptions {
-        // 浮动控制面板形态：无边框、置顶、透明（圆点状态下只显示圆）
+        // 浮动控制面板形态：无边框、置顶（圆点状态下靠 SetWindowRgn 裁成圆形）
         decorated: false,
         always_on_top: true,
-        transparent: true,
+        // 不能用 transparent：Windows 的 layered window 会忽略 SetWindowRgn，
+        // PC 上靠 DWM 的 alpha 合成掩盖了这一点，而 Winlator/Wine 没有合成器，
+        // 圆点四角就会露出 clear_color 的底色。改用普通窗口 + 窗口区域裁剪，
+        // 真实 Windows 与 Wine 都能把圆点四角裁掉。
+        transparent: false,
         // 启动总是显示完整主界面；实际尺寸会在首帧按屏幕高度自适应收敛
         initial_window_size: Some(egui::vec2(600.0, 560.0)),
         ..Default::default()

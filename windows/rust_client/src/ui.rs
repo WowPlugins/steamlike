@@ -421,6 +421,10 @@ impl eframe::App for App {
         if self.last_topmost_at.elapsed() >= Duration::from_secs(1) {
             self.last_topmost_at = std::time::Instant::now();
             crate::win::set_topmost(&title);
+            // Wine/Winlator 在置顶或窗口重排时会丢失窗口区域（shape），
+            // 表现为收起圆点四角重新露出底色（绿/橙色方块）。这里跟随置顶周期性重建区域，
+            // PC 上重复设置同一区域开销可忽略，Winlator 下也能在一秒内恢复圆形裁剪。
+            crate::win::round_own_window(&title, radius);
             // 同步窗口位置到配置：拖动后退出，下次仍按同样位置启动
             if let Some((x, y)) = crate::win::own_window_pos(&title) {
                 if self.cfg.window_x != Some(x) || self.cfg.window_y != Some(y) {
@@ -1022,6 +1026,14 @@ impl App {
                 self.edit_tap_value = 0;
                 self.edit_tap_subs.clear();
             }
+            crate::config::MappedAction::UnlockKey {
+                key_code,
+                sub_commands,
+            } => {
+                self.edit_tap_type = 13;
+                self.edit_tap_value = *key_code;
+                self.edit_tap_subs = sub_commands.clone();
+            }
             _ => {
                 self.edit_tap_type = 0;
                 self.edit_tap_value = 0;
@@ -1086,6 +1098,14 @@ impl App {
                 self.edit_long_press_value = 0;
                 self.edit_long_press_subs.clear();
             }
+            crate::config::MappedAction::UnlockKey {
+                key_code,
+                sub_commands,
+            } => {
+                self.edit_long_press_type = 13;
+                self.edit_long_press_value = *key_code;
+                self.edit_long_press_subs = sub_commands.clone();
+            }
             crate::config::MappedAction::ToggleKeyboardEnter => {
                 self.edit_long_press_type = 11;
                 self.edit_long_press_value = 0;
@@ -1142,6 +1162,10 @@ impl App {
             10 => crate::config::MappedAction::OverlayToggle,
             11 => crate::config::MappedAction::ToggleKeyboardEnter,
             12 => crate::config::MappedAction::ShowKeyboard,
+            13 => crate::config::MappedAction::UnlockKey {
+                key_code: value,
+                sub_commands: subs.to_vec(),
+            },
             _ => crate::config::MappedAction::None,
         }
     }
@@ -1154,6 +1178,7 @@ impl App {
             "未设置", "键盘按键", "数字小键盘", "鼠标点击", "鼠标长按",
             "滚轮上滚", "滚轮下滚", "鼠标长按交换", "释放鼠标长按",
             "交互键", "悬浮窗展开/收起", "回车+切换键盘", "显示安卓键盘",
+            "解锁+居中+按键",
         ];
         // 长按与短按支持完全相同的动作类型
         let long_press_types = action_types;
@@ -1371,6 +1396,13 @@ impl App {
                     });
                 });
                 Self::render_sub_commands_editor(ui, subs, id_prefix);
+            }
+            13 => {
+                // 解锁+居中+按键：按键本身 + 子命令组合键（与键盘按键使用同一个编辑器）
+                ui.horizontal(|ui| {
+                    ui.label("按键:");
+                    Self::render_key_picker(ui, value, subs, id_prefix);
+                });
             }
             3 | 4 => {
                 // 鼠标点击 / 鼠标长按
