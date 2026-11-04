@@ -124,6 +124,8 @@ class InputBridgeServer(  // 语法：class 声明类；InputBridge TCP 服务�
         const val MSG_CLIPBOARD_TEXT: Byte = 0x21  // 消息类型：剪贴板文本（8 字节头 + 变长正文，客户端 → APK）
         const val MSG_UNICODE_TEXT: Byte = 0x22  // 消息类型：Unicode 文本注入（8 字节头 + UTF-8 正文，APK → 客户端）
         const val MSG_TOGGLE_KEYBOARD: Byte = 0x23  // 消息类型：切换安卓键盘（客户端 → APK，无载荷，用于 Rust 映射反向通知）
+        const val MSG_SHOW_KEYBOARD: Byte = 0x25  // 消息类型：显示安卓键盘（客户端 → APK，无载荷，仅弹出不收起）
+        const val MSG_UNLOCK_MOUSE: Byte = 0x26  // 消息类型：解锁鼠标锁定（APK → 客户端，无载荷，解除左右键长按锁定）
 
         const val PACKET_SIZE = 8  // 语法：const val 编译期常量；协议数据包固定长度 8 字节
         const val MAX_CLIPBOARD_BYTES = 1 shl 20  // 单个剪贴板文本正文上限（1 MB，防御异常数据）
@@ -141,6 +143,7 @@ class InputBridgeServer(  // 语法：class 声明类；InputBridge TCP 服务�
     var onClientVersionMismatch: ((String) -> Unit)? = null  // 语法：var + lambda 类型 + ?可空；客户端 exe 版本与 APK 期望不一致回调
     var onClipboardText: ((String) -> Unit)? = null  // 语法：var + lambda 类型 + ?可空；收到 Windows 客户端剪贴板文本回调
     var onToggleKeyboardRequest: (() -> Unit)? = null  // 语法：var + lambda 类型 + ?可空；收到 Windows 客户端「切换键盘」反向通知回调
+    var onShowKeyboardRequest: (() -> Unit)? = null  // 语法：var + lambda 类型 + ?可空；收到 Windows 客户端「显示键盘」反向通知回调
 
     /**
      * 启动TCP服务器
@@ -316,13 +319,25 @@ class InputBridgeServer(  // 语法：class 声明类；InputBridge TCP 服务�
     }  // 结束 sendCursorRestore 函数
 
     /**
-     * 发送释放所有按键事件
+     * 发送「释放所有按键事件」
      */
     fun sendReleaseAll() {  // 语法：fun 函数；发送释放所有按键事件
         val packet = ByteArray(PACKET_SIZE)  // 语法：val + ByteArray；创建 8 字节数据包
         packet[0] = MSG_RELEASE_ALL  // 写入消息类型：释放所有
         enqueue(packet)  // 加入发送队列
     }  // 结束 sendReleaseAll 函数
+
+    /**
+     * 发送「解锁鼠标锁定」事件（悬浮窗「解锁右键」按钮）
+     *
+     * 左右键长按锁定由 Windows 客户端维护（WASD 自动锁右键 / 长按交换键换锁），
+     * APK 侧无法直接解除，只能发这条通知让客户端松开锁定的按钮并延时居中。
+     */
+    fun sendUnlockMouse() {  // 语法：fun 函数；发送解锁鼠标锁定事件
+        val packet = ByteArray(PACKET_SIZE)  // 语法：val + ByteArray；创建 8 字节数据包
+        packet[0] = MSG_UNLOCK_MOUSE  // 写入消息类型：解锁鼠标锁定
+        enqueue(packet)  // 加入发送队列
+    }  // 结束 sendUnlockMouse 函数
 
     /**
      * 发送心跳包
@@ -516,6 +531,10 @@ class InputBridgeServer(  // 语法：class 声明类；InputBridge TCP 服务�
      */
     private fun handleClientPacket(packet: ByteArray) {  // 语法：private fun 私有函数；处理客户端上报的数据包
         // 反向通知：切换安卓键盘（Rust 侧映射触发时投递，无需手柄连接，走 TCP 连接即可）
+        if (packet[0] == MSG_SHOW_KEYBOARD) {  // 显示键盘包
+            onShowKeyboardRequest?.invoke()  // 通知外部弹出软键盘（由回调切回主线程执行）
+            return  // 该包无其它载荷
+        }  // 结束显示键盘分支
         if (packet[0] == MSG_TOGGLE_KEYBOARD) {  // 切换键盘包
             onToggleKeyboardRequest?.invoke()  // 通知外部切换软键盘（由回调切回主线程执行）
             return  // 该包无其它载荷

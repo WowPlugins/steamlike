@@ -327,8 +327,12 @@ class GamepadInputView(context: Context) : View(context) {  // 语法：class �
                             injectedText = ""  // 光标后删除：后续内容无法精确跟踪，清空记录
                         }  // 结束 KEYCODE_FORWARD_DEL 分支
                         else -> {  // 语法：else 兜底分支
-                            if (event.keyCode in CONTROL_KEY_CODES) onImeKey?.invoke(event)  // 语法：in 成员判断；控制键经按键事件通道转发
-                            else Log.d(TAG, "sendKeyEvent drop printable key=${event.keyCode} " +  // 语法：else + 字符串模板拼接；可打印键丢弃并打印日志
+                            if (event.keyCode in CONTROL_KEY_CODES) {  // 语法：in 成员判断；控制键经按键事件通道转发
+                                onImeKey?.invoke(event)  // 控制键经按键事件通道转发
+                                // 部分输入法把「发送/回车」以按键事件下发（而不是编辑器动作），
+                                // 这里在转发后同样收起键盘，保证与 performEditorAction 路径行为一致
+                                if (event.keyCode == KeyEvent.KEYCODE_ENTER) onImeActionSent?.invoke()  // 回车后收起键盘
+                            } else Log.d(TAG, "sendKeyEvent drop printable key=${event.keyCode} " +  // 语法：else + 字符串模板拼接；可打印键丢弃并打印日志
                                 "char=${event.unicodeChar}")  // 日志续行：附带字符编码
                         }  // 结束 else 分支
                     }  // 结束 when 分支

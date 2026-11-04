@@ -9,7 +9,6 @@ import android.content.Context // 导入 Context 上下文
 import android.content.Intent // 导入 Intent，组件跳转/通信
 import android.content.IntentFilter // 导入 IntentFilter，广播过滤器
 import android.content.pm.PackageManager // 导入 PackageManager，权限检查常量
-import android.media.projection.MediaProjectionManager // 导入 MediaProjectionManager，创建截屏授权请求
 import android.net.Uri // 导入 Uri 统一资源标识符
 import android.os.Build // 导入 Build，判断系统版本
 import android.os.Bundle // 导入 Bundle，Activity 状态传递
@@ -122,29 +121,6 @@ class MainActivity : AppCompatActivity() { // 声明主界面 Activity，继承 
             sendConfigIntent(ControllerOverlayService.ACTION_IMPORT_CONFIG, uri) // 发送导入配置 Intent 给服务
         } // 结束 uri 非空判断
     } // 结束打开文档回调 lambda
-
-    /**
-     * 截屏授权启动器（用于聊天框信标检测）
-     *
-     * 每次进程重启后都需要重新授权截屏。授权结果通过服务 Intent 转交，
-     * 由服务创建 MediaProjection 会话扫描右上角信标。
-     */
-    private val projectionLauncher = registerForActivityResult( // 注册截屏授权启动器（语法：val 只读变量 + 回调注册）
-        ActivityResultContracts.StartActivityForResult() // 通用启动契约
-    ) { result -> // 回调 lambda，接收授权结果
-        val data = result.data // 授权数据（含截屏令牌）
-        if (result.resultCode != RESULT_OK || data == null) { // 用户取消授权
-            toastLog("已取消聊天框检测授权") // 提示
-            return@registerForActivityResult // 结束回调（语法：带标签的 return）
-        } // 结束取消判断
-        ensureServiceRunning() // 确保映射服务已启动
-        val intent = Intent(this@MainActivity, ControllerOverlayService::class.java) // 构建服务 Intent
-        intent.action = ControllerOverlayService.ACTION_SET_PROJECTION // 设置动作：设置截屏授权
-        intent.putExtra(ControllerOverlayService.EXTRA_PROJECTION_RESULT_CODE, result.resultCode) // 结果码
-        intent.putExtra(ControllerOverlayService.EXTRA_PROJECTION_DATA, data) // 授权数据
-        ContextCompat.startForegroundService(this@MainActivity, intent) // 转交服务处理
-        toastLog("聊天框检测已启用（需 WoW 插件 ChatStateBeacon）") // 提示
-    } // 结束截屏授权回调
 
     override fun onCreate(savedInstanceState: Bundle?) { // 覆写 Activity 创建回调（语法：override 覆写 + fun 函数声明）
         super.onCreate(savedInstanceState) // 调用父类创建逻辑（语法：super 调用父类）
@@ -412,13 +388,6 @@ class MainActivity : AppCompatActivity() { // 声明主界面 Activity，继承 
             // 延迟刷新UI
             configStatusText.postDelayed({ updateConfigStatus() }, 1000) // 延迟 1 秒刷新配置状态（语法：lambda 回调 + postDelayed）
         }, UiKit.Style.DANGER)) // 按钮使用危险色调样式
-        configCard.addView(UiKit.spacer(this, 6)) // 添加 6dp 间距
-
-        // 启用聊天框检测按钮（截屏授权后按 WoW 聊天框状态同步安卓键盘）
-        configCard.addView(UiKit.button(this, "启用聊天框检测（截屏授权）", { // 创建按钮（语法：lambda 点击回调）
-            val manager = getSystemService(Context.MEDIA_PROJECTION_SERVICE) as MediaProjectionManager // 截屏管理器
-            projectionLauncher.launch(manager.createScreenCaptureIntent()) // 弹出系统截屏授权对话框
-        })) // 结束按钮回调
         configCard.addView(UiKit.spacer(this, 6)) // 添加 6dp 间距
 
         // 操作层设置按钮（不启动手柄映射服务；LayerEditActivity 直接读写配置文件）

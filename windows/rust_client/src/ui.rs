@@ -370,10 +370,14 @@ impl eframe::App for App {
         }
 
         // 面板状态 → 目标窗口尺寸（状态切换时调整窗口大小）
+        // 完整编辑面板高度按实际屏幕收敛，避免容器分辨率较低时窗口底部被裁掉
+        let screen = ctx.input(|i| i.screen_rect());
+        let full_w = (screen.width() - 8.0).clamp(420.0, 620.0);
+        let full_h = (screen.height() - 8.0).clamp(420.0, 660.0);
         let target = if !self.cfg.overlay_expanded {
             egui::vec2(64.0, 64.0) // 圆点
         } else if self.full_editor || !self.cfg.overlay_compact_enabled {
-            egui::vec2(620.0, 660.0) // 完整编辑面板（小面板不参与形态时直接展开为主界面）
+            egui::vec2(full_w, full_h) // 完整编辑面板（小面板不参与形态时直接展开为主界面）
         } else {
             egui::vec2(280.0, 250.0) // 小面板
         };
@@ -708,11 +712,6 @@ impl App {
             {
                 *dirty = true;
             }
-            ui.label(
-                egui::RichText::new("聊天框信标调试开关在 WoW 内：界面 → 插件 → SteamLike 信标，或 /slbeacon")
-                    .small()
-                    .weak(),
-            );
             let status = runtime::status_snapshot();
             let color = if CONNECTED.load(Ordering::Relaxed) {
                 egui::Color32::from_rgb(0x1B, 0x8A, 0x2E)
@@ -733,13 +732,17 @@ impl App {
             ui.horizontal(|ui| {
                 ui.label("交互键：");
                 let before = self.cfg.interaction_vk;
-                egui::ComboBox::from_id_source("interaction_key")
-                    .selected_text(key_name(self.cfg.interaction_vk))
-                    .show_ui(ui, |ui| {
-                        for (vk, name) in KEY_CHOICES {
-                            ui.selectable_value(&mut self.cfg.interaction_vk, *vk, *name);
+                let text = key_name(self.cfg.interaction_vk);
+                Self::choice_dropdown(ui, "interaction_key", &text, |ui| {
+                    let mut chosen = false;
+                    for (vk, name) in KEY_CHOICES {
+                        if ui.selectable_label(self.cfg.interaction_vk == *vk, *name).clicked() {
+                            self.cfg.interaction_vk = *vk;
+                            chosen = true;
                         }
-                    });
+                    }
+                    chosen
+                });
                 if self.cfg.interaction_vk != before {
                     *dirty = true;
                 }
@@ -747,13 +750,17 @@ impl App {
                 ui.add_space(12.0);
                 ui.label("长按交换键：");
                 let before = self.cfg.swap_vk;
-                egui::ComboBox::from_id_source("swap_key")
-                    .selected_text(key_name(self.cfg.swap_vk))
-                    .show_ui(ui, |ui| {
-                        for (vk, name) in KEY_CHOICES {
-                            ui.selectable_value(&mut self.cfg.swap_vk, *vk, *name);
+                let text = key_name(self.cfg.swap_vk);
+                Self::choice_dropdown(ui, "swap_key", &text, |ui| {
+                    let mut chosen = false;
+                    for (vk, name) in KEY_CHOICES {
+                        if ui.selectable_label(self.cfg.swap_vk == *vk, *name).clicked() {
+                            self.cfg.swap_vk = *vk;
+                            chosen = true;
                         }
-                    });
+                    }
+                    chosen
+                });
                 if self.cfg.swap_vk != before {
                     *dirty = true;
                 }
@@ -1005,6 +1012,11 @@ impl App {
                 self.edit_tap_value = 0;
                 self.edit_tap_subs.clear();
             }
+            crate::config::MappedAction::ShowKeyboard => {
+                self.edit_tap_type = 12;
+                self.edit_tap_value = 0;
+                self.edit_tap_subs.clear();
+            }
             crate::config::MappedAction::ToggleKeyboardEnter => {
                 self.edit_tap_type = 11;
                 self.edit_tap_value = 0;
@@ -1069,6 +1081,11 @@ impl App {
                 self.edit_long_press_value = 0;
                 self.edit_long_press_subs.clear();
             }
+            crate::config::MappedAction::ShowKeyboard => {
+                self.edit_long_press_type = 12;
+                self.edit_long_press_value = 0;
+                self.edit_long_press_subs.clear();
+            }
             crate::config::MappedAction::ToggleKeyboardEnter => {
                 self.edit_long_press_type = 11;
                 self.edit_long_press_value = 0;
@@ -1124,6 +1141,7 @@ impl App {
             9 => crate::config::MappedAction::Interact,
             10 => crate::config::MappedAction::OverlayToggle,
             11 => crate::config::MappedAction::ToggleKeyboardEnter,
+            12 => crate::config::MappedAction::ShowKeyboard,
             _ => crate::config::MappedAction::None,
         }
     }
@@ -1135,7 +1153,7 @@ impl App {
         let action_types = [
             "未设置", "键盘按键", "数字小键盘", "鼠标点击", "鼠标长按",
             "滚轮上滚", "滚轮下滚", "鼠标长按交换", "释放鼠标长按",
-            "交互键", "悬浮窗展开/收起", "回车+切换键盘",
+            "交互键", "悬浮窗展开/收起", "回车+切换键盘", "显示安卓键盘",
         ];
         // 长按与短按支持完全相同的动作类型
         let long_press_types = action_types;
@@ -1150,13 +1168,17 @@ impl App {
                 // 源按键
                 ui.horizontal(|ui| {
                     ui.label("源按键:");
-                    egui::ComboBox::from_id_source("map_source_vk")
-                        .selected_text(key_name(self.edit_source_vk))
-                        .show_ui(ui, |ui| {
-                            for (vk, name) in KEY_CHOICES {
-                                ui.selectable_value(&mut self.edit_source_vk, *vk, *name);
+                    let text = key_name(self.edit_source_vk);
+                    Self::choice_dropdown(ui, "map_source_vk", &text, |ui| {
+                        let mut chosen = false;
+                        for (vk, name) in KEY_CHOICES {
+                            if ui.selectable_label(self.edit_source_vk == *vk, *name).clicked() {
+                                self.edit_source_vk = *vk;
+                                chosen = true;
                             }
-                        });
+                        }
+                        chosen
+                    });
                 });
 
                 ui.checkbox(&mut self.edit_enabled, "启用此映射");
@@ -1167,13 +1189,17 @@ impl App {
                 ui.label(egui::RichText::new("点击（短按）动作").strong());
                 ui.horizontal(|ui| {
                     ui.label("动作类型:");
-                    egui::ComboBox::from_id_source("map_tap_type")
-                        .selected_text(action_types[self.edit_tap_type])
-                        .show_ui(ui, |ui| {
-                            for (i, name) in action_types.iter().enumerate() {
-                                ui.selectable_value(&mut self.edit_tap_type, i, *name);
+                    let text = action_types[self.edit_tap_type];
+                    Self::choice_dropdown(ui, "map_tap_type", text, |ui| {
+                        let mut chosen = false;
+                        for (i, name) in action_types.iter().enumerate() {
+                            if ui.selectable_label(self.edit_tap_type == i, *name).clicked() {
+                                self.edit_tap_type = i;
+                                chosen = true;
                             }
-                        });
+                        }
+                        chosen
+                    });
                 });
 
                 // 短按动作值
@@ -1185,13 +1211,17 @@ impl App {
                 ui.label(egui::RichText::new("长按动作（可选）").strong());
                 ui.horizontal(|ui| {
                     ui.label("动作类型:");
-                    egui::ComboBox::from_id_source("map_lp_type")
-                        .selected_text(long_press_types[self.edit_long_press_type])
-                        .show_ui(ui, |ui| {
-                            for (i, name) in long_press_types.iter().enumerate() {
-                                ui.selectable_value(&mut self.edit_long_press_type, i, *name);
+                    let text = long_press_types[self.edit_long_press_type];
+                    Self::choice_dropdown(ui, "map_lp_type", text, |ui| {
+                        let mut chosen = false;
+                        for (i, name) in long_press_types.iter().enumerate() {
+                            if ui.selectable_label(self.edit_long_press_type == i, *name).clicked() {
+                                self.edit_long_press_type = i;
+                                chosen = true;
                             }
-                        });
+                        }
+                        chosen
+                    });
                 });
 
                 // 长按动作值
@@ -1216,6 +1246,54 @@ impl App {
         }
     }
 
+    /// 长列表下拉选择（替代 egui 自带 ComboBox）
+    ///
+    /// egui 0.22 的 ComboBox 用 `clicked_elsewhere()` 判断是否关闭，拖动弹层里的滚动条
+    /// 也会被当成「点在别处」→ 长列表滚一下就消失、必须重新点开。
+    /// 这里自绘弹层：只有「在弹层外按下鼠标」「选中条目」「按 Esc」才关闭，
+    /// 拖动/滚动弹层内部的滚动条不受影响。
+    fn choice_dropdown(
+        ui: &mut egui::Ui,
+        id_salt: &str,
+        selected_text: &str,
+        draw_items: impl FnOnce(&mut egui::Ui) -> bool,
+    ) {
+        let id = ui.make_persistent_id(id_salt);
+        let response = ui.add(egui::Button::new(format!("{} ▾", selected_text)));
+        if response.clicked() {
+            ui.memory_mut(|mem| mem.toggle_popup(id));
+        }
+        if !ui.memory(|mem| mem.is_popup_open(id)) {
+            return;
+        }
+
+        let mut chosen = false;
+        let area = egui::Area::new(id.with("menu"))
+            .order(egui::Order::Foreground)
+            .constrain(true)
+            .fixed_pos(response.rect.left_bottom())
+            .interactable(true)
+            .show(ui.ctx(), |ui| {
+                egui::Frame::popup(ui.style()).show(ui, |ui| {
+                    ui.set_max_width(response.rect.width().max(180.0));
+                    egui::ScrollArea::vertical()
+                        .max_height(280.0)
+                        .show(ui, |ui| {
+                            chosen = draw_items(ui);
+                        });
+                });
+            });
+
+        let inside = |p: egui::Pos2| area.response.rect.contains(p) || response.rect.contains(p);
+        let pressed_outside = ui.input(|i| {
+            i.pointer.any_pressed() && i.pointer.press_origin().map_or(false, |p| !inside(p))
+        });
+        let escape = ui.input(|i| i.key_pressed(egui::Key::Escape));
+        if chosen || pressed_outside || escape {
+            ui.memory_mut(|mem| mem.close_popup());
+        }
+    }
+
     /// 键盘按键选择器：普通键列表 + Shift 符号列表
     ///
     /// 符号以「主键 Shift + 子命令 该物理键」的形式保存，这样注入顺序恰好是
@@ -1231,30 +1309,32 @@ impl App {
             Some(sym) => format!("Shift+{}", sym),
             None => key_name(*value),
         };
-        egui::ComboBox::from_id_source(format!("{}_value", id_prefix))
-            .selected_text(selected_text)
-            .show_ui(ui, |ui| {
-                for (vk, name) in KEY_CHOICES {
-                    let selected = symbol_vk.is_none() && *value == *vk;
-                    if ui.selectable_label(selected, *name).clicked() {
-                        *value = *vk;
-                        subs.clear();
-                    }
+        Self::choice_dropdown(ui, &format!("{}_value", id_prefix), &selected_text, |ui| {
+            let mut chosen = false;
+            for (vk, name) in KEY_CHOICES {
+                let selected = symbol_vk.is_none() && *value == *vk;
+                if ui.selectable_label(selected, *name).clicked() {
+                    *value = *vk;
+                    subs.clear();
+                    chosen = true;
                 }
-                ui.separator();
-                ui.label(egui::RichText::new("Shift 符号").weak());
-                for (vk, name) in SHIFT_SYMBOLS {
-                    let selected = symbol_vk == Some(*vk);
-                    if ui
-                        .selectable_label(selected, format!("Shift+{}", name))
-                        .clicked()
-                    {
-                        *value = 0x10;
-                        subs.clear();
-                        subs.push(*vk);
-                    }
+            }
+            ui.separator();
+            ui.label(egui::RichText::new("Shift 符号").weak());
+            for (vk, name) in SHIFT_SYMBOLS {
+                let selected = symbol_vk == Some(*vk);
+                if ui
+                    .selectable_label(selected, format!("Shift+{}", name))
+                    .clicked()
+                {
+                    *value = 0x10;
+                    subs.clear();
+                    subs.push(*vk);
+                    chosen = true;
                 }
-            });
+            }
+            chosen
+        });
     }
 
     /// 渲染动作值编辑器（根据动作类型显示不同的选择器）
@@ -1278,13 +1358,17 @@ impl App {
                 // 数字小键盘
                 ui.horizontal(|ui| {
                     ui.label("按键:");
-                    egui::ComboBox::from_id_source(format!("{}_value", id_prefix))
-                        .selected_text(numpad_key_name(*value))
-                        .show_ui(ui, |ui| {
-                            for (vk, name) in NUMPAD_CHOICES {
-                                ui.selectable_value(value, *vk, *name);
+                    let text = numpad_key_name(*value);
+                    Self::choice_dropdown(ui, &format!("{}_value", id_prefix), &text, |ui| {
+                        let mut chosen = false;
+                        for (vk, name) in NUMPAD_CHOICES {
+                            if ui.selectable_label(*value == *vk, *name).clicked() {
+                                *value = *vk;
+                                chosen = true;
                             }
-                        });
+                        }
+                        chosen
+                    });
                 });
                 Self::render_sub_commands_editor(ui, subs, id_prefix);
             }
@@ -1292,15 +1376,23 @@ impl App {
                 // 鼠标点击 / 鼠标长按
                 ui.horizontal(|ui| {
                     ui.label("鼠标按键:");
-                    egui::ComboBox::from_id_source(format!("{}_value", id_prefix))
-                        .selected_text(mouse_button_name(*value as u8))
-                        .show_ui(ui, |ui| {
-                            ui.selectable_value(value, 0, "左键");
-                            ui.selectable_value(value, 1, "右键");
-                            ui.selectable_value(value, 2, "中键");
-                            ui.selectable_value(value, 3, "前进键");
-                            ui.selectable_value(value, 4, "后退键");
-                        });
+                    let text = mouse_button_name(*value as u8);
+                    Self::choice_dropdown(ui, &format!("{}_value", id_prefix), text, |ui| {
+                        let mut chosen = false;
+                        for (vk, name) in [
+                            (0u32, "左键"),
+                            (1, "右键"),
+                            (2, "中键"),
+                            (3, "前进键"),
+                            (4, "后退键"),
+                        ] {
+                            if ui.selectable_label(*value == vk, name).clicked() {
+                                *value = vk;
+                                chosen = true;
+                            }
+                        }
+                        chosen
+                    });
                 });
                 Self::render_sub_commands_editor(ui, subs, id_prefix);
             }
@@ -1318,13 +1410,17 @@ impl App {
         for (i, sub) in subs.iter_mut().enumerate() {
             ui.horizontal(|ui| {
                 ui.label(format!("子 {}:", i + 1));
-                egui::ComboBox::from_id_source(format!("{}_sub_{}", id_prefix, i))
-                    .selected_text(key_name(*sub))
-                    .show_ui(ui, |ui| {
-                        for (vk, name) in KEY_CHOICES {
-                            ui.selectable_value(sub, *vk, *name);
+                let text = key_name(*sub);
+                Self::choice_dropdown(ui, &format!("{}_sub_{}", id_prefix, i), &text, |ui| {
+                    let mut chosen = false;
+                    for (vk, name) in KEY_CHOICES {
+                        if ui.selectable_label(*sub == *vk, *name).clicked() {
+                            *sub = *vk;
+                            chosen = true;
                         }
-                    });
+                    }
+                    chosen
+                });
                 if ui.button("删除").on_hover_text("删除这条子命令").clicked() {
                     to_remove = Some(i);
                 }
@@ -1496,10 +1592,22 @@ impl App {
                 });
                 ui.separator();
 
-                match self.selected_tab {
-                    0 => self.tab_basic_settings(ui, dirty),
-                    1 => self.tab_key_mappings(ui, dirty),
-                    2 => self.tab_logs(ui),
+                // Tab 内容：设置/映射页可纵向滚动，窗口较矮时也能看全所有控件
+                let tab = self.selected_tab;
+                match tab {
+                    0 => {
+                        egui::ScrollArea::vertical()
+                            .auto_shrink([false, false])
+                            .show(ui, |ui| self.tab_basic_settings(ui, dirty));
+                    }
+                    1 => {
+                        egui::ScrollArea::vertical()
+                            .auto_shrink([false, false])
+                            .show(ui, |ui| self.tab_key_mappings(ui, dirty));
+                    }
+                    2 => {
+                        self.tab_logs(ui);
+                    }
                     _ => {}
                 }
             });

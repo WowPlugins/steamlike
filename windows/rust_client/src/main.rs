@@ -5,7 +5,6 @@
 //! 2. 可选拦截本地键鼠事件（总开关默认关闭），实现 WASD 自动锁定右键、
 //!    交互键点击序列、长按交换左右键锁定、鼠标相对移动转发等。
 
-mod addon;
 mod bridge;
 mod clipboard;
 mod config;
@@ -50,7 +49,6 @@ fn main() -> eframe::Result<()> {
 
     let cfg = config::load();
     apply_runtime(&cfg);
-    addon::ensure_installed(&cfg.wow_path);
 
     hooks::start();
     if cfg.intercept_enabled {
@@ -82,8 +80,8 @@ fn main() -> eframe::Result<()> {
         decorated: false,
         always_on_top: true,
         transparent: true,
-        // 启动总是显示完整主界面，尺寸固定为主界面大小
-        initial_window_size: Some(egui::vec2(620.0, 660.0)),
+        // 启动总是显示完整主界面；实际尺寸会在首帧按屏幕高度自适应收敛
+        initial_window_size: Some(egui::vec2(600.0, 560.0)),
         ..Default::default()
     };
 

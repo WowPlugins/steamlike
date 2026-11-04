@@ -127,6 +127,23 @@ fn do_swap() {
     }
 }
 
+/// APK 悬浮窗「解锁鼠标」按钮触发：解除左右键的长按锁定
+///
+/// 由网络线程在收到 0x26 报文时调用。解锁立即发出（让游戏尽快退出 mouselook），
+/// 居中同样交给动作线程延时执行（理由同钩子回调里的解锁路径）。
+pub fn unlock_from_apk() {
+    let left_locked = RT.left_locked.load(Ordering::Relaxed);
+    let right_locked = RT.right_locked.load(Ordering::Relaxed);
+    if !left_locked && !right_locked {
+        log("[锁存] APK 请求解锁：当前未锁定，忽略");
+        return;
+    }
+    set_lock(BTN_LEFT, false);
+    set_lock(BTN_RIGHT, false);
+    queue_cmd(Cmd::UnlockCenter);
+    log("[锁存] APK 请求解锁：已解除鼠标锁定");
+}
+
 /// 交互键触发：
 /// 1. 记录左右键锁存状态与光标位置
 /// 2. 解除左右锁存 → 等游戏退出 mouselook → 光标居中 → 右键点击一次
@@ -494,6 +511,11 @@ fn execute_mapping(source_vk: u32, is_long_press: bool) {
                 "[映射] 悬浮窗{}",
                 if expanded { "收起" } else { "展开" }
             ));
+        }
+        crate::config::MappedAction::ShowKeyboard => {
+            // 只弹不切：键盘已在显示时 APK 会忽略该请求
+            crate::bridge::send_show_keyboard();
+            log("[映射] 显示安卓键盘");
         }
         crate::config::MappedAction::ToggleKeyboardEnter => {
             // 顺序固定：先把回车发给游戏（打开/发送聊天），再通知 APK 切换软键盘

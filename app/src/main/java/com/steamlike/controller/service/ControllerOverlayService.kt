@@ -122,14 +122,8 @@ class ControllerOverlayService : Service() {  // class=类声明；继承 Servic
         const val EXTRA_CAPTURE_ENABLED = "capture_enabled"  // const val=编译期常量；捕获开关的 extra 键
         /** 切换悬浮窗视图（通知栏按钮触发） */
         const val ACTION_TOGGLE_OVERLAY = "TOGGLE_OVERLAY"  // const val=编译期常量；切换悬浮窗视图的 Intent action
-        /** 设置截屏授权（启用聊天框信标检测） */
-        const val ACTION_SET_PROJECTION = "SET_PROJECTION"  // const val=编译期常量；传入截屏授权结果的 Intent action
-        /** Intent extra: 截屏授权结果码 */
-        const val EXTRA_PROJECTION_RESULT_CODE = "projection_result_code"  // const val=编译期常量；截屏授权结果码的 extra 键
-        /** Intent extra: 截屏授权数据（含 MediaProjection 令牌） */
-        const val EXTRA_PROJECTION_DATA = "projection_data"  // const val=编译期常量；截屏授权数据的 extra 键
-        /** Enter 注入后轮询聊天框状态的间隔（毫秒）：插件色块约 0.1s 才更新，固定延迟容易读到旧状态 */
-        private const val CHAT_SYNC_POLL_MS = 100L  // const val=编译期常量；长整型；轮询间隔
+        /** 键盘「发送/回车」按下后延迟收起（毫秒）：先把回车送到游戏，再隐藏软键盘 */
+        private const val IME_HIDE_AFTER_SEND_MS = 150L  // const val=编译期常量；长整型；发送后收起延迟
         /** 操作层按钮：短按判定为点击（跳转设置页）的时间阈值（毫秒） */
         private const val LAYER_BUTTON_TAP_MS = 300L  // const val=编译期常量；长整型；短按点击判定阈值 300 毫秒
         /**
@@ -250,9 +244,16 @@ class ControllerOverlayService : Service() {  // class=类声明；继承 Servic
      * 收起状态下显示当前激活层名与状态图标的 TextView 引用
      *
      * 用于操作层切换 / 捕获状态 / 手柄连接状态变化时动态更新悬浮窗文本。
-     * 显示规则见 [buildCollapsedText]（三态图标：🎮未连接 / ▶映射中 / ⏸暂停）。
+     * 显示规则见 [buildCollapsedText]（层名 + 捕获图标：▶捕获中 / ⏸已暂停，未连接时显示 🎮 未连接）。
      */
     private var collapsedTextView: TextView? = null  // var=可变变量；?=可空类型；收起状态胶囊文本视图
+    /**
+     * 最近一次已反映到悬浮窗 UI 的捕获状态
+     *
+     * 捕获状态可能在视图重建（展开↔收起、映射页切换）时被丢弃一次刷新，
+     * 手柄连接轮询里对比它与 [isCapturing]，发现漂移就补刷一次，避免显示与实际不符。
+     */
+    private var lastUiCapturing: Boolean = false  // var=可变变量；UI 已反映的捕获状态
     private val layerButtons = mutableMapOf<String, Button>()  // val=只读变量；层名→按钮的可变映射表
     /**
      * 按键映射列表页的按钮 → 视图引用，手柄按键按下时高亮对应项
@@ -309,7 +310,6 @@ class ControllerOverlayService : Service() {  // class=类声明；继承 Servic
     private var steamInput: SteamInput? = null  // var=可变变量；?=可空类型；SteamInput 手柄控制器
     private var mapper: KeyboardMouseMapper? = null  // var=可变变量；?=可空类型；键盘鼠标映射器
     private var bridgeServer: InputBridgeServer? = null  // var=可变变量；?=可空类型；TCP 桥接服务器
-    private var chatMonitor: ChatStateMonitor? = null  // var=可变变量；?=可空类型；聊天框信标检测器（未授权时为 null）
     private var configManager: ConfigManager? = null  // var=可变变量；?=可空类型；配置管理器
     /** TCP监听地址，由Intent extra EXTRA_HOST设置，null表示监听所有接口 */
     private var serverHost: String? = null  // var=可变变量；?=可空类型；TCP 监听地址，null 表示监听所有接口
@@ -391,7 +391,6 @@ class ControllerOverlayService : Service() {  // class=类声明；继承 Servic
     private var isKeyboardShowing = false  // var=可变变量；系统键盘是否正在显示
 
     /** 键盘同步轮询令牌：每次新动作自增，使旧的轮询回调自动失效 */
-    private var chatSyncToken = 0  // var=可变变量；轮询会话编号
 
     /**
      * 显示键盘后的 IME 信号宽限窗口（毫秒时间戳）。
@@ -469,9 +468,6 @@ class ControllerOverlayService : Service() {  // class=类声明；继承 Servic
             ACTION_TOGGLE_OVERLAY -> {  // 分支：切换悬浮窗视图
                 toggleOverlayView()  // 切换悬浮窗视图
             }  // 结束 ACTION_TOGGLE_OVERLAY 分支
-            ACTION_SET_PROJECTION -> {  // 分支：启用聊天框信标检测（携带截屏授权结果）
-                handleSetProjection(intent)  // 创建截屏会话与检测器
-            }  // 结束 ACTION_SET_PROJECTION 分支
         }  // 结束 when 分支
         // 首次启动时初始化映射器
         if (steamInput == null) {  // if 判断：映射器未初始化
@@ -531,9 +527,14 @@ class ControllerOverlayService : Service() {  // class=类声明；继承 Servic
                 }  // 结束 onClipboardText lambda
                 bridgeServer?.onToggleKeyboardRequest = {  // ?.=安全调用；收到 Windows 客户端「切换键盘」反向通知
                     Log.i(TAG, "0x23 toggle keyboard request received")  // 记录反向通知到达
-                    // Rust 侧已先注入回车：轮询到聊天框状态翻转后再同步键盘（插件色块更新有延迟）
-                    mainHandler.post { scheduleKeyboardSync(chatMonitor?.state ?: ChatStateMonitor.STATE_UNKNOWN) }  // 回主线程开始轮询
+                    // Rust 侧已先注入回车，这里直接在显示/隐藏之间切换，不再依赖截屏识别
+                    mainHandler.post { toggleSystemKeyboard() }  // 回主线程切换键盘
                 }  // 结束 onToggleKeyboardRequest lambda
+
+                bridgeServer?.onShowKeyboardRequest = {  // ?.=安全调用；收到 Windows 客户端「显示键盘」反向通知（0x25）
+                    Log.i(TAG, "0x25 show keyboard request received")  // 记录反向通知到达
+                    mainHandler.post { showSystemKeyboard() }  // 回主线程弹出键盘（已在显示时忽略）
+                }  // 结束 onShowKeyboardRequest lambda
 
                 if (bridgeServer?.start() != true) {  // ?.=安全调用；if 判断：服务器启动失败
                     Log.e(TAG, "TCP server start failed")  // 打印服务器启动失败日志
@@ -553,7 +554,7 @@ class ControllerOverlayService : Service() {  // class=类声明；继承 Servic
                 steamInput?.onButtonStateChanged = { button, pressed ->  // ?.=安全调用；lambda {button, pressed->}；设置手柄按键状态变化回调
                     mainHandler.post { updateMappingViewHighlight(button, pressed) }  // 回主线程更新映射页按钮高亮
                 }  // 结束 onButtonStateChanged lambda
-                // 手柄连接/断开 → 更新收起悬浮窗的图标状态（🎮未连接 / ▶映射中 / ⏸暂停）
+                // 手柄连接/断开 → 更新收起悬浮窗的连接状态与捕获状态文本
                 steamInput?.onControllerConnected = { controller ->  // ?.=安全调用；lambda {controller->}；设置手柄连接回调
                     controllerConnected = true  // 标记手柄已连接
                     mainHandler.post {  // 回主线程更新收起悬浮窗文本
@@ -602,13 +603,11 @@ class ControllerOverlayService : Service() {  // class=类声明；继承 Servic
                 mapper?.onToggleOverlay = { mainHandler.post { toggleOverlayView() } }  // ?.=安全调用；lambda；切换悬浮窗视图（回主线程）
                 mapper?.onToggleKeyboard = { mainHandler.post { toggleSystemKeyboard() } }  // ?.=安全调用；lambda；切换系统键盘（回主线程）
                 // 回车+切换键盘：先发回车给游戏（打开/发送聊天），再切换软键盘显示/隐藏
-                mapper?.onToggleKeyboardEnter = {  // ?.=安全调用；lambda；回车后按聊天框状态同步键盘
+                mapper?.onToggleKeyboardEnter = {  // ?.=安全调用；lambda；先发回车再切换键盘
                     mainHandler.post {  // 回主线程执行（键盘操作必须在主线程）
-                        val prevChatState = chatMonitor?.state ?: ChatStateMonitor.STATE_UNKNOWN  // 记录回车前的聊天框状态
                         bridgeServer?.sendKeyEvent(0x0D, true)  // VK_RETURN 按下
                         bridgeServer?.sendKeyEvent(0x0D, false)  // VK_RETURN 释放（只发一次，避免双回车）
-                        // 轮询到聊天框状态相对 prevChatState 翻转后再同步键盘
-                        scheduleKeyboardSync(prevChatState)  // 开始轮询同步
+                        toggleSystemKeyboard()  // 直接在显示/隐藏之间切换
                     }  // 结束 post lambda
                 }  // 结束 onToggleKeyboardEnter lambda
                 mapper?.onToggleCapture = { mainHandler.post { toggleCaptureState() } }  // ?.=安全调用；lambda；切换捕获状态（回主线程）
@@ -1030,8 +1029,9 @@ class ControllerOverlayService : Service() {  // class=类声明；继承 Servic
             view.onImeChar = { ch -> forwardImeChar(ch) }  // lambda {ch->}；设置 IME 字符输入回调
             view.onImeText = { seg -> forwardImeText(seg) }  // lambda {seg->}；设置 IME 整段文本回调
             view.onImeKey = { event -> forwardImeKey(event) }  // lambda {event->}；设置 IME 按键事件回调
-            // 输入法「发送」动作（回车已注入游戏）→ 自动收起键盘
-            view.onImeActionSent = { mainHandler.post { hideSystemKeyboardAfterSend() } }  // lambda；设置发送后收起键盘回调
+            // 输入法「发送」动作（回车已注入游戏）→ 延迟收起键盘：
+            // 回车包先入 TCP 队列，等客户端注入到游戏后再隐藏键盘，避免先收起再发送的时序问题
+            view.onImeActionSent = { mainHandler.postDelayed({ hideSystemKeyboardAfterSend() }, IME_HIDE_AFTER_SEND_MS) }  // lambda；设置发送后收起键盘回调
             // 键盘被隐藏（点击键盘自身隐藏按钮/返回键/输入法失活）→ 恢复捕获。
             // 系统不会给应用直接回调，由 GamepadInputView 通过 insets 变化 /
             // 连接关闭 / 返回键三种信号驱动
@@ -1232,12 +1232,29 @@ class ControllerOverlayService : Service() {  // class=类声明；继承 Servic
     }  // 结束 launchGameApp 函数
 
     /**
+     * 悬浮窗「解锁右键」按钮
+     *
+     * 左右键长按锁定由 Windows 客户端维护（WASD 自动锁右键、长按交换键换锁），
+     * APK 无法直接解除，只能发 0x26 报文让客户端松开锁定按钮并延时居中。
+     */
+    private fun unlockMouseFromOverlay() {  // private=私有；fun=函数声明；请求客户端解锁鼠标锁定
+        val server = bridgeServer  // val=只读变量；取 TCP 服务器引用
+        if (server == null) {  // if 判断：服务器未创建（服务异常）
+            toast("客户端未连接，无法解锁")  // 提示无法解锁
+            return  // 提前返回
+        }  // 结束 if 块
+        server.sendUnlockMouse()  // 发送解锁报文（客户端侧立即松开左右键锁存并延时居中）
+        Log.i(TAG, "Unlock mouse requested from overlay")  // 打印解锁请求日志
+    }  // 结束 unlockMouseFromOverlay 函数
+
+    /**
      * 刷新展开视图中"暂停/恢复捕获"按钮的文本与状态色
      *
      * - 捕获中：显示"暂停捕获"，红色系（点击将暂停）
      * - 已暂停：显示"恢复捕获"，绿色系（点击将恢复）
      */
     private fun updateCaptureButtonState() {  // private=私有；fun=函数声明；刷新捕获按钮文本与状态色
+        lastUiCapturing = isCapturing  // 记录本次已反映到 UI 的捕获状态（供轮询自愈比对）
         captureButton?.post {  // ?.=安全调用；post{}=投递到主线程
             val capturing = isCapturing  // val=只读变量；读取当前捕获状态
             captureButton?.text = if (capturing) "暂停捕获" else "恢复捕获"  // ?.=安全调用；if 表达式；设置按钮文本
@@ -1249,9 +1266,9 @@ class ControllerOverlayService : Service() {  // class=类声明；继承 Servic
             }  // 结束 if-else 表达式
             captureButton?.background = createStateListBackground(normal, pressed, 8f)  // ?.=安全调用；设置按钮按下态背景
         }  // 结束 post lambda
-        // 收起视图也同步更新（刷新状态图标：🎮未连接 / ▶映射中 / ⏸暂停）
+        // 收起视图也同步更新（刷新层名与捕获图标：▶捕获中 / ⏸已暂停）
         if (!isExpanded) {  // if 判断：悬浮窗未展开
-            updateCollapsedViewText(mapper?.getActiveLayers() ?: emptyList())  // ?.=安全调用；?:=空值合并；更新收起胶囊文本
+            updateCollapsedViewText(mapper?.getActiveLayers() ?: emptyList(), force = true)  // ?.=安全调用；?:=空值合并；强制更新（捕获状态切换不能走去重）
         }  // 结束 if 块
     }  // 结束 updateCaptureButtonState 函数
 
@@ -1278,7 +1295,7 @@ class ControllerOverlayService : Service() {  // class=类声明；继承 Servic
             return  // 提前返回
         }  // 结束 if 块
 
-        if (isKeyboardShowing) {  // if 判断：键盘正在显示
+        if (keyboardReallyShowing()) {  // if 判断：键盘确实在显示
             // 键盘正在显示 → 隐藏键盘
             imm.hideSoftInputFromWindow(gamepadInputView?.windowToken, 0)  // ?.=安全调用；隐藏软键盘
             isKeyboardShowing = false  // 清除键盘显示标记
@@ -1297,16 +1314,36 @@ class ControllerOverlayService : Service() {  // class=类声明；继承 Servic
             Log.i(TAG, "Keyboard hidden, capture resumed")  // 打印键盘隐藏日志
         } else {  // else 分支：键盘未显示
             // 键盘未显示 → 弹出键盘（保持捕获，不暂停）
-            isKeyboardShowing = true  // 标记键盘显示中
-            imeShowGraceUntilMs = android.os.SystemClock.uptimeMillis() + 1200  // 1200ms 内忽略系统重建连接的关闭信号
-            mainHandler.post {  // 回主线程弹出键盘
-                val view = gamepadInputView  // 取出 1x1 焦点窗口视图
-                if (view == null) Log.w(TAG, "Keyboard requested but gamepadInputView is null")  // 暂停捕获时焦点窗口不存在
-                else requestShowKeyboard(imm, view, 0)  // 弹出软键盘（窗口焦点未就绪时自动重试）
-                Log.i(TAG, "Keyboard requested (capture kept active)")  // 打印弹出键盘日志
-            }  // 结束 post lambda
+            showSystemKeyboard()  // 弹出软键盘
         }  // 结束 if-else 块
     }  // 结束 toggleSystemKeyboard 函数
+
+    /**
+     * 弹出安卓软键盘（仅弹出，不切换）
+     *
+     * 键盘已在显示时直接返回，避免 Rust 映射「显示安卓键盘」动作把正在输入的键盘收起。
+     * 由「切换键盘」的弹出分支与 Windows 客户端 0x25 反向通知共用。
+     *
+     * 注意：用户手动收起键盘（键盘自身的收起按钮/返回手势/点击键盘外）时系统往往
+     * 不会给悬浮窗任何回调，[isKeyboardShowing] 会残留为 true。因此这里不能直接信任
+     * 标记，先用真实 IME 可见性校准，确认真的在显示才忽略本次请求。
+     */
+    private fun showSystemKeyboard() {  // private=私有；fun=函数声明；弹出安卓软键盘
+        val imm = getSystemService(Context.INPUT_METHOD_SERVICE) as? InputMethodManager  // 获取输入法管理器
+        if (imm == null) {  // if 判断：无法获取输入法管理器
+            toast("无法获取输入法管理器")  // 提示获取失败
+            return  // 提前返回
+        }  // 结束 if 块
+        if (keyboardReallyShowing()) return  // if 判断：键盘确实在显示则不做处理
+        isKeyboardShowing = true  // 标记键盘显示中（标记若已失真，这里直接覆盖为真实状态）
+        imeShowGraceUntilMs = android.os.SystemClock.uptimeMillis() + 1200  // 1200ms 内忽略系统重建连接的关闭信号
+        mainHandler.post {  // 回主线程弹出键盘
+            val view = gamepadInputView  // 取出 1x1 焦点窗口视图
+            if (view == null) Log.w(TAG, "Keyboard requested but gamepadInputView is null")  // 暂停捕获时焦点窗口不存在
+            else requestShowKeyboard(imm, view, 0)  // 弹出软键盘（窗口焦点未就绪时自动重试）
+            Log.i(TAG, "Keyboard requested (capture kept active)")  // 打印弹出键盘日志
+        }  // 结束 post lambda
+    }  // 结束 showSystemKeyboard 函数
 
     /**
      * 弹出软键盘（带重试）
@@ -1323,22 +1360,47 @@ class ControllerOverlayService : Service() {  // class=类声明；继承 Servic
         Log.i(TAG, "showKeyboard attempt=$attempt hasFocus=${view.hasWindowFocus()} accepted=$accepted imeVisible=${isImeVisible(view)}")  // 打印弹出结果，便于定位首次失败原因
         if (attempt < 2) {  // if 判断：最多重试 2 次（共 3 次尝试）
             mainHandler.postDelayed({ requestShowKeyboard(imm, view, attempt + 1) }, 200)  // 200ms 后再试
-        }  // 结束 if 块
+        } else {  // 最后一次尝试后仍不可见 → 回滚显示标记，避免标记长期失真导致后续同步不再弹出键盘
+            mainHandler.postDelayed({  // 延迟检查最终可见性
+                if (isKeyboardShowing && !isImeVisible(view)) {  // 标记为显示但实际不可见
+                    Log.w(TAG, "showKeyboard gave up, reset isKeyboardShowing")  // 记录回滚日志
+                    isKeyboardShowing = false  // 回滚标记，下次同步会重新尝试弹出
+                }  // 结束可见性判断
+            }, 250)  // 延迟 250 毫秒检查
+        }  // 结束重试判断
     }  // 结束 requestShowKeyboard 函数
 
     /** 判断 IME 是否实际可见（Android 11+ 用窗口 insets；低版本退回状态标记） */
     private fun isImeVisible(view: View): Boolean =
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {  // if 表达式：Android 11 及以上
-            view.rootWindowInsets?.isVisible(WindowInsets.Type.ime()) == true  // 按 IME insets 可见性判断
-        } else {  // else 分支：低版本回退
-            isKeyboardShowing  // 使用显示标记
+        imeVisibleOrNull(view) ?: isKeyboardShowing  // 无法判断时退回状态标记
+
+    /**
+     * 读取真实的 IME 可见性；无法判断时返回 null（低版本或窗口 insets 尚未就绪）
+     */
+    private fun imeVisibleOrNull(view: View?): Boolean? =
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R && view != null) {  // if 表达式：Android 11 及以上且有窗口
+            view.rootWindowInsets?.isVisible(WindowInsets.Type.ime())  // insets 未就绪时返回 null
+        } else {  // else 分支：低版本/无窗口
+            null  // 无法判断
         }  // 结束 if 表达式
+
+    /**
+     * 键盘是否**确实**在显示
+     *
+     * [isKeyboardShowing] 只是服务端记录的意图状态：用户手动收起键盘（键盘自身的
+     * 收起按钮、返回手势、点键盘外）时，悬浮窗 1x1 窗口常常收不到任何 insets/连接
+     * 关闭回调，标记会一直残留为 true，导致后续所有「弹出键盘」请求被提前 return
+     * （表现为「弹几次之后再也弹不出来」）。因此优先用真实 insets 判断，只有完全
+     * 无法判断（低版本或窗口尚未 attach）时才退回标记。
+     */
+    private fun keyboardReallyShowing(): Boolean =  // private=私有；fun=函数声明
+        imeVisibleOrNull(gamepadInputView) ?: isKeyboardShowing  // ?:=空合并；无法判断时退回标记
 
     /**
      * 输入法「发送」动作后收起键盘
      *
-     * 回车已由 GamepadInputView 注入游戏，这里只负责隐藏软键盘并复用
-     * [handleImeHidden] 的状态清理（清标记、恢复捕获、重新请求焦点）。
+     * 调用前回车已经由 GamepadInputView 转发进 TCP 队列（[forwardImeKey] 同步入队），
+     * 这里只负责在稍后隐藏软键盘并复用 [handleImeHidden] 的状态清理（清标记、恢复捕获、重新请求焦点）。
      */
     private fun hideSystemKeyboardAfterSend() {  // private=私有；fun=函数声明；发送后收起键盘
         if (!isKeyboardShowing) return  // if 判断：键盘未显示则无需收起
@@ -1519,6 +1581,12 @@ class ControllerOverlayService : Service() {  // class=类声明；继承 Servic
                     controllerConnected = connected  // 更新连接状态
                     updateCollapsedViewText(mapper?.getActiveLayers() ?: emptyList())  // ?.=安全调用；?:=空值合并；刷新收起胶囊文本
                     Log.i(TAG, "Controller monitor: connected=$connected")  // 字符串模板 "$var"=插值变量；打印连接状态日志
+                }  // 结束 if 块
+                // 捕获状态自愈：视图重建（展开↔收起/映射页）时可能丢掉一次刷新，
+                // 与最近一次反映到 UI 的状态对比，漂移就补刷，避免「已捕获却显示未捕获」
+                if (lastUiCapturing != isCapturing) {  // if 判断：UI 状态与实际捕获状态不一致
+                    Log.i(TAG, "Capture UI resync: isCapturing=$isCapturing")  // 打印自愈日志
+                    updateCaptureButtonState()  // 重新刷新按钮/胶囊
                 }  // 结束 if 块
                 mainHandler.postDelayed(this, controllerMonitorIntervalMs)  // 延迟一个周期后再次轮询（自重复）
             }  // 结束 run 函数
@@ -1971,8 +2039,9 @@ class ControllerOverlayService : Service() {  // class=类声明；继承 Servic
         frame.alpha = 1f  // 恢复容器不透明度
 
         // 创建收起视图（圆角胶囊：显示当前激活层名，点击展开）
+        val pillText = buildCollapsedText(mapper?.getActiveLayers() ?: emptyList())  // 按当前状态构建胶囊文本
         val collapsed = TextView(this).apply {  // val=只读变量；apply{}=返回对象本身并执行块；创建收起胶囊文本视图
-            text = buildCollapsedText(mapper?.getActiveLayers() ?: emptyList())  // ?.=安全调用；?:=空值合并；设置胶囊文本
+            text = pillText  // 使用构建好的胶囊文本
             textSize = 13f  // 设置文本大小
             setTextColor(0xFFFFFFFF.toInt())  // 设置白色文本
             // 圆角胶囊背景 + 细边框（半透明，透出背面画面）
@@ -2002,6 +2071,9 @@ class ControllerOverlayService : Service() {  // class=类声明；继承 Servic
             .setInterpolator(DecelerateInterpolator())  // 减速插值器（入场减速）
             .start()  // 启动动画
         isExpanded = false  // 标记收起状态
+        // 新胶囊已按当前捕获状态渲染：同步记录，避免后续去重逻辑与视图内容不一致
+        lastCollapsedText = pillText  // 记录胶囊当前文本
+        lastUiCapturing = isCapturing  // 记录 UI 已反映的捕获状态
     }  // 结束 showCollapsedNow 函数
 
     /**
@@ -2034,12 +2106,13 @@ class ControllerOverlayService : Service() {  // class=类声明；继承 Servic
     }  // 结束 animateOverlayIn 函数
 
     /**
-     * 根据当前状态构建收起悬浮窗的显示文本（含状态图标）
+     * 根据当前状态构建收起悬浮窗的显示文本（层名 + 捕获状态图标）
      *
-     * 三种状态图标（优先级从高到低）:
+     * 手柄连接状态与捕获状态独立展示：
      * 1. 手柄未连接: 显示"🎮 未连接"，提示需先连接手柄
-     * 2. 捕获暂停: 层名后追加"⏸"（暂停图标），提醒手柄映射未工作
-     * 3. 映射中(捕获中): 层名后追加"▶"（播放图标），表示手柄映射生效
+     * 2. 捕获中: 层名后追加"▶"
+     * 3. 捕获暂停: 层名后追加"⏸"
+     * 手柄未连接时同样追加捕获状态图标，避免收起状态看不到捕获信息。
      *
      * 层名规则:
      * - 空列表（无激活层）: 显示"公共层"
@@ -2050,9 +2123,11 @@ class ControllerOverlayService : Service() {  // class=类声明；继承 Servic
      * @return 显示文本
      */
     private fun buildCollapsedText(activeLayers: List<String>): String {  // private=私有；fun=函数声明；构建收起悬浮窗的显示文本
+        // 捕获状态图标（▶捕获中 / ⏸已暂停）：任何连接状态下都显示，收起时也能确认映射是否生效
+        val captureIcon = if (isCapturing) "▶" else "⏸"  // val=只读变量；if 表达式；按捕获状态选择图标
         // 手柄未连接时优先提示，避免用户误以为映射未生效是配置问题
         if (!controllerConnected) {  // if=条件判断；手柄未连接时进入分支
-            return "🎮 未连接"  // 返回"未连接"提示文本
+            return "🎮 未连接 $captureIcon"  // 返回"未连接 + 捕获状态图标"提示文本
         }  // 结束 if 分支
         // 优先显示中文/自定义显示名，未匹配到则用内部名
         val displayMap = getLayerDisplayNames().toMap()  // val=只读变量；取层显示名列表并转 Map（键=内部名，值=显示名）
@@ -2061,8 +2136,8 @@ class ControllerOverlayService : Service() {  // class=类声明；继承 Servic
         } else {  // 否则（有激活层）
             displayMap[activeLayers.last()] ?: activeLayers.last()  // 取最上层（最后激活）的显示名；?:=空值合并，无显示名时回退内部名
         }  // 结束 if 表达式
-        // 捕获暂停 → ⏸；映射中 → ▶（图标与捕获状态一一对应）
-        return if (isCapturing) "$layerName ▶" else "$layerName ⏸"  // return=返回；字符串模板"$var"拼接图标：捕获中显示▶，暂停显示⏸
+        // 层名后只追加捕获状态图标
+        return "$layerName $captureIcon"  // return=返回；字符串模板"$var"拼接层名与捕获图标
     }  // 结束 buildCollapsedText 函数
 
     /**
@@ -2073,10 +2148,12 @@ class ControllerOverlayService : Service() {  // class=类声明；继承 Servic
      *
      * @param activeLayers 激活层名称列表
      */
-    private fun updateCollapsedViewText(activeLayers: List<String>) {  // private=私有；fun=函数声明；更新收起悬浮窗的层名显示
+    private fun updateCollapsedViewText(activeLayers: List<String>, force: Boolean = false) {  // private=私有；fun=函数声明；更新收起悬浮窗的层名显示
         val text = buildCollapsedText(activeLayers)  // 先构建文本（在主线程外可安全执行）
-        // 文本未变时跳过，避免智能暂停/层刷新等周期性调用反复重绘胶囊
-        if (text == lastCollapsedText) return  // 内容相同直接返回
+        // 文本未变时跳过，避免智能暂停/层刷新等周期性调用反复重绘胶囊；
+        // 捕获状态切换必须传 force=true：胶囊视图可能刚被重建（lastCollapsedText 与实际
+        // 显示内容不一致），去重会吞掉这一次关键更新，导致状态显示滞后
+        if (!force && text == lastCollapsedText) return  // 内容相同直接返回
         lastCollapsedText = text  // 记录本次文本
         collapsedTextView?.post {  // ?.=安全调用（控件可能为空）；post=向主线程消息队列投递 lambda，在 UI 线程更新文本
             collapsedTextView?.text = text  // ?.=安全调用；设置收起胶囊文本
@@ -2128,13 +2205,16 @@ class ControllerOverlayService : Service() {  // class=类声明；继承 Servic
         primaryRow.addView(captureButton!!)  // !! =非空断言；把捕获按钮加入主行（此时已赋值必非空）
         container.addView(primaryRow)  // 把主操作行加入容器
 
-        // 次操作行：映射 + 收起 + 关闭（关闭红色）
+        // 次操作行：映射 + 解锁右键 + 收起 + 关闭（关闭红色）
         val secondaryRow = LinearLayout(this).apply {  // val=只读变量；apply=作用域函数；创建次操作行横向布局
             orientation = LinearLayout.HORIZONTAL  // 设置行方向为横向
             setPadding(0, dp(3), 0, dp(6))  // 设置顶部 3dp、底部 6dp 间距，与下方信息区隔开
         }  // 结束 apply lambda
         secondaryRow.addView(  // 向次行添加按钮
             createOverlayButton("映射", { showMappingView() }, weight = 1f, textSize = 11f)  // 创建"映射"按钮，点击打开映射列表
+        )  // 结束 addView
+        secondaryRow.addView(  // 向次行添加按钮
+            createOverlayButton("解锁右键", { unlockMouseFromOverlay() }, weight = 1f, textSize = 11f)  // 创建"解锁右键"按钮，解除客户端左右键长按锁定
         )  // 结束 addView
         secondaryRow.addView(  // 向次行添加按钮
             createOverlayButton("收起", { showCollapsedView() }, weight = 1f, textSize = 11f)  // 创建"收起"按钮，点击收起悬浮窗
@@ -2910,110 +2990,10 @@ class ControllerOverlayService : Service() {  // class=类声明；继承 Servic
         manager.notify(NOTIFICATION_ID, createNotification(text))  // 用新文本重新显示通知
     }  // 结束 updateNotification 函数
 
-    /**
-     * 启用聊天框信标检测
-     *
-     * MainActivity 拿到截屏授权结果后通过 ACTION_SET_PROJECTION 传入。
-     * Android 14+ 使用 MediaProjection 要求前台服务带 mediaProjection 类型，
-     * 因此这里先以「specialUse|mediaProjection」重新声明前台服务，再创建截屏会话。
-     */
-    private fun handleSetProjection(intent: Intent) {  // 语法：private fun；处理截屏授权结果
-        val resultCode = intent.getIntExtra(EXTRA_PROJECTION_RESULT_CODE, 0)  // 截屏授权结果码
-        @Suppress("DEPRECATION")  // 注解：抑制弃用警告
-        val data = intent.getParcelableExtra<Intent>(EXTRA_PROJECTION_DATA)  // 语法：泛型 + 可空；截屏授权数据
-        if (data == null) {  // 授权数据缺失
-            updateStatus("❌ 聊天框检测：授权数据缺失")  // 提示失败
-            return  // 结束处理
-        }  // 结束空值判断
-
-        try {  // 尝试扩展前台服务类型
-            ServiceCompat.startForeground(  // 重新声明前台服务
-                this,  // 服务上下文
-                NOTIFICATION_ID,  // 通知 ID
-                createNotification("聊天框检测已启用，等待游戏状态..."),  // 通知内容
-                ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE or ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROJECTION  // 类型：特殊用途 + 截屏
-            )  // 结束 startForeground
-        } catch (t: Throwable) {  // 捕获类型声明失败
-            Log.w(TAG, "startForeground with mediaProjection failed", t)  // 打印警告（继续尝试创建）
-        }  // 结束 try-catch
-
-        chatMonitor?.release()  // 释放旧会话
-        val monitor = ChatStateMonitor(this, resultCode, data)  // 创建检测器
-        if (!monitor.start()) {  // 启动失败
-            monitor.release()  // 清理资源
-            chatMonitor = null  // 清空引用
-            updateStatus("❌ 聊天框检测启动失败")  // 提示失败
-            return  // 结束处理
-        }  // 结束启动判断
-        chatMonitor = monitor  // 保存检测器
-        updateStatus("✅ 聊天框检测已启用")  // 提示成功
-        Log.i(TAG, "chat beacon monitor started")  // 打印启动日志
-    }  // 结束 handleSetProjection 函数
-
-    /**
-     * 进入键盘同步轮询
-     *
-     * 插件色块每 0.1s 才刷新，镜像与采样还有约 150ms 延迟，固定延迟常读到「回车前」的旧状态。
-     * 这里每 [CHAT_SYNC_POLL_MS] 读一次，直到状态相对 [prevState] 翻转（或超过约 700ms）再执行键盘规则。
-     * 新的一次动作会覆盖旧的轮询（令牌自增使旧回调失效）。
-     */
-    private fun scheduleKeyboardSync(prevState: Int) {  // 语法：private fun；开始轮询聊天框状态
-        chatSyncToken++  // 令牌自增：作废旧回调
-        val token = chatSyncToken  // 本次轮询令牌
-        var attempts = 0  // 已轮询次数
-
-        fun step() {  // 语法：局部函数；单次轮询
-            if (token != chatSyncToken) return  // 被更新的动作覆盖 → 直接退出
-            attempts++  // 计数
-            val now = chatMonitor?.state ?: ChatStateMonitor.STATE_UNKNOWN  // 当前聊天框状态
-            val flipped = now != ChatStateMonitor.STATE_UNKNOWN && now != prevState  // 是否已翻转（或首次识别）
-            if (flipped || attempts >= 7) {  // 已翻转，或轮询超时
-                applyKeyboardRule(now, attempts, flipped)  // 按状态同步键盘
-            } else {  // 还没翻转
-                mainHandler.postDelayed({ step() }, CHAT_SYNC_POLL_MS)  // 继续轮询
-            }  // 结束判断
-        }  // 结束局部函数 step
-
-        mainHandler.postDelayed({ step() }, CHAT_SYNC_POLL_MS)  // 首次轮询
-    }  // 结束 scheduleKeyboardSync 函数
-
-    /**
-     * 按聊天框状态同步安卓键盘
-     *
-     * 规则：键盘可见性应与聊天框打开状态一致。
-     * - 聊天框打开但键盘隐藏 → 弹出键盘
-     * - 聊天框关闭但键盘显示 → 收起键盘
-     * 未启用检测（或没识别到信标）时退回原有的盲切行为。
-     */
-    private fun applyKeyboardRule(chatState: Int, attempts: Int, flipped: Boolean) {  // 语法：private fun；执行键盘规则
-        if (gamepadInputView == null) {  // 捕获暂停时焦点窗口已被移除
-            Log.i(TAG, "sync keyboard: focus window missing, resuming capture first")  // 记录自动恢复捕获
-            resumeCapturing()  // 重建 1x1 焦点窗口（IME 需要它）
-        }  // 结束焦点窗口判断
-
-        Log.i(TAG, "sync keyboard: chat=$chatState keyboardShowing=$isKeyboardShowing attempts=$attempts flipped=$flipped")  // 打印同步前状态
-
-        when (chatState) {  // 按聊天框状态分支
-            ChatStateMonitor.STATE_OPEN -> {  // 聊天框打开
-                if (!isKeyboardShowing) toggleSystemKeyboard()  // 打开但没有键盘 → 弹出
-            }  // 结束打开分支
-            ChatStateMonitor.STATE_CLOSED -> {  // 聊天框关闭
-                if (isKeyboardShowing) toggleSystemKeyboard()  // 关闭但键盘还在 → 收起
-            }  // 结束关闭分支
-            else -> {  // 未启用检测 / 未识别到信标
-                toggleSystemKeyboard()  // 保持原有盲切行为
-                Log.i(TAG, "sync keyboard: chat state unknown, fallback toggle")  // 打印回退日志
-            }  // 结束未知分支
-        }  // 结束 when
-    }  // 结束 applyKeyboardRule 函数
-
     override fun onDestroy() {  // override=覆写父类方法；Service 销毁回调：释放所有资源
         super.onDestroy()  // 调用父类销毁逻辑
         // 停止智能暂停监控
         stopSmartMonitor()  // 停止前台应用轮询线程
-        // 停止聊天框信标检测（结束截屏会话）
-        chatMonitor?.release()  // ?.=安全调用；释放 MediaProjection
-        chatMonitor = null  // 清空检测器引用
         // 停止手柄连接状态轮询
         stopControllerMonitor()  // 停止手柄状态轮询任务
         // 注销蓝牙 HID Host 代理

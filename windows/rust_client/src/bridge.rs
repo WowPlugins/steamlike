@@ -17,6 +17,8 @@
 //! - 0x20 客户端信息（exe → APK）：Byte1-3 为 exe 编译时的版本号，APK 据此判断客户端是否过期
 //! - 0x21 剪贴板文本（exe → APK）：8 字节头之后跟随变长正文
 //! - 0x23 切换安卓键盘（exe → APK）：8 字节定长包、无载荷，用于映射动作反向通知
+//! - 0x25 显示安卓键盘（exe → APK）：8 字节定长包、无载荷，仅弹出键盘（已在显示时忽略）
+//! - 0x26 解锁鼠标锁定（APK → exe）：8 字节定长包、无载荷，解除左右键长按锁定并延时居中
 //! - 0x22 Unicode 文本（APK → exe）：8 字节头之后跟随 UTF-8 正文，用于软键盘输入中文
 //!   头字节下标 4..7 为 UTF-8 字节长度（uint32 小端），其后紧接文本正文
 //!   exe 收到后写入剪贴板并注入 Ctrl+V 粘贴（直接 Unicode 注入在 WoW 中文界面会乱码）
@@ -45,6 +47,21 @@ pub fn send_toggle_keyboard() {
     }
     let mut packet = [0u8; PACKET_SIZE];
     packet[0] = 0x23;
+    if let Ok(mut queue) = OUTBOX.lock() {
+        queue.push(packet.to_vec());
+    }
+}
+
+/// 通知 APK 拉起安卓软键盘（0x25，8 字节定长包，无载荷）
+///
+/// 与 [send_toggle_keyboard] 不同，这条只负责弹出：键盘已经在显示时 APK 不做任何处理，
+/// 避免「按下映射键反而把正在输入的键盘收起」。键盘上的「发送/回车」按下后由 APK 自动收起。
+pub fn send_show_keyboard() {
+    if !CONNECTED.load(Ordering::Relaxed) {
+        return;
+    }
+    let mut packet = [0u8; PACKET_SIZE];
+    packet[0] = 0x25;
     if let Ok(mut queue) = OUTBOX.lock() {
         queue.push(packet.to_vec());
     }
@@ -272,6 +289,8 @@ fn process_packet(data: &[u8; PACKET_SIZE]) {
             runtime::set_expected_rust_version(v.clone());
             runtime::log(format!("已同步 APK 期望的客户端版本：v{}", v));
         }
+        // APK 悬浮窗「解锁鼠标」按钮：解除左右键长按锁定（居中由动作线程延时执行）
+        0x26 => crate::hooks::unlock_from_apk(),
         _ => {}
     }
 }
