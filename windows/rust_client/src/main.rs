@@ -63,15 +63,28 @@ fn main() -> eframe::Result<()> {
         let _ = std::thread::Builder::new()
             .name("auto_launch".to_string())
             .spawn(move || {
-                // 基线用钩子侧的输入计数，而不是 GetLastInputInfo：
-                // Wine/Winlator 下该 API 的时间基准可能与 GetTickCount 不同，导致恒判为「有输入」
-                let baseline = hooks::input_seq();
-                std::thread::sleep(std::time::Duration::from_millis(
-                    launch_cfg.auto_launch_delay_ms as u64,
-                ));
-                if launch_cfg.skip_launch_on_input && hooks::input_seq() != baseline {
-                    runtime::log("自动启动等待期间检测到键鼠输入，本次不启动魔兽");
-                    return;
+                // 输入检测用两种来源：
+                // 1) 钩子计数（键鼠按键，自注入事件不计入）；
+                // 2) 光标位置轮询 —— Winlator/Wine 不会把鼠标移动派发给低级钩子，
+                //    只能靠定时读取光标坐标变化来识别移动。
+                let baseline_seq = hooks::input_seq();
+                let baseline_pos = win::current_cursor();
+                let total_ms = launch_cfg.auto_launch_delay_ms as u64;
+                let mut elapsed = 0u64;
+                while elapsed < total_ms {
+                    let sleep_ms = 100u64.min(total_ms - elapsed);
+                    std::thread::sleep(std::time::Duration::from_millis(sleep_ms));
+                    elapsed += sleep_ms;
+                    if !launch_cfg.skip_launch_on_input {
+                        break;
+                    }
+                    let (x, y) = win::current_cursor();
+                    // 2 像素容差：忽略坐标抖动，真正的移动才会取消本次启动
+                    let moved = (x - baseline_pos.0).abs() + (y - baseline_pos.1).abs() >= 2;
+                    if hooks::input_seq() != baseline_seq || moved {
+                        runtime::log("自动启动等待期间检测到键鼠输入，本次不启动魔兽");
+                        return;
+                    }
                 }
                 launch_game(&launch_cfg);
             });
