@@ -126,6 +126,7 @@ class InputBridgeServer(  // 语法：class 声明类；InputBridge TCP 服务�
         const val MSG_TOGGLE_KEYBOARD: Byte = 0x23  // 消息类型：切换安卓键盘（客户端 → APK，无载荷，用于 Rust 映射反向通知）
         const val MSG_SHOW_KEYBOARD: Byte = 0x25  // 消息类型：显示安卓键盘（客户端 → APK，无载荷，仅弹出不收起）
         const val MSG_UNLOCK_MOUSE: Byte = 0x26  // 消息类型：解锁鼠标锁定（APK → 客户端，无载荷，解除左右键长按锁定）
+        const val MSG_MAPPED_KEY: Byte = 0x27  // 消息类型：键位映射按键（APK → 客户端，可被客户端本地按键映射再次命中）
 
         const val PACKET_SIZE = 8  // 语法：const val 编译期常量；协议数据包固定长度 8 字节
         const val MAX_CLIPBOARD_BYTES = 1 shl 20  // 单个剪贴板文本正文上限（1 MB，防御异常数据）
@@ -203,6 +204,22 @@ class InputBridgeServer(  // 语法：class 声明类；InputBridge TCP 服务�
         packet[3] = if (isDown) 1 else 0  // 语法：if 表达式；写入按下标志（1=按下）
         enqueue(packet)  // 加入发送队列
     }  // 结束 sendKeyEvent 函数
+
+    /**
+     * 发送「键位映射」产生的按键事件
+     *
+     * 与 [sendKeyEvent] 报文结构相同，只是类型字节不同（0x27）。
+     * 客户端会把它当作外部输入，因此本地按键映射可以再次命中（例如手柄键映射出 3，
+     * 客户端再把 3 映射成「解锁+居中+按键」）；普通键盘事件 0x01 仍被客户端视为自注入并跳过。
+     */
+    fun sendMappedKeyEvent(vkCode: Int, isDown: Boolean) {  // 发送映射按键事件
+        val packet = ByteArray(PACKET_SIZE)  // 创建 8 字节定长数据包
+        packet[0] = MSG_MAPPED_KEY  // 消息类型：映射按键
+        packet[1] = (vkCode and 0xFF).toByte()  // VK 码低 8 位
+        packet[2] = ((vkCode shr 8) and 0xFF).toByte()  // VK 码高 8 位（小端序）
+        packet[3] = if (isDown) 1 else 0  // 按下标志（1=按下）
+        enqueue(packet)  // 加入发送队列
+    }  // 结束 sendMappedKeyEvent 函数
 
     /**
      * 发送 Unicode 文本（供软键盘输入中文等无法用 VK 表示的内容）

@@ -24,6 +24,7 @@ use crossbeam_channel::{unbounded, Receiver, RecvTimeoutError, Sender};
 use windows::Win32::Foundation::{HWND, LPARAM, LRESULT, WPARAM};
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows::Win32::System::Threading::GetCurrentThreadId;
+use windows::Win32::UI::Input::KeyboardAndMouse::GetAsyncKeyState;
 use windows::Win32::UI::WindowsAndMessaging::*;
 
 use crate::runtime::{log, pack_pos, RT};
@@ -133,14 +134,35 @@ fn do_swap() {
 ///
 /// 顺序固定：先松开左右键让游戏退出 mouselook → 等游戏处理完 → 光标居中 → 按键。
 pub fn do_unlock_key(vk: u16, sub_commands: &[u32]) {
+    let left_locked = RT.left_locked.load(Ordering::Relaxed);
+    let right_locked = RT.right_locked.load(Ordering::Relaxed);
+    log(format!(
+        "[解锁按键] 开始：原锁存 左={} 右={}，目标键 {}",
+        left_locked,
+        right_locked,
+        if vk == 0 {
+            "（未设置）".to_string()
+        } else {
+            crate::ui::combo_name(vk as u32, sub_commands)
+        }
+    ));
+    // 无条件补发松开：即使标志显示未锁定，游戏也可能处于 mouselook，需要这一次松开才能退出
     win::inject_mouse_button(BTN_LEFT, false);
     win::inject_mouse_button(BTN_RIGHT, false);
     RT.left_locked.store(false, Ordering::Relaxed);
     RT.right_locked.store(false, Ordering::Relaxed);
+    log("[解锁按键] 已松开左右键，等待游戏退出 mouselook");
     std::thread::sleep(Duration::from_millis(UNLOCK_CENTER_DELAY_MS));
     win::center_cursor();
+    log("[解锁按键] 光标已居中");
     if vk != 0 {
         execute_keyboard_key(vk, sub_commands);
+        log(format!(
+            "[解锁按键] 完成：已发送 {}",
+            crate::ui::combo_name(vk as u32, sub_commands)
+        ));
+    } else {
+        log("[解锁按键] 目标键未设置，跳过发送");
     }
 }
 
@@ -258,7 +280,20 @@ unsafe extern "system" fn keyboard_proc(ncode: i32, wparam: WPARAM, lparam: LPAR
     if RT.key_mapping_enabled.load(Ordering::Relaxed) {
         let is_mapped = {
             let mappings = RT.key_mappings.lock().unwrap();
-            mappings.iter().any(|m| m.source_vk == vk as u32 && m.enabled)
+            mappings.iter().any(|m| {
+                if !m.enabled || m.trigger_vk() != vk as u32 {
+                    return false;
+                }
+                // 松开时不检查组合里其他键，避免修饰键先松开导致计时无法结束
+                if !down {
+                    return true;
+                }
+                // 按下时组合里其余键（含修饰键）必须全部按住
+                let mut keys = m.combo_keys();
+                keys.retain(|&v| v != m.trigger_vk());
+                keys.iter()
+                    .all(|&v| unsafe { GetAsyncKeyState(v as i32) as u16 & 0x8000 != 0 })
+            })
         };
         if is_mapped {
             queue_cmd(if down {
@@ -479,9 +514,6 @@ fn action_thread(rx: Receiver<Cmd>) {
     }
 }
 
-/// 执行映射动作
-///
-/// vk 是源按键虚拟键码，is_long_press 表示是否为长按触发。
 /// 从运行时映射列表中查找该按键的映射，若启用则执行对应动作。
 fn execute_mapping(source_vk: u32, is_long_press: bool) {
     // 总开关关闭时不执行任何映射
@@ -490,11 +522,26 @@ fn execute_mapping(source_vk: u32, is_long_press: bool) {
     }
 
     let mappings = RT.key_mappings.lock().unwrap();
-    let mapping = match mappings.iter().find(|m| m.source_vk == source_vk && m.enabled) {
+    // 按触发键匹配（修饰键可能已经松开，因为计时在抬起时才结算）
+    let mapping = match mappings
+        .iter()
+        .find(|m| m.enabled && m.trigger_vk() == source_vk)
+    {
         Some(m) => m.clone(),
         None => return,
     };
     drop(mappings);
+
+    // 统一记录一次命中的映射，便于确认按键是否被钩子拦截（有这条才说明拦截生效）
+    log(format!(
+        "[映射] 命中 按键 {} → {}",
+        crate::ui::combo_name(mapping.source_vk, &mapping.source_mods),
+        if is_long_press {
+            mapping.long_press_action.describe()
+        } else {
+            mapping.tap_action.describe()
+        }
+    ));
 
     let action = if is_long_press {
         &mapping.long_press_action
@@ -539,6 +586,10 @@ fn execute_mapping(source_vk: u32, is_long_press: bool) {
             key_code,
             sub_commands,
         } => {
+            log(format!(
+                "[映射] 解锁+居中+按键 → {}",
+                crate::ui::combo_name(*key_code, sub_commands)
+            ));
             queue_cmd(Cmd::UnlockKey(*key_code as u16, sub_commands.clone()));
         }
         crate::config::MappedAction::OverlayToggle => {

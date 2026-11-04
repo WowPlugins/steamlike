@@ -199,19 +199,18 @@ impl MappedAction {
                 key_code,
                 sub_commands,
             } => {
-                let main = crate::ui::key_name(*key_code);
-                if sub_commands.is_empty() {
-                    format!("解锁+居中+{}", main)
-                } else {
-                    let subs: Vec<String> = sub_commands
-                        .iter()
-                        .map(|&c| crate::ui::key_name(c))
-                        .collect();
-                    format!("解锁+居中+{} + {}", main, subs.join(" + "))
-                }
+                format!(
+                    "解锁+居中+{}",
+                    crate::ui::combo_name(*key_code, sub_commands)
+                )
             }
         }
     }
+}
+
+/// 是否为修饰键（Ctrl/Shift/Alt/Win）
+pub fn is_modifier_vk(vk: u32) -> bool {
+    matches!(vk, 0x10 | 0x11 | 0x12 | 0x5B | 0x5C)
 }
 
 /// 一条按键映射：源按键 → 短按动作 + 长按动作
@@ -220,6 +219,9 @@ impl MappedAction {
 pub struct KeyMapping {
     /// 源按键虚拟键码
     pub source_vk: u32,
+    /// 源按键的修饰键（如 Ctrl+7 里的 Ctrl），需全部按住才触发
+    #[serde(default)]
+    pub source_mods: Vec<u32>,
     /// 短按动作
     pub tap_action: MappedAction,
     /// 长按动作（None 表示无长按映射）
@@ -228,10 +230,36 @@ pub struct KeyMapping {
     pub enabled: bool,
 }
 
+impl KeyMapping {
+    /// 组合键的全部按键（源按键 + 修饰键）
+    pub fn combo_keys(&self) -> Vec<u32> {
+        let mut keys = Vec::with_capacity(self.source_mods.len() + 1);
+        keys.push(self.source_vk);
+        keys.extend(self.source_mods.iter().copied());
+        keys
+    }
+
+    /// 触发键：组合里真正被拦截的那个主键（跳过修饰键）
+    ///
+    /// 无论 Ctrl 被填在「源按键」还是「子命令」里，触发键都是 7，
+    /// 这样 Ctrl+7 能上钩子拦截 7，同时 Ctrl 本体仍透传给游戏。
+    pub fn trigger_vk(&self) -> u32 {
+        if !is_modifier_vk(self.source_vk) {
+            return self.source_vk;
+        }
+        self.source_mods
+            .iter()
+            .copied()
+            .find(|&v| !is_modifier_vk(v))
+            .unwrap_or(0)
+    }
+}
+
 impl Default for KeyMapping {
     fn default() -> Self {
         Self {
             source_vk: 0,
+            source_mods: Vec::new(),
             tap_action: MappedAction::None,
             long_press_action: MappedAction::None,
             enabled: true,

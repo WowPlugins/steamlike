@@ -66,7 +66,7 @@ class BridgeInputInjector(  // 语法：class 声明类；桥接输入注入器�
         val vkCode = androidKeyCodeToWindowsVK(keyCode)  // 语法：val 只读变量；把 Android 按键码转换为 Windows VK 码
         if (vkCode != 0) {  // 语法：if 条件判断；仅当映射有效（非0）时才发送
             pressedKeys.add(vkCode)  // 记录该按键处于按下状态
-            server.sendKeyEvent(vkCode, isDown = true)  // 语法：命名参数 isDown=true；经 TCP 发送按键按下事件
+            server.sendMappedKeyEvent(vkCode, isDown = true)  // 语法：命名参数 isDown=true；经 TCP 发送按键按下事件
         }  // 结束 if 块
     }  // 结束 sendKeyDown 函数
 
@@ -78,7 +78,7 @@ class BridgeInputInjector(  // 语法：class 声明类；桥接输入注入器�
         val vkCode = androidKeyCodeToWindowsVK(keyCode)  // 语法：val 只读变量；把 Android 按键码转换为 Windows VK 码
         if (vkCode != 0) {  // 语法：if 条件判断；仅当映射有效（非0）时才发送
             pressedKeys.remove(vkCode)  // 从按下集合中移除该按键
-            server.sendKeyEvent(vkCode, isDown = false)  // 语法：命名参数 isDown=false；经 TCP 发送按键释放事件
+            server.sendMappedKeyEvent(vkCode, isDown = false)  // 语法：命名参数 isDown=false；经 TCP 发送按键释放事件
         }  // 结束 if 块
     }  // 结束 sendKeyUp 函数
 
@@ -93,9 +93,9 @@ class BridgeInputInjector(  // 语法：class 声明类；桥接输入注入器�
     override fun sendVkKeyPress(vkCode: Int) {  // 语法：override 覆写；用原始 VK 码发送按键点击
         if (vkCode == 0) return  // VK 码无效时不发送（语法：if 单行返回）
         pressedKeys.add(vkCode)  // 记录该 VK 处于按下状态
-        server.sendKeyEvent(vkCode, isDown = true)  // 发送按下事件
+        server.sendMappedKeyEvent(vkCode, isDown = true)  // 发送按下事件
         pressedKeys.remove(vkCode)  // 立即移除按下状态
-        server.sendKeyEvent(vkCode, isDown = false)  // 发送释放事件
+        server.sendMappedKeyEvent(vkCode, isDown = false)  // 发送释放事件
     }  // 结束 sendVkKeyPress 函数
 
     override fun sendMouseDown(button: MouseButton) {  // 语法：override 覆写；发送鼠标按钮按下事件

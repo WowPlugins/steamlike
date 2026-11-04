@@ -243,6 +243,11 @@ fn process_packet(data: &[u8; PACKET_SIZE]) {
             // 键盘事件不再逐包 sleep：整段文本已改走 0x22 一次性提交，
             // 这里只剩控制键/映射按键等稀疏事件，4ms 延时只会增加可感知的输入延迟
         }
+        0x27 => {
+            // APK 键位映射产生的按键：不带 MAGIC 标记，本地按键映射可再次命中
+            let vk = u16::from_le_bytes([data[1], data[2]]);
+            win::inject_key_ex(vk, data[3] != 0, 0);
+        }
         0x02 => {
             let dx = i16::from_le_bytes([data[1], data[2]]) as i32;
             let dy = i16::from_le_bytes([data[3], data[4]]) as i32;

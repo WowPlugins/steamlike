@@ -41,7 +41,7 @@ static PRESSED_KEYS: [AtomicBool; 256] = [const { AtomicBool::new(false) }; 256]
 /// 已注入且尚未释放的鼠标按钮
 static PRESSED_BUTTONS: [AtomicBool; 5] = [const { AtomicBool::new(false) }; 5];
 
-fn key_input(vk: u16, down: bool) -> INPUT {
+fn key_input(vk: u16, down: bool, extra: usize) -> INPUT {
     let mut input = INPUT::default();
     input.r#type = INPUT_KEYBOARD;
     input.Anonymous.ki = KEYBDINPUT {
@@ -53,7 +53,7 @@ fn key_input(vk: u16, down: bool) -> INPUT {
             KEYEVENTF_KEYUP
         },
         time: 0,
-        dwExtraInfo: MAGIC,
+        dwExtraInfo: extra,
     };
     input
 }
@@ -125,9 +125,18 @@ pub fn paste_text(text: &str) {
     std::thread::sleep(std::time::Duration::from_millis(150));
 }
 
-/// 注入键盘事件
+/// 注入键盘事件（本程序自己产生的按键，带 MAGIC 标记，不会被本地映射再次拦截）
 pub fn inject_key(vk: u16, down: bool) {
-    send(&[key_input(vk, down)]);
+    inject_key_ex(vk, down, MAGIC);
+}
+
+/// 注入键盘事件并指定 `dwExtraInfo`
+///
+/// `extra == MAGIC` 表示本程序映射动作产生的按键：钩子会跳过，避免映射递归；
+/// 传 0 表示「外部来源」的按键（例如 APK 手柄映射出来的键），
+/// 本地键盘映射仍可正常命中并拦截。
+pub fn inject_key_ex(vk: u16, down: bool, extra: usize) {
+    send(&[key_input(vk, down, extra)]);
     if (vk as usize) < 256 {
         PRESSED_KEYS[vk as usize].store(down, Ordering::Relaxed);
     }
@@ -471,7 +480,7 @@ pub fn release_all() {
     let mut inputs: Vec<INPUT> = Vec::new();
     for i in 0..256usize {
         if PRESSED_KEYS[i].swap(false, Ordering::Relaxed) {
-            inputs.push(key_input(i as u16, false));
+            inputs.push(key_input(i as u16, false, MAGIC));
         }
     }
     for b in 0..5u8 {

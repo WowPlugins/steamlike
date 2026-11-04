@@ -147,6 +147,35 @@ const NUMPAD_CHOICES: &[(u32, &str)] = &[
     (0x0D, "Num Enter"),
 ];
 
+/// 是否为修饰键（Ctrl/Shift/Alt/Win）
+fn is_mod_vk(vk: u32) -> bool {
+    matches!(vk, 0x10 | 0x11 | 0x12 | 0x5B | 0x5C)
+}
+
+/// 组合键显示名：修饰键一律排在前面（如 Ctrl+7），与习惯写法一致
+pub fn combo_name(main: u32, mods: &[u32]) -> String {
+    let mut mods_first: Vec<u32> = Vec::new();
+    let mut keys_last: Vec<u32> = Vec::new();
+    for &m in mods {
+        if is_mod_vk(m) {
+            mods_first.push(m);
+        } else {
+            keys_last.push(m);
+        }
+    }
+    if is_mod_vk(main) {
+        mods_first.push(main);
+    } else {
+        keys_last.insert(0, main);
+    }
+    mods_first
+        .iter()
+        .chain(keys_last.iter())
+        .map(|&v| key_name(v))
+        .collect::<Vec<_>>()
+        .join("+")
+}
+
 /// Shift 符号名（用于映射描述：Shift+1 直接显示为 !）
 pub fn shift_symbol_name(vk: u32) -> Option<&'static str> {
     SHIFT_SYMBOLS
@@ -259,6 +288,8 @@ pub struct App {
     edit_long_press_subs: Vec<u32>,
     /// 映射编辑对话框：源按键
     edit_source_vk: u32,
+    /// 映射编辑对话框：源按键的修饰键（组合键，如 Ctrl+7 里的 Ctrl）
+    edit_source_mods: Vec<u32>,
     /// 映射编辑对话框：是否启用
     edit_enabled: bool,
     /// 是否处于完整编辑面板状态（false = 小面板/圆点）
@@ -292,6 +323,24 @@ impl App {
         cfg.overlay_expanded = true;
         RT.overlay_expanded.store(true, Ordering::SeqCst);
 
+        // 启动诊断：把实际加载的映射与两个总开关写进日志，便于确认「按键没命中」是配置没加载还是钩子没拦
+        runtime::log(format!(
+            "[映射] 已加载 {} 条按键映射（映射开关={}，拦截开关={}）",
+            cfg.key_mappings.len(),
+            if cfg.key_mapping_enabled { "开" } else { "关" },
+            if cfg.intercept_enabled { "开" } else { "关" }
+        ));
+        for (i, m) in cfg.key_mappings.iter().enumerate() {
+            runtime::log(format!(
+                "[映射] #{} {} → 短按 {} / 长按 {}（启用={}）",
+                i + 1,
+                combo_name(m.source_vk, &m.source_mods),
+                m.tap_action.describe(),
+                m.long_press_action.describe(),
+                if m.enabled { "是" } else { "否" }
+            ));
+        }
+
         Self {
             last_intercept: cfg.intercept_enabled,
             last_connect: cfg.auto_connect,
@@ -309,6 +358,7 @@ impl App {
             edit_tap_subs: Vec::new(),
             edit_long_press_subs: Vec::new(),
             edit_source_vk: 0,
+            edit_source_mods: Vec::new(),
             edit_enabled: true,
             // 启动即显示完整主界面
             full_editor: true,
@@ -888,8 +938,11 @@ impl App {
                         *dirty = true;
                     }
                     ui.label(
-                        egui::RichText::new(format!("按键 {}", key_name(mapping.source_vk)))
-                            .strong(),
+                        egui::RichText::new(format!(
+                            "按键 {}",
+                            combo_name(mapping.source_vk, &mapping.source_mods)
+                        ))
+                        .strong(),
                     );
                     // 编辑/删除放在右侧
                     ui.with_layout(
@@ -960,6 +1013,7 @@ impl App {
         let mapping = &self.cfg.key_mappings[index];
         self.editing_mapping = Some(index);
         self.edit_source_vk = mapping.source_vk;
+        self.edit_source_mods = mapping.source_mods.clone();
         self.edit_enabled = mapping.enabled;
 
         // 解析短按动作
@@ -1125,6 +1179,7 @@ impl App {
             let lp = self.build_action(self.edit_long_press_type, self.edit_long_press_value, &self.edit_long_press_subs);
             let mapping = &mut self.cfg.key_mappings[index];
             mapping.source_vk = self.edit_source_vk;
+            mapping.source_mods = self.edit_source_mods.clone();
             mapping.enabled = self.edit_enabled;
             mapping.tap_action = tap;
             mapping.long_press_action = lp;
@@ -1203,6 +1258,9 @@ impl App {
                         chosen
                     });
                 });
+
+                // 源按键的修饰键：如「Ctrl+7」需 Ctrl 按住时才触发该映射
+                Self::render_sub_commands_editor(ui, &mut self.edit_source_mods, "map_src");
 
                 ui.checkbox(&mut self.edit_enabled, "启用此映射");
 
@@ -1401,6 +1459,7 @@ impl App {
                     ui.label("按键:");
                     Self::render_key_picker(ui, value, subs, id_prefix);
                 });
+                Self::render_sub_commands_editor(ui, subs, id_prefix);
             }
             3 | 4 => {
                 // 鼠标点击 / 鼠标长按

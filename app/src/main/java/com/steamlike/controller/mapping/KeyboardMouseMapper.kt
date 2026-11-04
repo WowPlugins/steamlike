@@ -451,7 +451,6 @@ class KeyboardMouseMapper( // 语法：class 类声明，定义键盘/鼠标映�
             is MappedAction.MouseReleaseAll -> handleMouseReleaseAll() // 释放鼠标所有长按动作：解除全部长按锁存
             is MappedAction.MouseClickSequence -> handleMouseClickSequence() // 交互键动作：临时释放锁存→左键点击→右键点击→恢复锁存
             is MappedAction.MouseFineMove -> enterFineMove(button) // 精细移动动作：按住期间缩小右摇杆鼠标位移
-            is MappedAction.UnlockThenKey -> handleUnlockThenKey(action.keyCode) // 解锁+居中+按键动作：解除锁存→光标居中→发送按键
             is MappedAction.SwitchLayer -> {} // SteamInput 已处理 // 切换层动作：由 SteamInput 内部处理
             is MappedAction.MouseMove, is MappedAction.LookAround -> {} // handleStick 处理 // 鼠标移动/视角动作：由 handleStick 处理
             is MappedAction.MouseScrollUp -> handleMouseScroll(SCROLL_DELTA) // 鼠标上滚动作：传入正增量
@@ -949,20 +948,6 @@ class KeyboardMouseMapper( // 语法：class 类声明，定义键盘/鼠标映�
         }, unlockCenterDelayMs) // 延时结束（语法：postDelayed 的第二参数）
     } // 结束 handleMouseClickSequence 函数
 
-    /**
-     * 解锁+居中+按键：解除左右键长按锁存 → 延时居中 → 发送指定按键
-     *
-     * 与「交互键」相同的时序：先让游戏处理完退出 mouselook，再居中，最后发送按键。
-     */
-    private fun handleUnlockThenKey(keyCode: Int) { // 语法：private fun 私有函数，解锁后居中并发送按键
-        setMouseLockState(MouseButton.LEFT, false) // 立即释放左键锁存（未锁定则无操作）
-        setMouseLockState(MouseButton.RIGHT, false) // 立即释放右键锁存（未锁定则无操作）
-        mainHandler.postDelayed({ // 语法：postDelayed 延迟投递；等游戏退出 mouselook 后再居中并按键
-            injector.sendMouseCenterExact() // 居中：把鼠标光标移到屏幕正中央
-            injector.sendKeyDown(keyCode) // 发送原始按键：按下
-            injector.sendKeyUp(keyCode) // 发送原始按键：松开
-        }, unlockCenterDelayMs) // 延时结束（语法：postDelayed 的第二参数）
-    } // 结束 handleUnlockThenKey 函数
 
     /**
      * 左摇杆移动（WASD）时确保鼠标右键处于锁定状态
