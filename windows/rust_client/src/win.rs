@@ -310,10 +310,15 @@ pub fn set_topmost(title: &str) {
 /// Winlator 下窗口透明合成不可靠（圆角外会画成黑色），这里直接用窗口区域
 /// （Wine 映射为 XShape）把四个角裁掉，圆角外干脆不属于窗口，不依赖桌面合成器。
 pub fn round_own_window(title: &str, radius: i32) {
+    // 失败只记录一次，避免每秒重试把日志刷爆
+    static FAIL_LOGGED: AtomicBool = AtomicBool::new(false);
     let wide: Vec<u16> = title.encode_utf16().chain(std::iter::once(0)).collect();
     unsafe {
         let hwnd = FindWindowW(PCWSTR::null(), PCWSTR(wide.as_ptr()));
         if hwnd.0 == 0 {
+            if !FAIL_LOGGED.swap(true, Ordering::Relaxed) {
+                log("[窗口] 未找到自身窗口句柄，无法设置圆角区域");
+            }
             return;
         }
         let mut rect = RECT::default();
@@ -331,6 +336,9 @@ pub fn round_own_window(title: &str, radius: i32) {
         // 成功后区域归系统所有，不能再删除
         if SetWindowRgn(hwnd, rgn, true) == 0 {
             let _ = DeleteObject(rgn);
+            if !FAIL_LOGGED.swap(true, Ordering::Relaxed) {
+                log("[窗口] SetWindowRgn 失败：系统不支持窗口区域裁剪，收起圆点将使用深色底");
+            }
         }
     }
 }

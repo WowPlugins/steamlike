@@ -527,15 +527,13 @@ impl eframe::App for App {
     /// 窗口底色
     ///
     /// Winlator/Wine 不做透明合成，透明像素会被画成黑色，窗口圆角外就成了黑角。
-    /// 这里把底色画成与界面填充色相同（圆点态用状态色），窗口再配合圆角/圆形区域裁剪：
-    /// 区域生效时圆角透出游戏画面，不生效时颜色也与界面一致，都不会出现黑角。
+    /// 这里把底色画成与面板一致的深色，窗口再配合圆角/圆形区域裁剪：
+    /// 区域生效时圆角透出游戏画面；不生效时也只有一个低调的深色底，不会出现刺眼纯色方块。
     fn clear_color(&self, visuals: &egui::Visuals) -> [f32; 4] {
         if !self.cfg.overlay_expanded {
-            if CONNECTED.load(Ordering::Relaxed) {
-                egui::Color32::from_rgb(0x1B, 0x8A, 0x2E).to_normalized_gamma_f32()
-            } else {
-                egui::Color32::from_rgb(0x9E, 0x5B, 0x00).to_normalized_gamma_f32()
-            }
+            // 圆点态用与面板一致的深色底：Winlator/Wine 若不支持窗口区域裁剪，
+            // 四角只是深灰方块，连接状态改由圆点本体颜色（绿/橙）表达
+            egui::Color32::from_rgb(0x1C, 0x1C, 0x20).to_normalized_gamma_f32()
         } else {
             visuals.window_fill.to_normalized_gamma_f32()
         }
