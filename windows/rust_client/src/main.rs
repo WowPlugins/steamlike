@@ -95,6 +95,15 @@ fn main() -> eframe::Result<()> {
             });
     }
 
+    // 启动总是显示完整主界面（App::new 里也强制展开），
+    // 所以初始尺寸直接给完整面板尺寸，避免首帧再从小尺寸撑大/缩小的变化
+    let (sw, sh) = win::screen_size();
+    let initial = egui::vec2(
+        (sw as f32 - 8.0).clamp(420.0, 620.0),
+        (sh as f32 - 8.0).clamp(420.0, 660.0),
+    );
+    let title = format!("SteamLike InputBridge v{}", runtime::version());
+
     let options = eframe::NativeOptions {
         // 浮动控制面板形态：无边框、置顶（圆点状态下靠 SetWindowRgn 裁成圆形）
         decorated: false,
@@ -106,18 +115,12 @@ fn main() -> eframe::Result<()> {
         transparent: false,
         // 启动尺寸直接按当前形态给出：圆点/小面板/完整面板，
         // 避免先显示大窗口、首帧再缩小的闪烁
-        initial_window_size: Some(if !cfg.overlay_expanded {
-            egui::vec2(64.0, 64.0) // 圆点
-        } else if cfg.overlay_compact_enabled {
-            egui::vec2(280.0, 250.0) // 小面板
-        } else {
-            egui::vec2(600.0, 560.0) // 完整编辑面板（首帧按屏幕高度收敛）
-        }),
+        initial_window_size: Some(initial),
         ..Default::default()
     };
 
     let result = eframe::run_native(
-        &format!("SteamLike InputBridge v{}", runtime::version()),
+        &title,
         options,
         Box::new(|cc| {
             ui::setup_fonts(&cc.egui_ctx);

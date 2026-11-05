@@ -435,10 +435,14 @@ impl eframe::App for App {
         }
 
         // 面板状态 → 目标窗口尺寸（状态切换时调整窗口大小）
-        // 完整编辑面板高度按实际屏幕收敛，避免容器分辨率较低时窗口底部被裁掉
-        let screen = ctx.input(|i| i.screen_rect());
-        let full_w = (screen.width() - 8.0).clamp(420.0, 620.0);
-        let full_h = (screen.height() - 8.0).clamp(420.0, 660.0);
+        // 必须用「显示器尺寸」而不是 ctx.input().screen_rect()：
+        // 后者返回的是窗口自身矩形，拿它做收敛会形成自反馈，每帧缩 8px 一直缩到下限。
+        let scale = ctx.pixels_per_point();
+        let (phys_w, phys_h) = crate::win::screen_size();
+        let screen_w = phys_w as f32 / scale;
+        let screen_h = phys_h as f32 / scale;
+        let full_w = (screen_w - 8.0).clamp(420.0, 620.0);
+        let full_h = (screen_h - 8.0).clamp(420.0, 660.0);
         let target = if !self.cfg.overlay_expanded {
             egui::vec2(64.0, 64.0) // 圆点
         } else if self.full_editor || !self.cfg.overlay_compact_enabled {
