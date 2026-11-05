@@ -270,6 +270,8 @@ pub struct App {
     mismatch_logged: bool,
     /// 游戏 exe 路径错误提示（路径不存在/未设置时显示红字）
     launch_error: Option<String>,
+    /// 手动导出插件的结果（文本, 是否为错误）
+    addon_msg: Option<(String, bool)>,
     /// 当前选中的 Tab 页索引
     selected_tab: usize,
     /// 映射编辑对话框：当前正在编辑的映射索引（None 表示未打开）
@@ -292,6 +294,8 @@ pub struct App {
     edit_source_mods: Vec<u32>,
     /// 映射编辑对话框：是否启用
     edit_enabled: bool,
+    /// 映射编辑对话框：生效条件（0=始终，1=仅潜行，2=仅非潜行）
+    edit_condition: usize,
     /// 是否处于完整编辑面板状态（false = 小面板/圆点）
     full_editor: bool,
     /// 上次应用的窗口尺寸（用于检测面板状态切换时调整窗口大小）
@@ -332,13 +336,22 @@ impl App {
         ));
         for (i, m) in cfg.key_mappings.iter().enumerate() {
             runtime::log(format!(
-                "[映射] #{} {} → 短按 {} / 长按 {}（启用={}）",
+                "[映射] #{} {}{} → 短按 {} / 长按 {}（启用={}）",
                 i + 1,
                 combo_name(m.source_vk, &m.source_mods),
+                if m.require_stealth.is_some() {
+                    format!("（{}）", m.condition_text())
+                } else {
+                    String::new()
+                },
                 m.tap_action.describe(),
                 m.long_press_action.describe(),
                 if m.enabled { "是" } else { "否" }
             ));
+        }
+        // 带生效条件的映射依赖内存扫描，关闭时提前提示，避免排查时误以为是映射没命中
+        if !cfg.enable_state_scan && cfg.key_mappings.iter().any(|m| m.require_stealth.is_some()) {
+            runtime::log("[状态] 存在带生效条件的映射，但「角色状态读取」已关闭，这些映射不会命中");
         }
 
         Self {
@@ -348,6 +361,7 @@ impl App {
             mismatch_dismissed: false,
             mismatch_logged: false,
             launch_error,
+            addon_msg: None,
             cfg,
             selected_tab: 0,
             editing_mapping: None,
@@ -360,6 +374,7 @@ impl App {
             edit_source_vk: 0,
             edit_source_mods: Vec::new(),
             edit_enabled: true,
+            edit_condition: 0,
             // 启动即显示完整主界面
             full_editor: true,
             last_window_size: (0.0, 0.0),
@@ -607,6 +622,7 @@ impl App {
 
             /* ===== 魔兽启动 ===== */
             Self::section(ui, "魔兽启动");
+            let wow_path_before = self.cfg.wow_path.clone();
             ui.horizontal(|ui| {
                 ui.label("EXE 路径：");
                 if ui.button("浏览…").clicked() {
@@ -665,6 +681,48 @@ impl App {
                 if std::path::Path::new(self.cfg.wow_path.trim()).is_file() {
                     self.launch_error = None;
                 }
+            }
+            if self.cfg.wow_path != wow_path_before {
+                // 路径一变就立刻把 SLState 插件装到该游戏目录，
+                // 不必等下次启动客户端
+                crate::wowmem::apply(self.cfg.enable_state_scan, &self.cfg.wow_path);
+            }
+            // 插件状态、目录、导出按钮各占一行：
+            // 长路径自动换行，按钮不会被挤出或被文字遮挡
+            let addon = crate::wowmem::addon_dir_text(&self.cfg.wow_path);
+            match &addon {
+                Some((_, installed)) => {
+                    let status = if *installed {
+                        "SLState 插件：已安装"
+                    } else {
+                        "SLState 插件：未安装"
+                    };
+                    ui.label(egui::RichText::new(status).weak());
+                }
+                None => {
+                    ui.label(egui::RichText::new("SLState 插件：未配置游戏路径").weak());
+                }
+            }
+            if let Some((dir, _)) = &addon {
+                ui.label(egui::RichText::new(format!("目录：{}", dir)).weak().small());
+            }
+            if ui
+                .button("导出插件")
+                .on_hover_text("把 SLState 插件写入游戏的 Interface/AddOns")
+                .clicked()
+            {
+                match crate::wowmem::export_addon(&self.cfg.wow_path) {
+                    Ok(dir) => self.addon_msg = Some((format!("已导出到 {}", dir), false)),
+                    Err(e) => self.addon_msg = Some((e, true)),
+                }
+            }
+            if let Some((msg, is_err)) = &self.addon_msg {
+                let color = if *is_err {
+                    egui::Color32::from_rgb(0xD3, 0x2F, 0x2F)
+                } else {
+                    egui::Color32::from_rgb(0x4C, 0xAF, 0x50)
+                };
+                ui.label(egui::RichText::new(msg).color(color));
             }
             if ui
                 .checkbox(&mut self.cfg.auto_launch, "启动本程序时自动启动魔兽")
@@ -923,6 +981,32 @@ impl App {
         {
             *dirty = true;
         }
+
+        // 角色状态读取总开关（默认关闭）：仅潜行/仅非潜行的映射依赖它
+        let scan_before = self.cfg.enable_state_scan;
+        if ui
+            .checkbox(
+                &mut self.cfg.enable_state_scan,
+                "启用角色状态读取（扫描游戏进程内存，默认关闭）",
+            )
+            .changed()
+        {
+            *dirty = true;
+        }
+        if self.cfg.enable_state_scan != scan_before {
+            crate::wowmem::apply(self.cfg.enable_state_scan, &self.cfg.wow_path);
+        }
+        ui.label(
+            egui::RichText::new(if self.cfg.enable_state_scan {
+                format!(
+                    "当前角色状态：{}（来自游戏内 SLState 插件，仅潜行/仅非潜行的映射据此判定）",
+                    crate::wowmem::state_text()
+                )
+            } else {
+                "已关闭：带生效条件的映射不会命中，按键原样透传给游戏。".to_string()
+            })
+            .weak(),
+        );
         ui.add_space(8.0);
 
         // 映射列表
@@ -939,8 +1023,13 @@ impl App {
                     }
                     ui.label(
                         egui::RichText::new(format!(
-                            "按键 {}",
-                            combo_name(mapping.source_vk, &mapping.source_mods)
+                            "按键 {}{}",
+                            combo_name(mapping.source_vk, &mapping.source_mods),
+                            if mapping.require_stealth.is_some() {
+                                format!("（{}）", mapping.condition_text())
+                            } else {
+                                String::new()
+                            }
                         ))
                         .strong(),
                     );
@@ -1015,6 +1104,11 @@ impl App {
         self.edit_source_vk = mapping.source_vk;
         self.edit_source_mods = mapping.source_mods.clone();
         self.edit_enabled = mapping.enabled;
+        self.edit_condition = match mapping.require_stealth {
+            Some(true) => 1,
+            Some(false) => 2,
+            None => 0,
+        };
 
         // 解析短按动作
         match &mapping.tap_action {
@@ -1181,6 +1275,11 @@ impl App {
             mapping.source_vk = self.edit_source_vk;
             mapping.source_mods = self.edit_source_mods.clone();
             mapping.enabled = self.edit_enabled;
+            mapping.require_stealth = match self.edit_condition {
+                1 => Some(true),
+                2 => Some(false),
+                _ => None,
+            };
             mapping.tap_action = tap;
             mapping.long_press_action = lp;
 
@@ -1263,6 +1362,31 @@ impl App {
                 Self::render_sub_commands_editor(ui, &mut self.edit_source_mods, "map_src");
 
                 ui.checkbox(&mut self.edit_enabled, "启用此映射");
+
+                // 生效条件：按角色当前状态（潜行）决定该映射是否参与匹配，
+                // 同一手柄键可以拆成「仅潜行」和「仅非潜行」两条
+                ui.horizontal(|ui| {
+                    ui.label("生效条件:");
+                    let names = ["始终生效", "仅潜行时", "仅非潜行时"];
+                    let text = names[self.edit_condition.min(names.len() - 1)];
+                    Self::choice_dropdown(ui, "map_condition", text, |ui| {
+                        let mut chosen = false;
+                        for (i, name) in names.iter().enumerate() {
+                            if ui.selectable_label(self.edit_condition == i, *name).clicked() {
+                                self.edit_condition = i;
+                                chosen = true;
+                            }
+                        }
+                        chosen
+                    });
+                });
+                ui.label(
+                    egui::RichText::new(format!(
+                        "当前角色状态：{}（需在游戏插件列表启用 SLState）",
+                        crate::wowmem::state_text()
+                    ))
+                    .weak(),
+                );
 
                 ui.separator();
 

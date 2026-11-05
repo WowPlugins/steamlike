@@ -12,6 +12,7 @@ mod hooks;
 mod runtime;
 mod ui;
 mod win;
+mod wowmem;
 
 use std::sync::atomic::Ordering;
 
@@ -57,6 +58,10 @@ fn main() -> eframe::Result<()> {
     bridge::start();
     clipboard::start();
 
+    // 角色状态：先把 SLState 插件装进游戏目录（与总开关无关），
+    // 总开关只决定是否扫描游戏进程内存
+    wowmem::apply(cfg.enable_state_scan, &cfg.wow_path);
+
     if cfg.auto_launch {
         // 自动启动延时：等待期间如果有键鼠输入，可取消本次自动启动（避免打断用户操作）
         let launch_cfg = cfg.clone();
@@ -99,8 +104,15 @@ fn main() -> eframe::Result<()> {
         // 圆点四角就会露出 clear_color 的底色。改用普通窗口 + 窗口区域裁剪，
         // 真实 Windows 与 Wine 都能把圆点四角裁掉。
         transparent: false,
-        // 启动总是显示完整主界面；实际尺寸会在首帧按屏幕高度自适应收敛
-        initial_window_size: Some(egui::vec2(600.0, 560.0)),
+        // 启动尺寸直接按当前形态给出：圆点/小面板/完整面板，
+        // 避免先显示大窗口、首帧再缩小的闪烁
+        initial_window_size: Some(if !cfg.overlay_expanded {
+            egui::vec2(64.0, 64.0) // 圆点
+        } else if cfg.overlay_compact_enabled {
+            egui::vec2(280.0, 250.0) // 小面板
+        } else {
+            egui::vec2(600.0, 560.0) // 完整编辑面板（首帧按屏幕高度收敛）
+        }),
         ..Default::default()
     };
 

@@ -75,6 +75,8 @@ static HOOK_THREAD_ID: AtomicU32 = AtomicU32::new(0);
 /// 是否正在等待「用于解锁的那次鼠标按下」对应的抬起，需要一并吞掉
 static SWALLOW_LEFT_UP: AtomicBool = AtomicBool::new(false);
 static SWALLOW_RIGHT_UP: AtomicBool = AtomicBool::new(false);
+/// 因映射被吞掉（尚未抬起）的按键：抬起时只有这些键需要一并结算并吞掉
+static MAPPING_ACTIVE: [AtomicBool; 256] = [const { AtomicBool::new(false) }; 256];
 
 /* ===== 鼠标锁存（左右键长按） ===== */
 
@@ -278,30 +280,41 @@ unsafe extern "system" fn keyboard_proc(ncode: i32, wparam: WPARAM, lparam: LPAR
 
     // 映射按键：吞掉，交给动作线程做短按/长按判定
     if RT.key_mapping_enabled.load(Ordering::Relaxed) {
-        let is_mapped = {
-            let mappings = RT.key_mappings.lock().unwrap();
-            mappings.iter().any(|m| {
-                if !m.enabled || m.trigger_vk() != vk as u32 {
-                    return false;
+        if !down {
+            // 抬起只在「按下时确实被本程序吞掉」的情况下结算；
+            // 否则（条件不满足/组合键没按全/映射已停用）必须原样透传，
+            // 避免游戏收到按下却收不到抬起，按键卡在按住状态。
+            if MAPPING_ACTIVE[vk as usize].swap(false, Ordering::Relaxed) {
+                queue_cmd(Cmd::MappingUp(vk as u32));
+                return LRESULT(1);
+            }
+            // 未被吞掉的抬起继续走后面的透传逻辑
+        } else {
+            let is_mapped = {
+                let mappings = RT.key_mappings.lock().unwrap();
+                mappings.iter().any(|m| {
+                    if !m.enabled || m.trigger_vk() != vk as u32 {
+                        return false;
+                    }
+                    if !m.matches_now() {
+                        return false;
+                    }
+                    // 按下时组合里其余键（含修饰键）必须全部按住
+                    let mut keys = m.combo_keys();
+                    keys.retain(|&v| v != m.trigger_vk());
+                    keys.iter()
+                        .all(|&v| unsafe { GetAsyncKeyState(v as i32) as u16 & 0x8000 != 0 })
+                })
+            };
+            if is_mapped {
+                // 已经处于「被吞掉」状态说明这是系统的自动重复，
+                // 只吞掉、不重复投递，避免长按计时被不断重置
+                if MAPPING_ACTIVE[vk as usize].swap(true, Ordering::Relaxed) {
+                    return LRESULT(1);
                 }
-                // 松开时不检查组合里其他键，避免修饰键先松开导致计时无法结束
-                if !down {
-                    return true;
-                }
-                // 按下时组合里其余键（含修饰键）必须全部按住
-                let mut keys = m.combo_keys();
-                keys.retain(|&v| v != m.trigger_vk());
-                keys.iter()
-                    .all(|&v| unsafe { GetAsyncKeyState(v as i32) as u16 & 0x8000 != 0 })
-            })
-        };
-        if is_mapped {
-            queue_cmd(if down {
-                Cmd::MappingDown(vk as u32)
-            } else {
-                Cmd::MappingUp(vk as u32)
-            });
-            return LRESULT(1);
+                queue_cmd(Cmd::MappingDown(vk as u32));
+                return LRESULT(1);
+            }
         }
     }
 
@@ -522,11 +535,18 @@ fn execute_mapping(source_vk: u32, is_long_press: bool) {
     }
 
     let mappings = RT.key_mappings.lock().unwrap();
-    // 按触发键匹配（修饰键可能已经松开，因为计时在抬起时才结算）
-    let mapping = match mappings
-        .iter()
-        .find(|m| m.enabled && m.trigger_vk() == source_vk)
-    {
+    // 按触发键匹配（修饰键可能已经松开，因为计时在抬起时才结算）。
+    // 带生效条件的映射优先：同一按键可以有「仅潜行」和「仅非潜行」两条，
+    // 没写条件的那条作为兜底，这样状态未知时仍然保留原有行为。
+    let conditional = mappings.iter().find(|m| {
+        m.enabled && m.trigger_vk() == source_vk && m.require_stealth.is_some() && m.matches_now()
+    });
+    let fallback = || {
+        mappings
+            .iter()
+            .find(|m| m.enabled && m.trigger_vk() == source_vk && m.require_stealth.is_none())
+    };
+    let mapping = match conditional.or_else(fallback) {
         Some(m) => m.clone(),
         None => return,
     };
@@ -534,8 +554,13 @@ fn execute_mapping(source_vk: u32, is_long_press: bool) {
 
     // 统一记录一次命中的映射，便于确认按键是否被钩子拦截（有这条才说明拦截生效）
     log(format!(
-        "[映射] 命中 按键 {} → {}",
+        "[映射] 命中 按键 {}{} → {}",
         crate::ui::combo_name(mapping.source_vk, &mapping.source_mods),
+        if mapping.require_stealth.is_some() {
+            format!("（{}）", mapping.condition_text())
+        } else {
+            String::new()
+        },
         if is_long_press {
             mapping.long_press_action.describe()
         } else {

@@ -98,6 +98,7 @@ tasks.register("compileWindowsExe") {  // 语法：tasks.register("任务名"){.
     // 注意：刻意不把 versionName 作为输入——exe 的版本号改为运行时读取
     // 同目录 version.txt（由 APK 导出时生成），所以仅改版本号时无需重编 Rust。
     inputs.dir(rustProjectDir.resolve("src"))  // 输入：Rust 源码目录（.rs 文件内容变化才需重编）
+    inputs.dir(rustProjectDir.resolve("assets"))  // 输入：内嵌资源（SLState 插件经 include_str! 编进 exe）
     inputs.file(manifestFile)  // 输入：Cargo.toml（依赖/特性变化会影响产物）
     inputs.file(rustProjectDir.resolve("Cargo.lock"))  // 输入：Cargo.lock（依赖版本锁定变化会影响产物）
     outputs.files(outputExe, assetsExe)  // 输出：exe 归档与 assets 副本

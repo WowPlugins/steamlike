@@ -1,0 +1,8 @@
+## Interface: 30300
+## Title: SLState
+## Notes: 向 SteamLike 客户端暴露角色状态（潜行）
+## Author: SteamLike
+## Version: 1.1
+## SavedVariables: SLStateDB
+
+SLState.lua

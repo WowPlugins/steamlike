@@ -1,6 +1,6 @@
 [package]
 name = "inputbridge_client"
-version = "0.1.99"
+version = "0.1.111"
 edition = "2021"
 description = "InputBridge Client for Winlator (Rust 版) - 键鼠拦截 + TCP 事件注入"
 
@@ -17,6 +17,9 @@ windows = { version = "0.52", features = [
     "Win32_System_Threading",
     "Win32_System_SystemInformation", # GetSystemTimeAsFileTime（时间同步）
     "Win32_System_Time",              # GetLocalTime / SetSystemTime（日志时间戳 + 时间同步）
+    "Win32_System_Diagnostics_ToolHelp", # CreateToolhelp32Snapshot（定位 wow.exe）
+    "Win32_System_Diagnostics_Debug",    # ReadProcessMemory（读取角色状态）
+    "Win32_System_Memory",               # VirtualQueryEx（扫描进程内存）
     "Win32_UI_Input_KeyboardAndMouse",
     "Win32_UI_WindowsAndMessaging",
     "Win32_Graphics_Gdi",              # CreateRoundRectRgn / DeleteObject（窗口圆角裁剪）

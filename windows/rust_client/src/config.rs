@@ -50,6 +50,11 @@ pub struct ClientConfig {
     pub key_mapping_enabled: bool,
     /// 按键映射列表
     pub key_mappings: Vec<KeyMapping>,
+    /// 角色状态读取总开关（默认关闭）
+    ///
+    /// 开启后会把 SLState 插件装进游戏目录并扫描游戏进程内存，
+    /// 供「仅潜行 / 仅非潜行」的映射条件使用。
+    pub enable_state_scan: bool,
     /// 悬浮窗是否展开（默认展开为小面板，false = 收起为状态点）
     pub overlay_expanded: bool,
     /// 小面板（紧凑形态）是否参与悬浮窗形态（默认不参与）
@@ -86,6 +91,7 @@ impl Default for ClientConfig {
             clipboard_sync: true,
             key_mapping_enabled: true,
             key_mappings: Vec::new(),
+            enable_state_scan: false,
             overlay_expanded: true,
             overlay_compact_enabled: false,
             window_x: None,
@@ -228,6 +234,9 @@ pub struct KeyMapping {
     pub long_press_action: MappedAction,
     /// 该映射是否生效（默认生效）
     pub enabled: bool,
+    /// 生效条件：None=始终生效，Some(true)=仅潜行，Some(false)=仅非潜行
+    #[serde(default)]
+    pub require_stealth: Option<bool>,
 }
 
 impl KeyMapping {
@@ -253,6 +262,26 @@ impl KeyMapping {
             .find(|&v| !is_modifier_vk(v))
             .unwrap_or(0)
     }
+
+    /// 当前角色状态是否满足本映射的生效条件
+    ///
+    /// 设置了条件但状态未知（未装插件 / 未找到游戏进程）时视为不满足，
+    /// 此时该映射不生效，按键原样透传给游戏。
+    pub fn matches_now(&self) -> bool {
+        match self.require_stealth {
+            None => true,
+            Some(want) => crate::wowmem::stealth() == Some(want),
+        }
+    }
+
+    /// 生效条件的展示文本
+    pub fn condition_text(&self) -> &'static str {
+        match self.require_stealth {
+            None => "",
+            Some(true) => "仅潜行",
+            Some(false) => "仅非潜行",
+        }
+    }
 }
 
 impl Default for KeyMapping {
@@ -263,6 +292,7 @@ impl Default for KeyMapping {
             tap_action: MappedAction::None,
             long_press_action: MappedAction::None,
             enabled: true,
+            require_stealth: None,
         }
     }
 }
