@@ -234,9 +234,50 @@ pub struct KeyMapping {
     pub long_press_action: MappedAction,
     /// 该映射是否生效（默认生效）
     pub enabled: bool,
-    /// 生效条件：None=始终生效，Some(true)=仅潜行，Some(false)=仅非潜行
+    /// 生效条件列表（可多条，按 `require_mode` 组合）
+    #[serde(default)]
+    pub require_all: Vec<StateCondition>,
+    /// 多条条件的组合方式（与 / 或）
+    #[serde(default)]
+    pub require_mode: ConditionMode,
+    /// 单条条件的旧格式（保留用于读取旧配置；新写入统一用 `require_all`）
+    #[serde(default)]
+    pub require_state: Option<StateCondition>,
+    /// 旧版单状态条件：None=始终生效，Some(true)=仅潜行，Some(false)=仅非潜行
+    ///
+    /// 保留用于读取旧配置。
     #[serde(default)]
     pub require_stealth: Option<bool>,
+}
+
+/// 多条生效条件的组合方式
+#[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum ConditionMode {
+    /// 全部满足才生效
+    #[default]
+    And,
+    /// 任一满足即生效
+    Or,
+}
+
+impl ConditionMode {
+    /// 条件之间的连接词（用于界面与日志）
+    pub fn joiner(self) -> &'static str {
+        match self {
+            ConditionMode::And => " 且 ",
+            ConditionMode::Or => " 或 ",
+        }
+    }
+}
+
+/// 键位映射的生效条件
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+pub struct StateCondition {
+    /// 状态 id，与 SLState 插件 `STATE_DEFS` 的顺序/名称一致（如 `stealthed`）
+    pub state: String,
+    /// 期望值：true = 该状态为真，false = 该状态为假
+    pub value: bool,
 }
 
 impl KeyMapping {
@@ -263,24 +304,68 @@ impl KeyMapping {
             .unwrap_or(0)
     }
 
+    /// 全部生效条件（状态 id, 期望值）
+    ///
+    /// 新字段 `require_all` 优先；单条旧字段与更旧的「仅潜行」字段依次兜底，
+    /// 保证老配置继续可用。
+    pub fn conditions(&self) -> Vec<(&str, bool)> {
+        if !self.require_all.is_empty() {
+            return self
+                .require_all
+                .iter()
+                .map(|c| (c.state.as_str(), c.value))
+                .collect();
+        }
+        if let Some(c) = &self.require_state {
+            return vec![(c.state.as_str(), c.value)];
+        }
+        self.require_stealth
+            .map(|v| vec![("stealthed", v)])
+            .unwrap_or_default()
+    }
+
+    /// 是否设置了生效条件
+    pub fn has_condition(&self) -> bool {
+        !self.conditions().is_empty()
+    }
+
     /// 当前角色状态是否满足本映射的生效条件
     ///
-    /// 设置了条件但状态未知（未装插件 / 未找到游戏进程）时视为不满足，
-    /// 此时该映射不生效，按键原样透传给游戏。
+    /// 多条条件按 `require_mode` 组合（与 / 或）。状态未知（未装插件 /
+    /// 未找到游戏进程）时该条件视为不满足，此时映射不生效，按键原样透传。
     pub fn matches_now(&self) -> bool {
-        match self.require_stealth {
-            None => true,
-            Some(want) => crate::wowmem::stealth() == Some(want),
+        let conditions = self.conditions();
+        if conditions.is_empty() {
+            return true;
+        }
+        match self.require_mode {
+            ConditionMode::And => conditions
+                .iter()
+                .all(|(id, want)| crate::wowmem::state(id) == Some(*want)),
+            ConditionMode::Or => conditions
+                .iter()
+                .any(|(id, want)| crate::wowmem::state(id) == Some(*want)),
         }
     }
 
-    /// 生效条件的展示文本
-    pub fn condition_text(&self) -> &'static str {
-        match self.require_stealth {
-            None => "",
-            Some(true) => "仅潜行",
-            Some(false) => "仅非潜行",
+    /// 生效条件的展示文本（如「潜行中=是 且 战斗中=否」）
+    pub fn condition_text(&self) -> String {
+        let conditions = self.conditions();
+        if conditions.is_empty() {
+            return String::new();
         }
+        let joiner = self.require_mode.joiner();
+        conditions
+            .iter()
+            .map(|(id, want)| {
+                format!(
+                    "{}={}",
+                    crate::wowmem::state_name(id),
+                    if *want { "是" } else { "否" }
+                )
+            })
+            .collect::<Vec<_>>()
+            .join(joiner)
     }
 }
 
@@ -292,6 +377,9 @@ impl Default for KeyMapping {
             tap_action: MappedAction::None,
             long_press_action: MappedAction::None,
             enabled: true,
+            require_all: Vec::new(),
+            require_mode: ConditionMode::And,
+            require_state: None,
             require_stealth: None,
         }
     }

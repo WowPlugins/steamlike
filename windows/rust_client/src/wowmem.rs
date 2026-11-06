@@ -3,13 +3,22 @@
 //! 插件在 Lua 5.1 的 table array part 里维护一块连续 TValue 数组：
 //! 每槽 16 字节（8 字节 double + 4 字节类型标签 + 4 字节对齐填充），
 //! 前三个槽是固定的 anchor 浮点。本模块先全内存扫描这三个浮点定位数组首地址，
-//! 之后每 100ms 只读 128 字节，用「双 seq + 互补值 + 校验和」判断帧是否有效。
+//! 之后每 100ms 只读一帧，用「双 seq + 校验和」判断帧是否有效。
+//!
+//! 槽位布局必须与 `SLState.lua` 完全一致：
+//! ```text
+//! 1..3   anchor 浮点
+//! 4      seq（payload 写完才写它）
+//! 5..14  状态位 S1..S10（1 = 真，0 = 假）
+//! 15     checksum = (seq*31 + Σ S(i)*(i+1)) % 65536
+//! 16     seq 再写一次（读端要求 4 与 16 相同才接受）
+//! ```
 //!
 //! anchor 是数值而不是字符串，所以表内容变化时地址不会移动，
 //! 只有句柄失效或内存被重新分配时才需要重扫。
 
 use std::mem::size_of;
-use std::sync::atomic::{AtomicBool, AtomicU8, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU16, Ordering};
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
@@ -21,14 +30,16 @@ use windows::Win32::System::Diagnostics::ToolHelp::{
 use windows::Win32::System::Memory::{
     VirtualQueryEx, MEMORY_BASIC_INFORMATION, MEM_COMMIT, MEM_PRIVATE, PAGE_GUARD, PAGE_NOACCESS,
 };
-use windows::Win32::System::Threading::{OpenProcess, PROCESS_QUERY_INFORMATION, PROCESS_VM_READ};
+use windows::Win32::System::Threading::{
+    GetExitCodeProcess, OpenProcess, PROCESS_QUERY_INFORMATION, PROCESS_VM_READ,
+};
 
 use crate::runtime::log;
 
 /// Lua 5.1 顺序整数槽的字节数（double 8 + 类型标签 4 + 对齐 4）
 const SLOT: usize = 16;
-/// 插件预分配的槽数
-const NSLOT: usize = 8;
+/// 插件预分配的槽数（必须与 Lua 的 BUF_SLOTS 一致）
+const NSLOT: usize = 16;
 /// 一帧的字节数
 const FRAME: usize = SLOT * NSLOT;
 /// anchor 浮点（对应插件里 1..3 号槽）
@@ -36,18 +47,38 @@ const ANCHORS: [f64; 3] = [3494.38, 1982.44, 9918.71];
 /// 是否额外校验 TValue 类型标签（标准 Lua 5.1 的 number 为 3）
 ///
 /// 默认关闭：若客户端换过 Lua 实现，标签值可能不同，开着会导致永远定位不到。
-/// 三重 anchor 连续匹配 + 双 seq + 互补值 + 校验和，已经足够排除误命中。
+/// 三重 anchor 连续匹配 + 双 seq + 校验和，已经足够排除误命中。
 const CHECK_TAG: bool = false;
 
-/// 状态未知（未找到进程 / 插件未启用 / 扫描失败）
-const UNKNOWN: u8 = 0;
-/// 非潜行
-const NO_STEALTH: u8 = 1;
-/// 潜行中
-const STEALTH: u8 = 2;
+/// 4 号槽：帧序号
+const SLOT_SEQ: usize = 3;
+/// 5..14 号槽：状态位，顺序与 [`STATE_DEFS`] 一致
+const SLOT_STATE0: usize = 4;
+/// 15 号槽：校验和
+const SLOT_CHECKSUM: usize = 14;
+/// 16 号槽：帧序号再写一次
+const SLOT_SEQ2: usize = 15;
 
-/// 当前角色潜行状态（原子量，钩子线程直接读取）
-static STATE: AtomicU8 = AtomicU8::new(UNKNOWN);
+/// 可暴露的状态定义（顺序即插件里的数组槽位，必须与 `SLState.lua` 的 STATE_DEFS 一致）
+pub const STATE_DEFS: [(&str, &str); 10] = [
+    ("stealthed", "潜行中"),
+    ("chatOpen", "聊天窗打开"),
+    ("inCombat", "战斗中"),
+    ("mounted", "骑乘中"),
+    ("hasTarget", "有目标"),
+    ("hasPet", "有宠物"),
+    ("isDead", "死亡"),
+    ("isGhost", "灵魂状态"),
+    ("isFalling", "下落中"),
+    ("isSwimming", "游泳中"),
+];
+/// 状态数量
+pub const STATE_COUNT: usize = STATE_DEFS.len();
+
+/// 最近一帧的状态位（bit i 对应 STATE_DEFS[i]）
+static BITS: AtomicU16 = AtomicU16::new(0);
+/// 状态是否有效（未找到进程 / 插件未启用 / 扫描失败时为 false）
+static VALID: AtomicBool = AtomicBool::new(false);
 /// 内存扫描总开关（界面可改，扫描线程每轮读取）
 static ENABLED: AtomicBool = AtomicBool::new(false);
 /// 扫描线程是否已创建（只创建一次，关闭开关时线程空转等待）
@@ -55,21 +86,55 @@ static STARTED: AtomicBool = AtomicBool::new(false);
 /// 目标进程的可执行文件名（配置里的 exe 文件名，小写）
 static TARGET: Mutex<Option<String>> = Mutex::new(None);
 
-/// 读取当前潜行状态：`None` 表示状态不可用（未知）
-pub fn stealth() -> Option<bool> {
-    match STATE.load(Ordering::Relaxed) {
-        NO_STEALTH => Some(false),
-        STEALTH => Some(true),
-        _ => None,
+/// 读取状态位：`None` 表示状态不可用（未知）
+pub fn states() -> Option<u16> {
+    if VALID.load(Ordering::Relaxed) {
+        Some(BITS.load(Ordering::Relaxed))
+    } else {
+        None
     }
 }
 
-/// 状态文本（供界面显示）
-pub fn state_text() -> &'static str {
-    match STATE.load(Ordering::Relaxed) {
-        NO_STEALTH => "非潜行",
-        STEALTH => "潜行中",
-        _ => "未知",
+/// 读取某个状态的当前值：`None` 表示状态不可用（未知）
+///
+/// `id` 取 [`STATE_DEFS`] 里的第一个字段（如 `stealthed`、`inCombat`）。
+pub fn state(id: &str) -> Option<bool> {
+    if !VALID.load(Ordering::Relaxed) {
+        return None;
+    }
+    let index = STATE_DEFS.iter().position(|(key, _)| *key == id)?;
+    Some(BITS.load(Ordering::Relaxed) & (1u16 << index) != 0)
+}
+
+/// 状态名（用于界面与日志）；未知 id 原样返回
+pub fn state_name(id: &str) -> &str {
+    STATE_DEFS
+        .iter()
+        .find(|(key, _)| *key == id)
+        .map(|(_, name)| *name)
+        .unwrap_or(id)
+}
+
+/// 当前为真的状态名列表（供界面显示），未知时返回「未知」
+pub fn states_text() -> String {
+    match states() {
+        None => "未知".to_string(),
+        Some(bits) => describe(bits),
+    }
+}
+
+/// 把状态位转成「潜行中、战斗中」这样的文本
+fn describe(bits: u16) -> String {
+    let names: Vec<&str> = STATE_DEFS
+        .iter()
+        .enumerate()
+        .filter(|(i, _)| bits & (1u16 << i) != 0)
+        .map(|(_, (_, name))| *name)
+        .collect();
+    if names.is_empty() {
+        "（全部为假）".to_string()
+    } else {
+        names.join("、")
     }
 }
 
@@ -83,7 +148,7 @@ pub fn apply(enabled: bool, wow_path: &str) {
         start_thread();
         log("[状态] 内存扫描已开启");
     } else {
-        STATE.store(UNKNOWN, Ordering::Relaxed);
+        VALID.store(false, Ordering::Relaxed);
         log("[状态] 内存扫描已关闭");
     }
 }
@@ -123,7 +188,7 @@ fn run() {
             base = None;
             last_seq = u16::MAX;
             reported_missing = false;
-            STATE.store(UNKNOWN, Ordering::Relaxed);
+            VALID.store(false, Ordering::Relaxed);
             std::thread::sleep(Duration::from_millis(500));
             continue;
         }
@@ -140,7 +205,7 @@ fn run() {
                     log("[状态] 已连接到游戏进程");
                 }
                 None => {
-                    STATE.store(UNKNOWN, Ordering::Relaxed);
+                    VALID.store(false, Ordering::Relaxed);
                     if !reported_missing {
                         reported_missing = true;
                         log("[状态] 未找到游戏进程（启动游戏后会自动重试）");
@@ -156,14 +221,14 @@ fn run() {
         match base {
             // 已定位：每 100ms 只读一帧，seq 没变说明状态没变，直接跳过
             Some(addr) => match read_frame(h, addr) {
-                Some((seq, data)) => {
+                Some((seq, bits)) => {
                     bad_reads = 0;
                     if seq != last_seq {
                         if last_seq == u16::MAX {
-                            log(format!("[状态] 收到首帧 seq={} data={}", seq, data));
+                            log(format!("[状态] 收到首帧 seq={} 状态={}", seq, describe(bits)));
                         }
                         last_seq = seq;
-                        set_state(data);
+                        set_states(bits);
                     }
                     std::thread::sleep(Duration::from_millis(100));
                 }
@@ -172,7 +237,7 @@ fn run() {
                     bad_reads += 1;
                     if bad_reads >= 3 {
                         base = None;
-                        STATE.store(UNKNOWN, Ordering::Relaxed);
+                        VALID.store(false, Ordering::Relaxed);
                         log("[状态] 状态数组连续读取失败，重新扫描内存");
                     }
                     std::thread::sleep(Duration::from_millis(100));
@@ -194,7 +259,7 @@ fn run() {
                         ));
                     }
                     None => {
-                        STATE.store(UNKNOWN, Ordering::Relaxed);
+                        VALID.store(false, Ordering::Relaxed);
                         scan_fails += 1;
                         // 没装插件时每次都会扫不中，这里做节流：首次与每 10 次记一条
                         if scan_fails == 1 || scan_fails % 10 == 0 {
@@ -218,26 +283,33 @@ fn run() {
     }
 }
 
-fn set_state(data: f64) {
-    let new = if data != 0.0 { STEALTH } else { NO_STEALTH };
-    let old = STATE.swap(new, Ordering::Relaxed);
-    if old != new {
-        log(format!(
-            "[状态] 角色状态变化：{} → {}",
-            match old {
-                NO_STEALTH => "非潜行",
-                STEALTH => "潜行中",
-                _ => "未知",
-            },
-            if new == STEALTH { "潜行中" } else { "非潜行" }
-        ));
+/// 更新状态位并记录变化（首次读取与位变化时各记一条日志）
+fn set_states(bits: u16) {
+    let first = !VALID.swap(true, Ordering::Relaxed);
+    let old = BITS.swap(bits, Ordering::Relaxed);
+    if first {
+        log(format!("[状态] 角色状态：{}", describe(bits)));
+        return;
     }
+    if old == bits {
+        return;
+    }
+    let changed: Vec<String> = STATE_DEFS
+        .iter()
+        .enumerate()
+        .filter(|(i, _)| (old ^ bits) & (1u16 << i) != 0)
+        .map(|(i, (_, name))| {
+            let on = bits & (1u16 << i) != 0;
+            format!("{}={}", name, if on { "是" } else { "否" })
+        })
+        .collect();
+    log(format!("[状态] 状态变化：{}", changed.join("、")));
 }
 
 /// 读取帧里的 double
 ///
 /// # Panics
-/// 调用方必须保证 `offset + 8 <= buf.len()`（`validate_frame`/`read_frame` 已保证整帧长度）。
+/// 调用方必须保证 `offset + 8 <= buf.len()`（`parse_frame`/`read_frame` 已保证整帧长度）。
 fn f64_at(buf: &[u8], offset: usize) -> f64 {
     f64::from_le_bytes(buf[offset..offset + 8].try_into().unwrap())
 }
@@ -246,19 +318,14 @@ fn near(a: f64, b: f64) -> bool {
     (a - b).abs() < 1e-6
 }
 
-/// 探测进程是否仍可读（读取进程头 4 字节）
+/// 探测进程是否仍在运行（退出码 STILL_ACTIVE = 259）
+///
+/// 扫描失败时用这个判断句柄是否已失效（游戏退出后 PID 会被复用）。
 fn probe_alive(h: HANDLE) -> bool {
-    let mut buf = [0u8; 4];
-    let mut read = 0usize;
-    unsafe {
-        ReadProcessMemory(
-            h,
-            std::ptr::null(),
-            buf.as_mut_ptr() as *mut _,
-            buf.len(),
-            Some(&mut read),
-        )
-        .is_ok()
+    let mut code = 0u32;
+    match unsafe { GetExitCodeProcess(h, &mut code) } {
+        Ok(()) => code == 259,
+        Err(_) => false,
     }
 }
 
@@ -289,11 +356,11 @@ fn open_wow(expected: Option<&str>) -> Option<HANDLE> {
     }
 }
 
-/// 校验一帧，返回（seq, data）
+/// 校验一帧，返回（seq, 状态位）
 ///
-/// 校验项：三个 anchor、4/8 号槽的 seq 一致且在 0..=65535、
-/// 5 号槽 data 与 6 号槽互补、7 号槽校验和匹配。
-fn validate_frame(b: &[u8]) -> Option<(u16, f64)> {
+/// 校验项：三个 anchor、4/16 号槽的 seq 一致且在 0..=65535、
+/// 状态槽只取 0/1、15 号槽校验和匹配。
+fn parse_frame(b: &[u8]) -> Option<(u16, u16)> {
     if !(near(f64_at(b, 0), ANCHORS[0])
         && near(f64_at(b, SLOT), ANCHORS[1])
         && near(f64_at(b, 2 * SLOT), ANCHORS[2]))
@@ -309,25 +376,32 @@ fn validate_frame(b: &[u8]) -> Option<(u16, f64)> {
             }
         }
     }
-    let seq_a = f64_at(b, 3 * SLOT);
-    let seq_b = f64_at(b, 7 * SLOT);
+    let seq_a = f64_at(b, SLOT_SEQ * SLOT);
+    let seq_b = f64_at(b, SLOT_SEQ2 * SLOT);
     if seq_a != seq_b || !(0.0..=65535.0).contains(&seq_a) {
         return None;
     }
-    let data = f64_at(b, 4 * SLOT);
-    let neg = f64_at(b, 5 * SLOT);
-    if neg != -data {
+    let mut bits = 0u16;
+    let mut sum = 0.0f64;
+    for i in 0..STATE_COUNT {
+        let v = f64_at(b, (SLOT_STATE0 + i) * SLOT);
+        if v != 0.0 && v != 1.0 {
+            return None;
+        }
+        if v != 0.0 {
+            bits |= 1u16 << i;
+        }
+        sum += v * (i as f64 + 2.0);
+    }
+    let chk = f64_at(b, SLOT_CHECKSUM * SLOT);
+    if (seq_a * 31.0 + sum) % 65536.0 != chk {
         return None;
     }
-    let chk = f64_at(b, 6 * SLOT);
-    if (seq_a * 31.0 + data * 17.0) % 65536.0 != chk {
-        return None;
-    }
-    Some((seq_a as u16, data))
+    Some((seq_a as u16, bits))
 }
 
 /// 从已定位的地址读取一帧并校验
-fn read_frame(h: HANDLE, addr: usize) -> Option<(u16, f64)> {
+fn read_frame(h: HANDLE, addr: usize) -> Option<(u16, u16)> {
     let mut buf = [0u8; FRAME];
     let mut read = 0usize;
     let ok = unsafe {
@@ -342,7 +416,7 @@ fn read_frame(h: HANDLE, addr: usize) -> Option<(u16, f64)> {
     if ok.is_err() || read != FRAME {
         return None;
     }
-    validate_frame(&buf)
+    parse_frame(&buf)
 }
 
 /// 全内存扫描 anchor，返回状态数组首地址
@@ -405,7 +479,7 @@ fn scan_region(h: HANDLE, base: usize, size: usize) -> Option<usize> {
             // TValue 数组按 8 字节（实际 16 字节）对齐，8 字节步进即可覆盖
             let mut k = 0usize;
             while k + FRAME <= got {
-                if validate_frame(&buf[k..k + FRAME]).is_some() {
+                if parse_frame(&buf[k..k + FRAME]).is_some() {
                     return Some(base + offset + k);
                 }
                 k += 8;

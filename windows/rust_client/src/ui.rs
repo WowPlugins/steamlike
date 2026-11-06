@@ -292,8 +292,10 @@ pub struct App {
     edit_source_mods: Vec<u32>,
     /// 映射编辑对话框：是否启用
     edit_enabled: bool,
-    /// 映射编辑对话框：生效条件（0=始终，1=仅潜行，2=仅非潜行）
-    edit_condition: usize,
+    /// 映射编辑对话框：生效条件列表（空 = 始终生效）
+    edit_conditions: Vec<crate::config::StateCondition>,
+    /// 映射编辑对话框：多条条件的组合方式（与 / 或）
+    edit_cond_mode: crate::config::ConditionMode,
     /// 是否处于完整编辑面板状态（false = 小面板/圆点）
     full_editor: bool,
     /// 上次应用的窗口尺寸（用于检测面板状态切换时调整窗口大小）
@@ -337,7 +339,7 @@ impl App {
                 "[映射] #{} {}{} → 短按 {} / 长按 {}（启用={}）",
                 i + 1,
                 combo_name(m.source_vk, &m.source_mods),
-                if m.require_stealth.is_some() {
+                if m.has_condition() {
                     format!("（{}）", m.condition_text())
                 } else {
                     String::new()
@@ -348,7 +350,7 @@ impl App {
             ));
         }
         // 带生效条件的映射依赖内存扫描，关闭时提前提示，避免排查时误以为是映射没命中
-        if !cfg.enable_state_scan && cfg.key_mappings.iter().any(|m| m.require_stealth.is_some()) {
+        if !cfg.enable_state_scan && cfg.key_mappings.iter().any(|m| m.has_condition()) {
             runtime::log("[状态] 存在带生效条件的映射，但「角色状态读取」已关闭，这些映射不会命中");
         }
 
@@ -371,7 +373,8 @@ impl App {
             edit_source_vk: 0,
             edit_source_mods: Vec::new(),
             edit_enabled: true,
-            edit_condition: 0,
+            edit_conditions: Vec::new(),
+            edit_cond_mode: crate::config::ConditionMode::And,
             // 启动即显示完整主界面
             full_editor: true,
             last_window_size: (0.0, 0.0),
@@ -962,8 +965,8 @@ impl App {
         ui.label(
             egui::RichText::new(if self.cfg.enable_state_scan {
                 format!(
-                    "当前角色状态：{}（来自游戏内 SLState 插件，仅潜行/仅非潜行的映射据此判定）",
-                    crate::wowmem::state_text()
+                    "当前角色状态：{}（插件里需开启总开关、方式选「Lua 内存」并勾选对应状态）",
+                    crate::wowmem::states_text()
                 )
             } else {
                 "已关闭：带生效条件的映射不会命中，按键原样透传给游戏。".to_string()
@@ -988,7 +991,7 @@ impl App {
                         egui::RichText::new(format!(
                             "按键 {}{}",
                             combo_name(mapping.source_vk, &mapping.source_mods),
-                            if mapping.require_stealth.is_some() {
+                            if mapping.has_condition() {
                                 format!("（{}）", mapping.condition_text())
                             } else {
                                 String::new()
@@ -1067,11 +1070,15 @@ impl App {
         self.edit_source_vk = mapping.source_vk;
         self.edit_source_mods = mapping.source_mods.clone();
         self.edit_enabled = mapping.enabled;
-        self.edit_condition = match mapping.require_stealth {
-            Some(true) => 1,
-            Some(false) => 2,
-            None => 0,
-        };
+        self.edit_conditions = mapping
+            .conditions()
+            .iter()
+            .map(|(id, want)| crate::config::StateCondition {
+                state: id.to_string(),
+                value: *want,
+            })
+            .collect();
+        self.edit_cond_mode = mapping.require_mode;
 
         // 解析短按动作
         match &mapping.tap_action {
@@ -1238,11 +1245,11 @@ impl App {
             mapping.source_vk = self.edit_source_vk;
             mapping.source_mods = self.edit_source_mods.clone();
             mapping.enabled = self.edit_enabled;
-            mapping.require_stealth = match self.edit_condition {
-                1 => Some(true),
-                2 => Some(false),
-                _ => None,
-            };
+            // 条件统一写新字段，旧格式清空避免两套条件同时存在
+            mapping.require_all = self.edit_conditions.clone();
+            mapping.require_mode = self.edit_cond_mode;
+            mapping.require_state = None;
+            mapping.require_stealth = None;
             mapping.tap_action = tap;
             mapping.long_press_action = lp;
 
@@ -1326,27 +1333,70 @@ impl App {
 
                 ui.checkbox(&mut self.edit_enabled, "启用此映射");
 
-                // 生效条件：按角色当前状态（潜行）决定该映射是否参与匹配，
-                // 同一手柄键可以拆成「仅潜行」和「仅非潜行」两条
-                ui.horizontal(|ui| {
-                    ui.label("生效条件:");
-                    let names = ["始终生效", "仅潜行时", "仅非潜行时"];
-                    let text = names[self.edit_condition.min(names.len() - 1)];
-                    Self::choice_dropdown(ui, "map_condition", text, |ui| {
-                        let mut chosen = false;
-                        for (i, name) in names.iter().enumerate() {
-                            if ui.selectable_label(self.edit_condition == i, *name).clicked() {
-                                self.edit_condition = i;
-                                chosen = true;
+                // 生效条件：可添加多条，按「且 / 或」组合后决定该映射是否参与匹配。
+                // 同一手柄键可以按不同状态拆成多条映射。
+                ui.label("生效条件（留空=始终生效）:");
+                let mut remove_at: Option<usize> = None;
+                for i in 0..self.edit_conditions.len() {
+                    let mut cond = self.edit_conditions[i].clone();
+                    ui.horizontal(|ui| {
+                        let state_text = crate::wowmem::state_name(&cond.state).to_string();
+                        Self::choice_dropdown(ui, &format!("map_cond_state_{}", i), &state_text, |ui| {
+                            let mut chosen = false;
+                            for (key, label) in crate::wowmem::STATE_DEFS {
+                                if ui.selectable_label(cond.state == key, label).clicked() {
+                                    cond.state = key.to_string();
+                                    chosen = true;
+                                }
+                            }
+                            chosen
+                        });
+                        let value_text = if cond.value { "= 是" } else { "= 否" };
+                        Self::choice_dropdown(ui, &format!("map_cond_value_{}", i), value_text, |ui| {
+                            let mut chosen = false;
+                            for (value, label) in [(true, "= 是"), (false, "= 否")] {
+                                if ui.selectable_label(cond.value == value, label).clicked() {
+                                    cond.value = value;
+                                    chosen = true;
+                                }
+                            }
+                            chosen
+                        });
+                        if ui.small_button("移除").clicked() {
+                            remove_at = Some(i);
+                        }
+                    });
+                    self.edit_conditions[i] = cond;
+                }
+                if let Some(i) = remove_at {
+                    self.edit_conditions.remove(i);
+                }
+                if ui.button("+ 添加条件").clicked() {
+                    self.edit_conditions.push(crate::config::StateCondition {
+                        state: "stealthed".to_string(),
+                        value: true,
+                    });
+                }
+                if self.edit_conditions.len() > 1 {
+                    ui.horizontal(|ui| {
+                        ui.label("组合方式:");
+                        for (mode, label) in [
+                            (crate::config::ConditionMode::And, "满足全部（且）"),
+                            (crate::config::ConditionMode::Or, "满足任一（或）"),
+                        ] {
+                            if ui
+                                .selectable_label(self.edit_cond_mode == mode, label)
+                                .clicked()
+                            {
+                                self.edit_cond_mode = mode;
                             }
                         }
-                        chosen
                     });
-                });
+                }
                 ui.label(
                     egui::RichText::new(format!(
                         "当前角色状态：{}（需在游戏插件列表启用 SLState）",
-                        crate::wowmem::state_text()
+                        crate::wowmem::states_text()
                     ))
                     .weak(),
                 );

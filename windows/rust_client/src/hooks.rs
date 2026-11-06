@@ -536,15 +536,15 @@ fn execute_mapping(source_vk: u32, is_long_press: bool) {
 
     let mappings = RT.key_mappings.lock().unwrap();
     // 按触发键匹配（修饰键可能已经松开，因为计时在抬起时才结算）。
-    // 带生效条件的映射优先：同一按键可以有「仅潜行」和「仅非潜行」两条，
+    // 带生效条件的映射优先：同一按键可以按不同角色状态拆成多条，
     // 没写条件的那条作为兜底，这样状态未知时仍然保留原有行为。
     let conditional = mappings.iter().find(|m| {
-        m.enabled && m.trigger_vk() == source_vk && m.require_stealth.is_some() && m.matches_now()
+        m.enabled && m.trigger_vk() == source_vk && m.has_condition() && m.matches_now()
     });
     let fallback = || {
         mappings
             .iter()
-            .find(|m| m.enabled && m.trigger_vk() == source_vk && m.require_stealth.is_none())
+            .find(|m| m.enabled && m.trigger_vk() == source_vk && !m.has_condition())
     };
     let mapping = match conditional.or_else(fallback) {
         Some(m) => m.clone(),
@@ -556,7 +556,7 @@ fn execute_mapping(source_vk: u32, is_long_press: bool) {
     log(format!(
         "[映射] 命中 按键 {}{} → {}",
         crate::ui::combo_name(mapping.source_vk, &mapping.source_mods),
-        if mapping.require_stealth.is_some() {
+        if mapping.has_condition() {
             format!("（{}）", mapping.condition_text())
         } else {
             String::new()
