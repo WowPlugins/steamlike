@@ -270,8 +270,6 @@ pub struct App {
     mismatch_logged: bool,
     /// 游戏 exe 路径错误提示（路径不存在/未设置时显示红字）
     launch_error: Option<String>,
-    /// 手动导出插件的结果（文本, 是否为错误）
-    addon_msg: Option<(String, bool)>,
     /// 当前选中的 Tab 页索引
     selected_tab: usize,
     /// 映射编辑对话框：当前正在编辑的映射索引（None 表示未打开）
@@ -361,7 +359,6 @@ impl App {
             mismatch_dismissed: false,
             mismatch_logged: false,
             launch_error,
-            addon_msg: None,
             cfg,
             selected_tab: 0,
             editing_mapping: None,
@@ -687,46 +684,8 @@ impl App {
                 }
             }
             if self.cfg.wow_path != wow_path_before {
-                // 路径一变就立刻把 SLState 插件装到该游戏目录，
-                // 不必等下次启动客户端
+                // 路径变了：更新扫描目标进程
                 crate::wowmem::apply(self.cfg.enable_state_scan, &self.cfg.wow_path);
-            }
-            // 插件状态、目录、导出按钮各占一行：
-            // 长路径自动换行，按钮不会被挤出或被文字遮挡
-            let addon = crate::wowmem::addon_dir_text(&self.cfg.wow_path);
-            match &addon {
-                Some((_, installed)) => {
-                    let status = if *installed {
-                        "SLState 插件：已安装"
-                    } else {
-                        "SLState 插件：未安装"
-                    };
-                    ui.label(egui::RichText::new(status).weak());
-                }
-                None => {
-                    ui.label(egui::RichText::new("SLState 插件：未配置游戏路径").weak());
-                }
-            }
-            if let Some((dir, _)) = &addon {
-                ui.label(egui::RichText::new(format!("目录：{}", dir)).weak().small());
-            }
-            if ui
-                .button("导出插件")
-                .on_hover_text("把 SLState 插件写入游戏的 Interface/AddOns")
-                .clicked()
-            {
-                match crate::wowmem::export_addon(&self.cfg.wow_path) {
-                    Ok(dir) => self.addon_msg = Some((format!("已导出到 {}", dir), false)),
-                    Err(e) => self.addon_msg = Some((e, true)),
-                }
-            }
-            if let Some((msg, is_err)) = &self.addon_msg {
-                let color = if *is_err {
-                    egui::Color32::from_rgb(0xD3, 0x2F, 0x2F)
-                } else {
-                    egui::Color32::from_rgb(0x4C, 0xAF, 0x50)
-                };
-                ui.label(egui::RichText::new(msg).color(color));
             }
             if ui
                 .checkbox(&mut self.cfg.auto_launch, "启动本程序时自动启动魔兽")

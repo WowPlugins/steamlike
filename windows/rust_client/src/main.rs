@@ -58,8 +58,7 @@ fn main() -> eframe::Result<()> {
     bridge::start();
     clipboard::start();
 
-    // 角色状态：先把 SLState 插件装进游戏目录（与总开关无关），
-    // 总开关只决定是否扫描游戏进程内存
+    // 角色状态：总开关决定是否扫描游戏进程内存
     wowmem::apply(cfg.enable_state_scan, &cfg.wow_path);
 
     if cfg.auto_launch {

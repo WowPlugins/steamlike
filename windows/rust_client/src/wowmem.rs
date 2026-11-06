@@ -54,8 +54,6 @@ static ENABLED: AtomicBool = AtomicBool::new(false);
 static STARTED: AtomicBool = AtomicBool::new(false);
 /// 目标进程的可执行文件名（配置里的 exe 文件名，小写）
 static TARGET: Mutex<Option<String>> = Mutex::new(None);
-/// 「插件已是最新」这条日志只在首次调用时记一次，避免界面反复切换开关时刷屏
-static ADDON_LOGGED: AtomicBool = AtomicBool::new(false);
 
 /// 读取当前潜行状态：`None` 表示状态不可用（未知）
 pub fn stealth() -> Option<bool> {
@@ -75,104 +73,11 @@ pub fn state_text() -> &'static str {
     }
 }
 
-/// 插件安装目录与是否已写入文件（供界面显示安装状态）
-///
-/// 返回 None 表示还没配置游戏路径。
-pub fn addon_dir_text(wow_path: &str) -> Option<(String, bool)> {
-    let path = wow_path.trim();
-    if path.is_empty() {
-        return None;
-    }
-    let dir = std::path::Path::new(path).parent()?;
-    let addon = dir.join("Interface").join("AddOns").join("SLState");
-    let installed = addon.join("SLState.toc").is_file() && addon.join("SLState.lua").is_file();
-    Some((addon.display().to_string(), installed))
-}
-
-/// 手动导出插件：强制重写文件（界面上的「导出插件」按钮用）
-///
-/// 与 `ensure_addon` 的区别是不比较内容，用户点一次就必然覆盖。
-pub fn export_addon(wow_path: &str) -> Result<String, String> {
-    let path = wow_path.trim();
-    if path.is_empty() {
-        return Err("请先选择魔兽 exe 路径".to_string());
-    }
-    let dir = std::path::Path::new(path)
-        .parent()
-        .ok_or_else(|| format!("无法从路径解析游戏目录：{}", path))?;
-    let addon_dir = dir.join("Interface").join("AddOns").join("SLState");
-    std::fs::create_dir_all(&addon_dir)
-        .map_err(|e| format!("创建目录失败（{}）：{}", addon_dir.display(), e))?;
-    let toc = include_str!("../assets/SLState/SLState.toc");
-    let lua = include_str!("../assets/SLState/SLState.lua");
-    for (name, content) in [("SLState.toc", toc), ("SLState.lua", lua)] {
-        let file = addon_dir.join(name);
-        std::fs::write(&file, content)
-            .map_err(|e| format!("写入 {} 失败：{}", file.display(), e))?;
-    }
-    log(format!(
-        "[状态] 已手动导出 SLState 插件：{}",
-        addon_dir.display()
-    ));
-    Ok(addon_dir.display().to_string())
-}
-
-/// 把插件文件写入 `{游戏目录}/Interface/AddOns/SLState`
-///
-/// 内容与目标文件相同则跳过，避免每次启动都重写；首次安装后需要玩家在
-/// 插件列表里勾选启用一次。
-pub fn ensure_addon(wow_path: &str) {
-    let path = wow_path.trim();
-    if path.is_empty() {
-        log("[状态] 未配置游戏路径，跳过 SLState 插件安装");
-        return;
-    }
-    let Some(dir) = std::path::Path::new(path).parent() else {
-        log(format!("[状态] 无法从路径解析游戏目录：{}", path));
-        return;
-    };
-    let addon_dir = dir.join("Interface").join("AddOns").join("SLState");
-    if let Err(e) = std::fs::create_dir_all(&addon_dir) {
-        log(format!(
-            "[状态] 插件目录创建失败（{}）：{}",
-            addon_dir.display(),
-            e
-        ));
-        return;
-    }
-    let toc = include_str!("../assets/SLState/SLState.toc");
-    let lua = include_str!("../assets/SLState/SLState.lua");
-    let toc_path = addon_dir.join("SLState.toc");
-    let lua_path = addon_dir.join("SLState.lua");
-    let mut changed = false;
-    for (file, content) in [(&toc_path, toc), (&lua_path, lua)] {
-        let same = std::fs::read_to_string(file)
-            .map(|old| old == content)
-            .unwrap_or(false);
-        if !same {
-            match std::fs::write(file, content) {
-                Ok(()) => changed = true,
-                Err(e) => log(format!("[状态] 写入 {} 失败：{}", file.display(), e)),
-            }
-        }
-    }
-    if changed {
-        log(format!(
-            "[状态] 已安装 SLState 插件：{}（首次需要在游戏插件列表中勾选启用）",
-            addon_dir.display()
-        ));
-    } else if !ADDON_LOGGED.swap(true, Ordering::Relaxed) {
-        log(format!("[状态] SLState 插件已是最新：{}", addon_dir.display()));
-    }
-}
-
 /// 应用内存扫描总开关（界面开关与启动时都走这里）
 ///
-/// 插件安装与开关无关：即使扫描关闭也会把插件放进 AddOns 目录，
-/// 这样游戏插件列表里始终能看到并启用它；开关只决定是否扫描内存。
+/// 插件文件由用户手动放在 `Interface/AddOns/SLState`，本程序不再负责安装。
 pub fn apply(enabled: bool, wow_path: &str) {
     *TARGET.lock().unwrap() = exe_name(wow_path);
-    ensure_addon(wow_path);
     ENABLED.store(enabled, Ordering::SeqCst);
     if enabled {
         start_thread();
