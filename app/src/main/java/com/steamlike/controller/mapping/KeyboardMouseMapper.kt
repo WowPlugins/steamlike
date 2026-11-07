@@ -468,6 +468,7 @@ class KeyboardMouseMapper( // 语法：class 类声明，定义键盘/鼠标映�
             is MappedAction.MouseClickSequence -> handleMouseClickSequence() // 交互键动作：临时释放锁存→左键点击→右键点击→恢复锁存
             is MappedAction.MouseFineMove -> enterFineMove(button) // 精细移动动作：按住期间缩小右摇杆鼠标位移
             is MappedAction.MouseFastMove -> enterFastMove(button) // 快速移动动作：按住期间放大右摇杆鼠标位移
+            is MappedAction.Turn180 -> turnByPixels(action.pixels, action.stepMs) // 定角转身动作：按下即注入一次水平位移
             is MappedAction.SwitchLayer -> {} // SteamInput 已处理 // 切换层动作：由 SteamInput 内部处理
             is MappedAction.MouseMove, is MappedAction.LookAround -> {} // handleStick 处理 // 鼠标移动/视角动作：由 handleStick 处理
             is MappedAction.MouseScrollUp -> handleMouseScroll(SCROLL_DELTA) // 鼠标上滚动作：传入正增量
@@ -531,6 +532,7 @@ class KeyboardMouseMapper( // 语法：class 类声明，定义键盘/鼠标映�
             is MappedAction.MouseSwapToggle -> handleMouseSwapToggle() // 鼠标长按交换：交换左右键锁存
             is MappedAction.MouseReleaseAll -> handleMouseReleaseAll() // 释放鼠标所有长按：解除全部锁存
             is MappedAction.MouseClickSequence -> handleMouseClickSequence() // 交互键：临时释放锁存后左右键依次点击
+            is MappedAction.Turn180 -> turnByPixels(action.pixels, action.stepMs) // 定角转身：一次注入整段水平位移（长按/短按都走这里）
             is MappedAction.MouseScrollUp -> handleMouseScroll(SCROLL_DELTA) // 滚轮上滚：发送一次上滚
             is MappedAction.MouseScrollDown -> handleMouseScroll(-SCROLL_DELTA) // 滚轮下滚：发送一次下滚
             is MappedAction.ToggleOverlay -> onToggleOverlay?.invoke() // 切换悬浮窗（语法：?. 安全调用）
@@ -912,6 +914,37 @@ class KeyboardMouseMapper( // 语法：class 类声明，定义键盘/鼠标映�
     } // 结束 clearFineMove 函数
 
     /**
+     * 一键定角转身：把一次水平鼠标位移拆成多小步注入
+     *
+     * 直接发送一个很大的位移，部分游戏/系统会按单帧上限裁剪或做指针加速，
+     * 导致实际转角远小于预期；拆成 [TURN_STEPS] 步、每步间隔 [stepMs] 毫秒
+     * 后与真实鼠标快速拖动的效果一致。总耗时 = 步数 × 间隔。
+     *
+     * @param pixels 水平位移像素（正=向右，负=向左）
+     * @param stepMs 每步之间的间隔毫秒数（越小转得越快）
+     */
+    private fun turnByPixels(pixels: Int, stepMs: Int) { // 语法：private fun 私有函数，定角转身
+        if (pixels == 0) return // 位移为 0 直接返回
+        val gap = stepMs.coerceIn(1, 50) // 间隔限制在 1~50ms，避免填 0 空转或过大导致明显延迟
+        // 在后台线程分步发送，避免阻塞手柄事件回调线程（回调必须尽快返回）
+        Thread {
+            var sent = 0 // 已发送的累计位移
+            for (i in 1..TURN_STEPS) { // 按步数切分总位移
+                val target = (pixels.toLong() * i / TURN_STEPS).toInt() // 第 i 步后应达到的累计位移
+                val dx = target - sent // 本次需要发送的增量（余数不会丢失）
+                if (dx != 0) injector.sendMouseMove(dx.toFloat(), 0f) // 发送本步水平位移
+                sent += dx // 累计已发送
+                try {
+                    Thread.sleep(gap.toLong()) // 步间间隔，模拟真实拖动
+                } catch (_: InterruptedException) {
+                    return@Thread // 被中断则结束
+                }
+            }
+            Log.d(TAG, "Turn180 sent ${pixels}px, step=${gap}ms") // 打印转身完成日志
+        }.start()
+    } // 结束 turnByPixels 函数
+
+    /**
      * 进入快速移动模式（按住该映射键期间生效）
      *
      * 右摇杆位移按 [FAST_MOVE_FACTOR] 放大，用于低灵敏度下快速转身。
@@ -1211,5 +1244,8 @@ class KeyboardMouseMapper( // 语法：class 类声明，定义键盘/鼠标映�
 
         /** 快速移动模式下右摇杆位移的放大系数（2.5 = 正常速度的 2.5 倍） */
         private const val FAST_MOVE_FACTOR = 2.5f // 语法：const val 编译期常量，快速移动缩放系数
+
+        /** 定角转身的注入步数（步数越多越接近真实拖动，总耗时也越长） */
+        private const val TURN_STEPS = 10 // 语法：const val 编译期常量，转身位移分步数
     } // 结束伴生对象
 } // 结束 KeyboardMouseMapper 类

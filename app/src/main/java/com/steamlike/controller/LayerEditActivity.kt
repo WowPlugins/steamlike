@@ -117,6 +117,18 @@ class LayerEditActivity : AppCompatActivity() { // 定义操作层编辑 Activit
          */
         val keyboardKeyOptions: List<Pair<String, Int>> = buildKeyboardKeyOptions() // 只读属性：键盘按键选项列表（显示名→KeyCode），由构建函数初始化（语法：val=只读变量，List<Pair<...>>=泛型列表）
 
+        /** 定角转身可选档位（显示名 → 水平位移像素，正=向右，负=向左） */
+        val turnOptions: List<Pair<String, Int>> = listOf( // 只读属性：定角转身位移选项列表
+            "向右 400px（约90°）" to 400, // 小角度右转
+            "向右 800px（约180°）" to 800, // 默认档：约半圈
+            "向右 1200px（约270°）" to 1200, // 大角度右转
+            "向右 1600px（约360°）" to 1600, // 整圈右转
+            "向左 400px（约90°）" to -400, // 小角度左转
+            "向左 800px（约180°）" to -800, // 左转半圈
+            "向左 1200px（约270°）" to -1200, // 大角度左转
+            "向左 1600px（约360°）" to -1600, // 整圈左转
+        ) // 结束定角转身选项列表
+
         val numpadKeyOptions: List<Pair<String, Int>> = listOf( // 只读属性：数字小键盘按键选项列表（显示名→KeyCode），供「数字小键盘」动作类型使用
             "Num1" to KeyEvent.KEYCODE_NUMPAD_1, // 小键盘数字 1（语法：to=创建 Pair 键值对）
             "Num2" to KeyEvent.KEYCODE_NUMPAD_2, // 小键盘数字 2
@@ -773,6 +785,14 @@ class LayerEditActivity : AppCompatActivity() { // 定义操作层编辑 Activit
         val layoutLongPressSubCommands = dialogView.findViewById<LinearLayout>(R.id.layout_long_press_sub_commands) // 获取长按子命令区域父容器
         val layoutLongPressSubCommandList = dialogView.findViewById<LinearLayout>(R.id.layout_long_press_sub_command_list) // 获取长按子命令列表容器
         val btnAddLongPressSubCommand = dialogView.findViewById<Button>(R.id.btn_add_long_press_sub_command) // 获取「添加长按子命令」按钮
+        val layoutTurnStep = dialogView.findViewById<LinearLayout>(R.id.layout_turn_step) // 获取「180°转身」每步间隔区域（点击动作）
+        val etTurnStep = dialogView.findViewById<EditText>(R.id.et_turn_step) // 获取点击动作的每步间隔输入框
+        val layoutLongTurnStep = dialogView.findViewById<LinearLayout>(R.id.layout_long_turn_step) // 获取「180°转身」每步间隔区域（长按动作）
+        val etLongTurnStep = dialogView.findViewById<EditText>(R.id.et_long_turn_step) // 获取长按动作的每步间隔输入框
+        val layoutTurnPixels = dialogView.findViewById<LinearLayout>(R.id.layout_turn_pixels) // 获取「180°转身」自定义像素区域（点击动作）
+        val etTurnPixels = dialogView.findViewById<EditText>(R.id.et_turn_pixels) // 获取点击动作的自定义像素输入框
+        val layoutLongTurnPixels = dialogView.findViewById<LinearLayout>(R.id.layout_long_turn_pixels) // 获取「180°转身」自定义像素区域（长按动作）
+        val etLongTurnPixels = dialogView.findViewById<EditText>(R.id.et_long_turn_pixels) // 获取长按动作的自定义像素输入框
 
         // 显示正在编辑的按键名称
         tvButtonName.text = "编辑按键: ${buttonDisplayName(button)}" // 设置标题显示正在编辑的按键名（语法：字符串模板）
@@ -780,10 +800,10 @@ class LayerEditActivity : AppCompatActivity() { // 定义操作层编辑 Activit
         // ===== 设置动作类型 Spinner =====
         // 0=未设置(取消映射), 1=键盘按键, 2=鼠标点击, 3=鼠标长按, 4=切换操作层,
         // 5=滚轮上滚, 6=滚轮下滚, 7=切换悬浮窗, 8=切换键盘, 9=切换捕获, 10=切换层+按键, 11=数字小键盘, 12=鼠标长按交换,
-        // 13=释放鼠标长按, 14=交互键, 15=鼠标精细移动, 16=回车+切换键盘, 17=鼠标快速移动
+        // 13=释放鼠标长按, 14=交互键, 15=鼠标精细移动, 16=回车+切换键盘, 17=鼠标快速移动, 18=180°转身
         val actionTypes = listOf("未设置", "键盘按键", "鼠标点击", "鼠标长按", "切换操作层", // 定义动作类型选项列表（语法：listOf=列表工厂）
             "滚轮上滚", "滚轮下滚", "切换悬浮窗", "切换键盘", "切换捕获", "切换层+按键", "数字小键盘", "鼠标长按交换", "释放鼠标长按", "交互键", // 动作类型列表续行
-            "鼠标精细移动", "回车+切换键盘", "鼠标快速移动") // 动作类型列表续行（共 18 种）
+            "鼠标精细移动", "回车+切换键盘", "鼠标快速移动", "180°转身") // 动作类型列表续行（共 19 种）
         // 设置动作类型下拉框的适配器（语法：ArrayAdapter=数组适配器，also{}=作用域函数）
         spinnerActionType.adapter = ArrayAdapter(this, android.R.layout.simple_spinner_item, actionTypes).also {
             it.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item) // 设置下拉展开项的布局资源
@@ -797,7 +817,7 @@ class LayerEditActivity : AppCompatActivity() { // 定义操作层编辑 Activit
 
         // ===== 长按动作类型 Spinner =====
         // 长按可选类型：排除「切换操作层」「切层+按键」（层切换按键保持原有「按住即切层」语义）
-        val longPressTypeIndices = listOf(0, 1, 2, 3, 5, 6, 7, 8, 9, 11, 12, 13, 14, 15, 16, 17) // 长按可选动作类型索引列表；含精细移动(15)、快速移动(17)
+        val longPressTypeIndices = listOf(0, 1, 2, 3, 5, 6, 7, 8, 9, 11, 12, 13, 14, 15, 16, 17, 18) // 长按可选动作类型索引列表；含精细移动(15)、快速移动(17)、转身(18)
         spinnerLongPressType.adapter = ArrayAdapter(this, android.R.layout.simple_spinner_item, // 设置长按类型下拉框适配器
             longPressTypeIndices.map { actionTypes[it] }).also { // 用可选项索引映射出显示名（语法：map lambda）
             it.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item) // 设置下拉展开项的布局资源
@@ -847,6 +867,10 @@ class LayerEditActivity : AppCompatActivity() { // 定义操作层编辑 Activit
                     val pos = numpadKeyOptions.indexOfFirst { it.second == action.keyCode } // 查找与小键盘键码匹配的选项下标
                     if (pos >= 0) valueSpinner.setSelection(pos) // 找到则设置动作值下拉框选中项
                 } // 结束数字小键盘分支
+                is MappedAction.Turn180 -> { // 若为定角转身动作
+                    val pos = turnOptions.indexOfFirst { it.second == action.pixels } // 查找与位移像素匹配的档位下标
+                    if (pos >= 0) valueSpinner.setSelection(pos) // 找到则设置选中项
+                } // 结束定角转身分支
                 else -> {} // 其它类型无需设置动作值
             } // 结束恢复定位 when 块
         } // 结束 restoreValueSelectionFor 局部函数
@@ -870,6 +894,7 @@ class LayerEditActivity : AppCompatActivity() { // 定义操作层编辑 Activit
             is MappedAction.MouseClickSequence -> position == 14 // 交互键 → 类型 14
             is MappedAction.MouseFineMove -> position == 15 // 鼠标精细移动 → 类型 15
             is MappedAction.MouseFastMove -> position == 17 // 鼠标快速移动 → 类型 17
+            is MappedAction.Turn180 -> position == 18 // 定角转身 → 类型 18
             is MappedAction.SwitchLayer -> position == 4 // 切换层 → 类型 4
             is MappedAction.SwitchLayerAndKey -> position == 10 // 切层+按键 → 类型 10
             is MappedAction.NumpadKey -> position == 11 // 数字小键盘 → 类型 11
@@ -923,11 +948,29 @@ class LayerEditActivity : AppCompatActivity() { // 定义操作层编辑 Activit
                 initialActionType == 13 || initialActionType == 14 || // 或为释放鼠标长按(13)、交互键(14)
                 initialActionType == 15 || // 或为鼠标精细移动(15)
                 initialActionType == 17 || // 或为鼠标快速移动(17)
+                initialActionType == 18 || // 或为定角转身(18)
                 initialActionType == 16) // 或为回车+切换键盘(16)
                 View.GONE else View.VISIBLE // 上述类型隐藏子命令区，否则显示（语法：if...else 表达式，View.GONE=隐藏且不占位）
 
         // 额外按键区域仅「切换层+按键」类型显示
         layoutExtraKey.visibility = if (initialActionType == 10) View.VISIBLE else View.GONE // 仅切层+按键类型显示附加按键区
+
+        // 「180°转身」每步间隔输入框：仅转身类型显示，初值取已有动作的间隔（无则 8ms）
+        layoutTurnStep.visibility = if (initialActionType == 18) View.VISIBLE else View.GONE // 点击动作显隐
+        etTurnStep.setText(((existingMapping?.action as? MappedAction.Turn180)?.stepMs ?: 8).toString()) // 预填点击动作间隔
+        layoutLongTurnStep.visibility = if (initialLongPressType == 18) View.VISIBLE else View.GONE // 长按动作显隐
+        etLongTurnStep.setText(((existingMapping?.longPressAction as? MappedAction.Turn180)?.stepMs ?: 8).toString()) // 预填长按动作间隔
+        // 自定义像素：仅在「已有值不是预设档位」时预填，是档位时留空（让下拉框档位继续生效）
+        val tapTurn = existingMapping?.action as? MappedAction.Turn180 // 点击动作的转身参数（非转身为 null）
+        etTurnPixels.setText( // 预填点击动作自定义像素
+            if (tapTurn != null && turnOptions.none { it.second == tapTurn.pixels }) tapTurn.pixels.toString() else "" // 非档位值才填
+        ) // 结束预填
+        layoutTurnPixels.visibility = if (initialActionType == 18) View.VISIBLE else View.GONE // 点击动作显隐
+        val lpTurn = existingMapping?.longPressAction as? MappedAction.Turn180 // 长按动作的转身参数（非转身为 null）
+        etLongTurnPixels.setText( // 预填长按动作自定义像素
+            if (lpTurn != null && turnOptions.none { it.second == lpTurn.pixels }) lpTurn.pixels.toString() else "" // 非档位值才填
+        ) // 结束预填
+        layoutLongTurnPixels.visibility = if (initialLongPressType == 18) View.VISIBLE else View.GONE // 长按动作显隐
 
         // ===== 动作类型切换监听器 =====
         // 用户切换动作类型时，更新动作值 Spinner 的选项
@@ -942,10 +985,13 @@ class LayerEditActivity : AppCompatActivity() { // 定义操作层编辑 Activit
                         position == 13 || position == 14 || // 或为释放鼠标长按(13)、交互键(14)
                         position == 15 || // 或为鼠标精细移动(15)
                         position == 17 || // 或为鼠标快速移动(17)
+                        position == 18 || // 或为定角转身(18)
                         position == 16) // 或为回车+切换键盘(16)
                         View.GONE else View.VISIBLE // 隐藏子命令区，否则显示
                 // 额外按键区域仅「切换层+按键」类型显示
                 layoutExtraKey.visibility = if (position == 10) View.VISIBLE else View.GONE // 仅切层+按键类型显示附加按键区
+                layoutTurnStep.visibility = if (position == 18) View.VISIBLE else View.GONE // 「180°转身」才显示每步间隔输入框
+                layoutTurnPixels.visibility = if (position == 18) View.VISIBLE else View.GONE // 「180°转身」才显示自定义像素输入框
                 // 动作类型与已有映射一致时，同步恢复动作值选中项：
                 // 打开对话框/attach 布局会触发本回调重建动作值 Spinner（重置到首项），
                 // 这里在重建后立即恢复为当前映射，避免显示错误（如映射键盘 X 却显示键盘 A）。
@@ -965,6 +1011,8 @@ class LayerEditActivity : AppCompatActivity() { // 定义操作层编辑 Activit
                 setupActionValueSpinner(spinnerLongPressValue, tvLongPressLabel, actionType, "长按 · ") // 按新类型重建长按动作值选项
                 // 长按子命令区可见性：仅键盘/鼠标点击/鼠标长按/数字小键盘类型显示（其余类型子命令无效）
                 layoutLongPressSubCommands.visibility = if (longPressSubVisible(actionType)) View.VISIBLE else View.GONE // 按新长按类型设置可见性
+                layoutLongTurnStep.visibility = if (actionType == 18) View.VISIBLE else View.GONE // 「180°转身」才显示每步间隔输入框
+                layoutLongTurnPixels.visibility = if (actionType == 18) View.VISIBLE else View.GONE // 「180°转身」才显示自定义像素输入框
                 // 与已有长按动作类型一致时恢复选中值（打开对话框/attach 触发时显示当前长按动作）
                 if (actionType == actionTypeIndexOf(existingMapping?.longPressAction)) { // 类型匹配判断（语法：== 相等比较）
                     restoreLongPressValueSelection() // 恢复长按动作值选中项
@@ -1004,7 +1052,9 @@ class LayerEditActivity : AppCompatActivity() { // 定义操作层编辑 Activit
                     val action = buildAction( // 调用构建动作函数（跨行参数）
                         actionType - 1, // 动作类型减去 1 还原为构建函数使用的索引
                         spinnerActionValue.selectedItemPosition, // 动作值下拉框当前选中位置
-                        spinnerExtraKey.selectedItemPosition // 附加按键下拉框当前选中位置（仅切层+按键类型生效）
+                        spinnerExtraKey.selectedItemPosition, // 附加按键下拉框当前选中位置（仅切层+按键类型生效）
+                        etTurnStep.text.toString().toIntOrNull() ?: 8, // 定角转身每步间隔（毫秒，非转身类型忽略）
+                        etTurnPixels.text.toString().trim().toIntOrNull() // 定角转身自定义像素（留空=用档位）
                     ) // 结束 buildAction 调用
                     // 收集子命令（跳过"无"选项）
                     val subCommands = collectSubCommands(subCommandSpinners) // 收集所有已选短按子命令 KeyCode
@@ -1012,7 +1062,7 @@ class LayerEditActivity : AppCompatActivity() { // 定义操作层编辑 Activit
                     // 长按动作：位置还原为动作类型索引，0=未设置（不启用长按判定）
                     val longPressType = longPressTypeIndices[spinnerLongPressType.selectedItemPosition] // 长按动作类型索引
                     val longPressAction = if (longPressType == 0) null // 未设置 → 不启用长按判定（语法：if 表达式）
-                        else buildAction(longPressType - 1, spinnerLongPressValue.selectedItemPosition) // 否则构建长按动作
+                        else buildAction(longPressType - 1, spinnerLongPressValue.selectedItemPosition, 0, etLongTurnStep.text.toString().toIntOrNull() ?: 8, etLongTurnPixels.text.toString().trim().toIntOrNull()) // 否则构建长按动作（含转身间隔与自定义像素）
 
                     // 创建新的按键映射（含可选长按动作与其子命令）
                     val newMapping = KeyMapping(action, subCommands, longPressAction, longPressSubCommands) // 构建新的按键映射对象（语法：四参构造）
@@ -1672,6 +1722,7 @@ class LayerEditActivity : AppCompatActivity() { // 定义操作层编辑 Activit
         is MappedAction.MouseClickSequence -> 14 // 交互键 → 类型 14
         is MappedAction.MouseFineMove -> 15 // 鼠标精细移动 → 类型 15
         is MappedAction.MouseFastMove -> 17 // 鼠标快速移动 → 类型 17
+        is MappedAction.Turn180 -> 18 // 定角转身 → 类型 18
         is MappedAction.MouseMove, is MappedAction.LookAround -> 0 // 摇杆专用 → 未设置（语法：多类型分支）
         null -> 0 // 未映射 → 未设置
     } // 结束 when 表达式
@@ -1764,6 +1815,10 @@ class LayerEditActivity : AppCompatActivity() { // 定义操作层编辑 Activit
                 label.text = "按住时右摇杆快速移动（松开恢复正常速度）" // 更新动作标签文字
                 listOf("（鼠标快速移动）") // 返回占位选项
             } // 结束鼠标快速移动分支
+            18 -> {  // 180°转身 // 定角转身类型分支
+                label.text = "按下立即转身（像素越大转得越多，800px≈180°）" // 更新动作标签文字
+                turnOptions.map { it.first } // 返回转身档位选项（方向 + 像素）
+            } // 结束定角转身分支
             else -> emptyList() // 其它类型返回空列表（语法：else=默认分支）
         } // 结束选项列表 when 表达式
 
@@ -1774,6 +1829,8 @@ class LayerEditActivity : AppCompatActivity() { // 定义操作层编辑 Activit
         // 重置选中位置为首项：Spinner 更换 adapter 后会保留旧列表的选中索引，
         // 若旧索引超出新列表长度（如键盘按键长列表索引 74 → 数字小键盘仅 11 项）布局时会越界崩溃
         spinner.setSelection(0) // 重置下拉框选中位置为首项（语法：setSelection=设置下拉框选中项）
+        // 定角转身默认选「向右 800px（约180°）」，避免默认落到 400px 的小角度档
+        if (actionType == 18 && options.size > 1) spinner.setSelection(1) // 转身默认选中 800px 档
         // 给标签加上分组前缀，让「点击动作」与「长按动作」的取值标签一眼可分
         if (labelPrefix.isNotEmpty()) label.text = labelPrefix + label.text // 追加分组前缀（语法：字符串拼接）
     } // 结束 setupActionValueSpinner 函数
@@ -1784,9 +1841,11 @@ class LayerEditActivity : AppCompatActivity() { // 定义操作层编辑 Activit
      * @param actionType 动作类型 (0=键盘, 1=鼠标点击, 2=鼠标长按, 3=切换层, 9=切层+按键, 10=数字小键盘)
      * @param valuePosition 动作值 Spinner 的选中位置
      * @param extraValuePosition 附加按键 Spinner 的选中位置（仅切层+按键类型使用，默认 0）
+     * @param stepMs 「180°转身」每步间隔毫秒数（其它类型忽略，默认 8）
+     * @param customPixels 「180°转身」自定义像素（null/0=用下拉框档位）
      * @return 对应的 MappedAction 实例
      */
-    private fun buildAction(actionType: Int, valuePosition: Int, extraValuePosition: Int = 0): MappedAction { // 私有函数：根据动作类型和选中位置构建动作对象
+    private fun buildAction(actionType: Int, valuePosition: Int, extraValuePosition: Int = 0, stepMs: Int = 8, customPixels: Int? = null): MappedAction { // 私有函数：根据动作类型和选中位置构建动作对象
         return when (actionType) { // 按动作类型返回对应动作（语法：when=分支表达式）
             0 -> {  // 键盘按键 // 键盘按键动作
                 MappedAction.KeyboardKey(keyboardKeyOptions[valuePosition].second) // 用所选 KeyCode 构建键盘按键动作
@@ -1813,6 +1872,11 @@ class LayerEditActivity : AppCompatActivity() { // 定义操作层编辑 Activit
             14 -> MappedAction.MouseFineMove // 鼠标精细移动动作：按住期间缩小右摇杆位移
             15 -> MappedAction.ToggleKeyboardEnter // 回车+切换键盘动作：先发回车再切换软键盘
             16 -> MappedAction.MouseFastMove // 鼠标快速移动动作：按住期间放大右摇杆位移
+            17 -> MappedAction.Turn180( // 定角转身：优先用自定义像素，未填则取所选档位
+                (customPixels ?: 0).takeIf { it != 0 }?.coerceIn(-5000, 5000) // 自定义像素（非 0 才生效，限制 ±5000）
+                    ?: turnOptions.getOrElse(valuePosition) { turnOptions[1] }.second, // 档位像素（越界回退 800）
+                stepMs.coerceIn(1, 50) // 每步间隔限制 1~50ms
+            ) // 结束 Turn180 构造
             4 -> MappedAction.MouseScrollUp   // 滚轮上滚 // 滚轮上滚动作
             5 -> MappedAction.MouseScrollDown  // 滚轮下滚 // 滚轮下滚动作
             6 -> MappedAction.ToggleOverlay   // 切换悬浮窗 // 切换悬浮窗动作

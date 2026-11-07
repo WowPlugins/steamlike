@@ -58,6 +58,8 @@ enum Cmd {
     MappingUp(u32),
     /// 长按阈值到达（映射按键用）
     MappingLongPress(u32),
+    /// 快速转身（水平位移像素，每步间隔毫秒）
+    Turn180(i32, u32),
 }
 
 /// 「解锁 → 居中」之间插入的等待（毫秒）
@@ -523,6 +525,7 @@ fn action_thread(rx: Receiver<Cmd>) {
                     }
                 }
             }
+            Cmd::Turn180(pixels, step_ms) => do_turn180(pixels, step_ms),
         }
     }
 }
@@ -637,7 +640,35 @@ fn execute_mapping(source_vk: u32, is_long_press: bool) {
             crate::bridge::send_toggle_keyboard();
             log("[映射] 回车 + 切换安卓键盘");
         }
+        crate::config::MappedAction::Turn180 { pixels, step_ms } => {
+            queue_cmd(Cmd::Turn180(*pixels, *step_ms));
+        }
     }
+}
+
+/// 快速转身的分步数（像素分多小步发送，避免单次大位移被游戏丢弃）
+const TURN_STEPS: i32 = 10;
+
+/// 执行快速转身：按步均分水平位移，步间按用户设置的间隔等待
+fn do_turn180(pixels: i32, step_ms: u32) {
+    if pixels == 0 {
+        return;
+    }
+    let gap = step_ms.clamp(1, 50);
+    let mut sent = 0i32;
+    for i in 1..=TURN_STEPS {
+        let target = (pixels as i64 * i as i64 / TURN_STEPS as i64) as i32;
+        let dx = target - sent;
+        if dx != 0 {
+            win::inject_mouse_move(dx, 0);
+        }
+        sent += dx;
+        std::thread::sleep(Duration::from_millis(gap as u64));
+    }
+    log(format!(
+        "[映射] 快速转身 {}px（{} 步 × {}ms/步）",
+        pixels, TURN_STEPS, gap
+    ));
 }
 
 /// 执行键盘按键动作（含子命令组合键）

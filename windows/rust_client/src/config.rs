@@ -138,6 +138,20 @@ pub enum MappedAction {
         key_code: u32,
         sub_commands: Vec<u32>,
     },
+    /// 快速转身：分多步注入水平鼠标位移，一键把视角转到身后
+    ///
+    /// `pixels` 正数向右转、负数向左转（默认 800px ≈ 180°）；
+    /// `step_ms` 每步之间的间隔毫秒（越小转得越快）。
+    Turn180 {
+        pixels: i32,
+        #[serde(default = "default_turn_step_ms")]
+        step_ms: u32,
+    },
+}
+
+/// 「快速转身」每步间隔的默认值（毫秒）
+fn default_turn_step_ms() -> u32 {
+    8
 }
 
 impl Default for MappedAction {
@@ -210,6 +224,12 @@ impl MappedAction {
                     crate::ui::combo_name(*key_code, sub_commands)
                 )
             }
+            Self::Turn180 { pixels, step_ms } => format!(
+                "快速转身 {}{}px（{}ms/步）",
+                if *pixels < 0 { "左" } else { "右" },
+                pixels.abs(),
+                step_ms
+            ),
         }
     }
 }

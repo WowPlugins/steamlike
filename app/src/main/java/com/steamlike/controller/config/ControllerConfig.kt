@@ -347,6 +347,11 @@ object ControllerConfig { // 单例对象：配置的 JSON 序列化/反序列�
             is MappedAction.MouseFastMove -> { // 鼠标快速移动类型
                 json.put("type", "mouseFastMove") // 写入类型标识
             } // 结束鼠标快速移动分支
+            is MappedAction.Turn180 -> { // 定角转身类型
+                json.put("type", "turn180") // 写入类型标识
+                json.put("pixels", action.pixels) // 写入位移像素（正=向右，负=向左）
+                json.put("stepMs", action.stepMs) // 写入每步间隔毫秒数
+            } // 结束定角转身分支
             is MappedAction.SwitchLayer -> { // 切换操作层类型
                 json.put("type", "switchLayer") // 写入类型标识
                 json.put("layerName", action.layerName) // 写入目标层名
@@ -412,6 +417,7 @@ object ControllerConfig { // 单例对象：配置的 JSON 序列化/反序列�
             "mouseClickSequence" -> MappedAction.MouseClickSequence // 交互键：直接返回单例对象
             "mouseFineMove" -> MappedAction.MouseFineMove // 鼠标精细移动：直接返回单例对象
             "mouseFastMove" -> MappedAction.MouseFastMove // 鼠标快速移动：直接返回单例对象
+            "turn180" -> MappedAction.Turn180(json.optInt("pixels", 800), json.optInt("stepMs", 8)) // 定角转身：读取位移像素与每步间隔，缺失时按 800px / 8ms
             "switchLayer" -> { // 切换操作层类型
                 val layerName = json.getString("layerName") // 读取目标层名
                 MappedAction.SwitchLayer(layerName) // 构造切换层动作

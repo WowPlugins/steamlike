@@ -172,6 +172,18 @@ sealed class MappedAction { // 映射动作密封类（语法：sealed class 密
     data object MouseFastMove : MappedAction() // 鼠标快速移动动作
 
     /**
+     * 一键定角转身动作
+     *
+     * 按下时注入一次水平鼠标位移，用于快速把视角转到身后。
+     * 正数向右转、负数向左转；像素量与角度的换算取决于游戏内鼠标灵敏度，
+     * 默认 800px 约等于 180°。位移分多小步发送，避免单次大位移被游戏丢弃。
+     *
+     * @param pixels 水平位移像素（正=向右，负=向左）
+     * @param stepMs 每步之间的间隔毫秒数（越小转得越快，默认 8）
+     */
+    data class Turn180(val pixels: Int, val stepMs: Int = 8) : MappedAction() // 一键定角转身动作
+
+    /**
      * 鼠标滚轮上滚动作
      *
      * 将手柄按键映射为鼠标滚轮向上滚动（发送一次固定增量的滚轮事件）。
@@ -315,6 +327,7 @@ data class KeyMapping( // 按键映射定义（语法：data class 数据类）
         is MappedAction.MouseClickSequence -> "交互键" // 鼠标交互键描述
         is MappedAction.MouseFineMove -> "精细移动" // 鼠标精细移动描述
         is MappedAction.MouseFastMove -> "快速移动" // 鼠标快速移动描述
+        is MappedAction.Turn180 -> if (action.pixels < 0) "转身 左${-action.pixels}px" else "转身 右${action.pixels}px" // 定角转身描述（语法：if 表达式）
         is MappedAction.MouseScrollUp -> "滚轮上滚" // 滚轮上滚描述
         is MappedAction.MouseScrollDown -> "滚轮下滚" // 滚轮下滚描述
         is MappedAction.ToggleOverlay -> "切换悬浮窗" // 切换悬浮窗描述

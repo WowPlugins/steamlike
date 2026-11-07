@@ -147,6 +147,18 @@ const NUMPAD_CHOICES: &[(u32, &str)] = &[
     (0x0D, "Num Enter"),
 ];
 
+/// 快速转身可选档位（显示名 → 水平位移像素，正=向右，负=向左）
+const TURN_CHOICES: &[(i32, &str)] = &[
+    (400, "向右 400px（约90°）"),
+    (800, "向右 800px（约180°）"),
+    (1200, "向右 1200px（约270°）"),
+    (1600, "向右 1600px（约360°）"),
+    (-400, "向左 400px（约90°）"),
+    (-800, "向左 800px（约180°）"),
+    (-1200, "向左 1200px（约270°）"),
+    (-1600, "向左 1600px（约360°）"),
+];
+
 /// 是否为修饰键（Ctrl/Shift/Alt/Win）
 fn is_mod_vk(vk: u32) -> bool {
     matches!(vk, 0x10 | 0x11 | 0x12 | 0x5B | 0x5C)
@@ -286,6 +298,10 @@ pub struct App {
     edit_tap_subs: Vec<u32>,
     /// 映射编辑对话框：长按子命令列表
     edit_long_press_subs: Vec<u32>,
+    /// 映射编辑对话框：短按「快速转身」的每步间隔（毫秒）
+    edit_tap_turn_step_ms: u32,
+    /// 映射编辑对话框：长按「快速转身」的每步间隔（毫秒）
+    edit_long_press_turn_step_ms: u32,
     /// 映射编辑对话框：源按键
     edit_source_vk: u32,
     /// 映射编辑对话框：源按键的修饰键（组合键，如 Ctrl+7 里的 Ctrl）
@@ -370,6 +386,8 @@ impl App {
             edit_long_press_value: 0,
             edit_tap_subs: Vec::new(),
             edit_long_press_subs: Vec::new(),
+            edit_tap_turn_step_ms: 8,
+            edit_long_press_turn_step_ms: 8,
             edit_source_vk: 0,
             edit_source_mods: Vec::new(),
             edit_enabled: true,
@@ -1081,6 +1099,7 @@ impl App {
         self.edit_cond_mode = mapping.require_mode;
 
         // 解析短按动作
+        self.edit_tap_turn_step_ms = 8;
         match &mapping.tap_action {
             crate::config::MappedAction::KeyboardKey { key_code, sub_commands } => {
                 self.edit_tap_type = 1;
@@ -1150,6 +1169,12 @@ impl App {
                 self.edit_tap_value = *key_code;
                 self.edit_tap_subs = sub_commands.clone();
             }
+            crate::config::MappedAction::Turn180 { pixels, step_ms } => {
+                self.edit_tap_type = 14;
+                self.edit_tap_value = *pixels as u32;
+                self.edit_tap_subs.clear();
+                self.edit_tap_turn_step_ms = *step_ms;
+            }
             _ => {
                 self.edit_tap_type = 0;
                 self.edit_tap_value = 0;
@@ -1158,6 +1183,7 @@ impl App {
         }
 
         // 解析长按动作
+        self.edit_long_press_turn_step_ms = 8;
         match &mapping.long_press_action {
             crate::config::MappedAction::KeyboardKey { key_code, sub_commands } => {
                 self.edit_long_press_type = 1;
@@ -1227,6 +1253,12 @@ impl App {
                 self.edit_long_press_value = 0;
                 self.edit_long_press_subs.clear();
             }
+            crate::config::MappedAction::Turn180 { pixels, step_ms } => {
+                self.edit_long_press_type = 14;
+                self.edit_long_press_value = *pixels as u32;
+                self.edit_long_press_subs.clear();
+                self.edit_long_press_turn_step_ms = *step_ms;
+            }
             _ => {
                 self.edit_long_press_type = 0;
                 self.edit_long_press_value = 0;
@@ -1239,8 +1271,8 @@ impl App {
     fn save_mapping_editor(&mut self) {
         if let Some(index) = self.editing_mapping {
             // 先构建动作（只读借用编辑字段），再拿映射的可变借用写入，避免与 &self 冲突
-            let tap = self.build_action(self.edit_tap_type, self.edit_tap_value, &self.edit_tap_subs);
-            let lp = self.build_action(self.edit_long_press_type, self.edit_long_press_value, &self.edit_long_press_subs);
+            let tap = self.build_action(self.edit_tap_type, self.edit_tap_value, &self.edit_tap_subs, self.edit_tap_turn_step_ms);
+            let lp = self.build_action(self.edit_long_press_type, self.edit_long_press_value, &self.edit_long_press_subs, self.edit_long_press_turn_step_ms);
             let mapping = &mut self.cfg.key_mappings[index];
             mapping.source_vk = self.edit_source_vk;
             mapping.source_mods = self.edit_source_mods.clone();
@@ -1258,7 +1290,13 @@ impl App {
     }
 
     /// 根据类型和值构建 MappedAction
-    fn build_action(&self, action_type: usize, value: u32, subs: &[u32]) -> crate::config::MappedAction {
+    fn build_action(
+        &self,
+        action_type: usize,
+        value: u32,
+        subs: &[u32],
+        turn_step_ms: u32,
+    ) -> crate::config::MappedAction {
         match action_type {
             1 => crate::config::MappedAction::KeyboardKey {
                 key_code: value,
@@ -1288,6 +1326,10 @@ impl App {
                 key_code: value,
                 sub_commands: subs.to_vec(),
             },
+            14 => crate::config::MappedAction::Turn180 {
+                pixels: value as i32,
+                step_ms: turn_step_ms.clamp(1, 50),
+            },
             _ => crate::config::MappedAction::None,
         }
     }
@@ -1300,7 +1342,7 @@ impl App {
             "未设置", "键盘按键", "数字小键盘", "鼠标点击", "鼠标长按",
             "滚轮上滚", "滚轮下滚", "鼠标长按交换", "释放鼠标长按",
             "交互键", "悬浮窗展开/收起", "回车+切换键盘", "显示安卓键盘",
-            "解锁+居中+按键",
+            "解锁+居中+按键", "快速转身",
         ];
         // 长按与短按支持完全相同的动作类型
         let long_press_types = action_types;
@@ -1421,7 +1463,14 @@ impl App {
                 });
 
                 // 短按动作值
-                Self::render_action_value_editor(ui, self.edit_tap_type, &mut self.edit_tap_value, &mut self.edit_tap_subs, "tap");
+                Self::render_action_value_editor(
+                    ui,
+                    self.edit_tap_type,
+                    &mut self.edit_tap_value,
+                    &mut self.edit_tap_subs,
+                    &mut self.edit_tap_turn_step_ms,
+                    "tap",
+                );
 
                 ui.separator();
 
@@ -1443,7 +1492,14 @@ impl App {
                 });
 
                 // 长按动作值
-                Self::render_action_value_editor(ui, self.edit_long_press_type, &mut self.edit_long_press_value, &mut self.edit_long_press_subs, "lp");
+                Self::render_action_value_editor(
+                    ui,
+                    self.edit_long_press_type,
+                    &mut self.edit_long_press_value,
+                    &mut self.edit_long_press_subs,
+                    &mut self.edit_long_press_turn_step_ms,
+                    "lp",
+                );
 
                 ui.separator();
 
@@ -1561,6 +1617,7 @@ impl App {
         action_type: usize,
         value: &mut u32,
         subs: &mut Vec<u32>,
+        turn_step_ms: &mut u32,
         id_prefix: &str,
     ) {
         match action_type {
@@ -1621,6 +1678,50 @@ impl App {
                     });
                 });
                 Self::render_sub_commands_editor(ui, subs, id_prefix);
+            }
+            14 => {
+                // 快速转身：位移档位（正=向右，负=向左）+ 自定义像素 + 每步间隔
+                ui.horizontal(|ui| {
+                    ui.label("转身角度:");
+                    let pixels = *value as i32;
+                    let text = TURN_CHOICES
+                        .iter()
+                        .find(|(px, _)| *px == pixels)
+                        .map(|(_, name)| (*name).to_string())
+                        .unwrap_or_else(|| format!("自定义 {}px", pixels));
+                    Self::choice_dropdown(ui, &format!("{}_value", id_prefix), &text, |ui| {
+                        let mut chosen = false;
+                        for (px, name) in TURN_CHOICES {
+                            if ui.selectable_label(pixels == *px, *name).clicked() {
+                                *value = *px as u32;
+                                chosen = true;
+                            }
+                        }
+                        chosen
+                    });
+                });
+                ui.horizontal(|ui| {
+                    ui.label("自定义像素:");
+                    let mut px = *value as i32;
+                    let resp = ui.add(
+                        egui::DragValue::new(&mut px)
+                            .clamp_range(-5000..=5000)
+                            .suffix(" px"),
+                    );
+                    if resp.changed() {
+                        *value = px as u32;
+                    }
+                    ui.label(egui::RichText::new("正=向右，负=向左").weak());
+                });
+                ui.horizontal(|ui| {
+                    ui.label("每步间隔:");
+                    ui.add(
+                        egui::DragValue::new(turn_step_ms)
+                            .clamp_range(1..=50)
+                            .suffix(" ms"),
+                    )
+                    .on_hover_text("越小转得越快；范围 1~50ms（默认 8ms）");
+                });
             }
             _ => {
                 // 无参数动作
