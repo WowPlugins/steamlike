@@ -321,11 +321,11 @@ impl App {
         *RT.key_mappings.lock().unwrap() = cfg.key_mappings.clone();
         RT.key_mapping_enabled.store(cfg.key_mapping_enabled, Ordering::SeqCst);
 
-        // 启动时总是显示完整主界面（不沿用上次收起为圆点的状态）
-        // 注意：运行期原子量也必须写成本展开值，否则 update() 会把它同步回配置，首帧又收成圆点
+        // 默认显示完整主界面，但要尊重运行期已发生的收起：
+        // 自动启动线程可能在窗口创建前就启动了游戏并把状态设成圆点，
+        // 这里若强行写 true 会把那次收起覆盖掉（表现为「有时不会自动缩小」）
         let mut cfg = cfg;
-        cfg.overlay_expanded = true;
-        RT.overlay_expanded.store(true, Ordering::SeqCst);
+        cfg.overlay_expanded = RT.overlay_expanded.load(Ordering::SeqCst);
 
         // 启动诊断：把实际加载的映射与两个总开关写进日志，便于确认「按键没命中」是配置没加载还是钩子没拦
         runtime::log(format!(
@@ -741,7 +741,7 @@ impl App {
                             RT.overlay_expanded.store(false, Ordering::Relaxed);
                             *dirty = true;
                         }
-                        crate::launch_game(&self.cfg);
+                        let _ = crate::launch_game(&self.cfg);
                     }
                     Err(e) => {
                         self.launch_error = Some(e.clone());

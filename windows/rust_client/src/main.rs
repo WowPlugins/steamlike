@@ -90,17 +90,27 @@ fn main() -> eframe::Result<()> {
                         return;
                     }
                 }
-                launch_game(&launch_cfg);
+                if launch_game(&launch_cfg) {
+                    // 与「立即启动魔兽」按钮一致：开关开启时启动成功后收成小圆点。
+                    // 这里直接写运行期状态，界面每帧会据此调整窗口尺寸。
+                    if launch_cfg.minimize_on_launch {
+                        RT.overlay_expanded.store(false, Ordering::Relaxed);
+                    }
+                }
             });
     }
 
-    // 启动总是显示完整主界面（App::new 里也强制展开），
-    // 所以初始尺寸直接给完整面板尺寸，避免首帧再从小尺寸撑大/缩小的变化
+    // 初始尺寸按当前形态给出：若自动启动线程已经收起成圆点，就直接用圆点尺寸，
+    // 避免先开大窗口再缩小（Winlator 下尤其明显）
     let (sw, sh) = win::screen_size();
-    let initial = egui::vec2(
-        (sw as f32 - 8.0).clamp(420.0, 620.0),
-        (sh as f32 - 8.0).clamp(420.0, 660.0),
-    );
+    let initial = if RT.overlay_expanded.load(Ordering::Relaxed) {
+        egui::vec2(
+            (sw as f32 - 8.0).clamp(420.0, 620.0),
+            (sh as f32 - 8.0).clamp(420.0, 660.0),
+        )
+    } else {
+        egui::vec2(64.0, 64.0)
+    };
     let title = format!("SteamLike InputBridge v{}", runtime::version());
 
     let options = eframe::NativeOptions {
@@ -152,12 +162,12 @@ fn apply_runtime(cfg: &config::ClientConfig) {
 /// 按界面开关决定游戏路径并启动（不等待退出）
 ///
 /// 供启动流程与界面「立即启动魔兽」按钮共用。
-pub(crate) fn launch_game(cfg: &config::ClientConfig) {
+pub(crate) fn launch_game(cfg: &config::ClientConfig) -> bool {
     let path = match config::check_wow_path(cfg) {
         Ok(p) => p,
         Err(e) => {
             runtime::log(format!("启动游戏失败：{}", e));
-            return;
+            return false;
         }
     };
     let exe = std::path::PathBuf::from(&path);
@@ -166,8 +176,14 @@ pub(crate) fn launch_game(cfg: &config::ClientConfig) {
         cmd.current_dir(dir);
     }
     match cmd.spawn() {
-        Ok(_) => runtime::log(format!("已启动游戏：{}", path)),
-        Err(e) => runtime::log(format!("启动游戏失败 {}：{}", path, e)),
+        Ok(_) => {
+            runtime::log(format!("已启动游戏：{}", path));
+            true
+        }
+        Err(e) => {
+            runtime::log(format!("启动游戏失败 {}：{}", path, e));
+            false
+        }
     }
 }
 
