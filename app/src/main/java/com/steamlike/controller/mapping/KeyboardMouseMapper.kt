@@ -125,6 +125,18 @@ class KeyboardMouseMapper( // 语法：class 类声明，定义键盘/鼠标映�
     @Volatile // 语法：@Volatile 注解，保证跨线程可见
     private var fineMoveActive = false // 语法：var 可变变量，精细移动模式标志
 
+    /**
+     * 当前按住「快速移动」映射的手柄按钮集合
+     *
+     * 集合非空即处于快速移动模式：右摇杆位移按 [FAST_MOVE_FACTOR] 放大。
+     * 与精细移动同时按住时以精细移动为准。
+     */
+    private val fastMoveButtons = mutableSetOf<ControllerButton>() // 语法：val+mutableSetOf 可变集合，记录按住快速移动的按钮
+
+    /** 快速移动模式是否生效（供右摇杆发送线程无锁读取） */
+    @Volatile // 语法：@Volatile 注解，保证跨线程可见
+    private var fastMoveActive = false // 语法：var 可变变量，快速移动模式标志
+
     // ====================================================================
     // 长按判定状态机（Long-Press）
     // ====================================================================
@@ -298,6 +310,7 @@ class KeyboardMouseMapper( // 语法：class 类声明，定义键盘/鼠标映�
             // 该按钮按下时的映射已不可达（层已停用/无映射）：先结束可能是精细移动的按住态，
             // 再按按下时记录的状态释放已注入的键鼠事件
             clearFineMove(button) // 退出精细移动（若在按住中）
+            clearFastMove(button) // 退出快速移动（若在按住中）
             if (!finishDeferredPress(button)) releaseButtonInjection(button) // 释放已注入状态（延迟按下则交给长按判定收尾）
         } // 结束无映射松开 lambda
         steamInput.onActionSetChanged = { actionSetName -> // 注册操作集切换回调（语法：lambda 表达式）
@@ -330,6 +343,8 @@ class KeyboardMouseMapper( // 语法：class 类声明，定义键盘/鼠标映�
         layerMouseActionButtons.clear() // 清空「层 → 操作过鼠标左右键的按钮」记录
         fineMoveButtons.clear() // 清空精细移动按住记录
         fineMoveActive = false // 关闭精细移动标志
+        fastMoveButtons.clear() // 清空快速移动按住记录
+        fastMoveActive = false // 关闭快速移动标志
         latestLookX = 0f // 重置右摇杆最新 X
         latestLookY = 0f // 重置右摇杆最新 Y
         smoothedLookX = 0f // 重置平滑 X
@@ -420,6 +435,7 @@ class KeyboardMouseMapper( // 语法：class 类声明，定义键盘/鼠标映�
     private fun handleMapping(button: ControllerButton, isPressed: Boolean, mapping: KeyMapping) { // 语法：private fun 私有函数，按动作类型分发按键映射
         if (!isPressed) { // 语法：if 分支，判断是否为松开事件
             clearFineMove(button) // 若该按钮正按住「精细移动」则退出，恢复普通灵敏度
+            clearFastMove(button) // 若该按钮正按住「快速移动」则退出，恢复普通灵敏度
             if (finishDeferredPress(button)) return // 若该按钮处于长按判定中，按按住时长决定短按/长按（语法：if 提前返回）
             releaseButtonInjection(button) // 按已注入状态释放该按钮的全部键鼠状态
             return // 直接返回，松开不按当前层映射分发
@@ -451,6 +467,7 @@ class KeyboardMouseMapper( // 语法：class 类声明，定义键盘/鼠标映�
             is MappedAction.MouseReleaseAll -> handleMouseReleaseAll() // 释放鼠标所有长按动作：解除全部长按锁存
             is MappedAction.MouseClickSequence -> handleMouseClickSequence() // 交互键动作：临时释放锁存→左键点击→右键点击→恢复锁存
             is MappedAction.MouseFineMove -> enterFineMove(button) // 精细移动动作：按住期间缩小右摇杆鼠标位移
+            is MappedAction.MouseFastMove -> enterFastMove(button) // 快速移动动作：按住期间放大右摇杆鼠标位移
             is MappedAction.SwitchLayer -> {} // SteamInput 已处理 // 切换层动作：由 SteamInput 内部处理
             is MappedAction.MouseMove, is MappedAction.LookAround -> {} // handleStick 处理 // 鼠标移动/视角动作：由 handleStick 处理
             is MappedAction.MouseScrollUp -> handleMouseScroll(SCROLL_DELTA) // 鼠标上滚动作：传入正增量
@@ -575,6 +592,9 @@ class KeyboardMouseMapper( // 语法：class 类声明，定义键盘/鼠标映�
             longHoldActive.add(button) // 记入保持型长按集合
         } else if (longAction is MappedAction.MouseFineMove) { // 长按为精细移动：阈值到达即进入精细模式
             enterFineMove(button) // 进入精细移动（松开时由 handleMapping 的 clearFineMove 退出）
+            longHoldActive.add(button) // 记入保持型集合，松开时走保持型释放分支
+        } else if (longAction is MappedAction.MouseFastMove) { // 长按为快速移动：阈值到达即进入快速模式
+            enterFastMove(button) // 进入快速移动（松开时由 handleMapping 的 clearFastMove 退出）
             longHoldActive.add(button) // 记入保持型集合，松开时走保持型释放分支
         } else { // 瞬时型动作
             injectInstantAction(button, longAction) // 触发一次（瞬时动作用不到子命令）
@@ -892,6 +912,33 @@ class KeyboardMouseMapper( // 语法：class 类声明，定义键盘/鼠标映�
     } // 结束 clearFineMove 函数
 
     /**
+     * 进入快速移动模式（按住该映射键期间生效）
+     *
+     * 右摇杆位移按 [FAST_MOVE_FACTOR] 放大，用于低灵敏度下快速转身。
+     * 与精细移动同时按住时仍以精细移动为准（由 [processLookTick] 保证）。
+     *
+     * @param button 手柄按钮
+     */
+    private fun enterFastMove(button: ControllerButton) { // 语法：private fun 私有函数，进入快速移动
+        if (fastMoveButtons.add(button)) { // 本次按下才算新进入（语法：add 返回是否新增）
+            fastMoveActive = true // 开启快速移动标志
+            Log.d(TAG, "FastMove enter: $button") // 打印进入日志
+        } // 结束新增判断
+    } // 结束 enterFastMove 函数
+
+    /**
+     * 退出快速移动模式（该映射键松开时调用，全部松开后恢复普通灵敏度）
+     *
+     * @param button 手柄按钮
+     */
+    private fun clearFastMove(button: ControllerButton) { // 语法：private fun 私有函数，退出快速移动
+        if (fastMoveButtons.remove(button)) { // 仅当该按钮确实处于快速移动中才处理
+            fastMoveActive = fastMoveButtons.isNotEmpty() // 仍有其它按钮按住时保持快速移动
+            Log.d(TAG, "FastMove exit: $button") // 打印退出日志
+        } // 结束移除判断
+    } // 结束 clearFastMove 函数
+
+    /**
      * 设置某个鼠标按钮的长按锁存状态（幂等）
      *
      * 与当前状态一致时不发送任何事件，并同步全局锁存集合与悬浮窗边框回调。
@@ -1119,9 +1166,14 @@ class KeyboardMouseMapper( // 语法：class 类声明，定义键盘/鼠标映�
 
         // 位移积分：满推 LOOK_SPEED_PX_PER_SEC × 灵敏度 × dt
         // 亚像素部分由注入器余量累积补发（不丢量、不产生脉冲）
-        val fineScale = if (fineMoveActive) FINE_MOVE_FACTOR else 1f // 精细移动缩放系数（语法：if 表达式）
-        val dx = smoothedLookX * settings.lookSensitivity * LOOK_SPEED_PX_PER_SEC * dt * fineScale // 计算 X 方向位移（语法：val 只读变量）
-        val dy = smoothedLookY * settings.lookSensitivity * LOOK_SPEED_PX_PER_SEC * dt * fineScale // 计算 Y 方向位移（语法：val 只读变量）
+        // 精细移动优先：两者同时按住时按精细处理，避免一放大一缩小互相抵消
+        val moveScale = when { // 视角位移缩放系数（语法：when 分支表达式）
+            fineMoveActive -> FINE_MOVE_FACTOR // 精细移动：缩小
+            fastMoveActive -> FAST_MOVE_FACTOR // 快速移动：放大
+            else -> 1f // 普通速度
+        }
+        val dx = smoothedLookX * settings.lookSensitivity * LOOK_SPEED_PX_PER_SEC * dt * moveScale // 计算 X 方向位移（语法：val 只读变量）
+        val dy = smoothedLookY * settings.lookSensitivity * LOOK_SPEED_PX_PER_SEC * dt * moveScale // 计算 Y 方向位移（语法：val 只读变量）
         if (dx != 0f || dy != 0f) { // 语法：if 分支 + || 逻辑或，若存在位移
             injector.sendMouseMove(dx, dy) // 发送鼠标相对移动
         } // 结束位移发送分支
@@ -1156,5 +1208,8 @@ class KeyboardMouseMapper( // 语法：class 类声明，定义键盘/鼠标映�
 
         /** 精细移动模式下右摇杆位移的缩放系数（0.2 = 正常速度的 20%） */
         private const val FINE_MOVE_FACTOR = 0.2f // 语法：const val 编译期常量，精细移动缩放系数
+
+        /** 快速移动模式下右摇杆位移的放大系数（2.5 = 正常速度的 2.5 倍） */
+        private const val FAST_MOVE_FACTOR = 2.5f // 语法：const val 编译期常量，快速移动缩放系数
     } // 结束伴生对象
 } // 结束 KeyboardMouseMapper 类

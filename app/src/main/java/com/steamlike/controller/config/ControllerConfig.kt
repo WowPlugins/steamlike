@@ -344,6 +344,9 @@ object ControllerConfig { // 单例对象：配置的 JSON 序列化/反序列�
             is MappedAction.MouseFineMove -> { // 鼠标精细移动类型
                 json.put("type", "mouseFineMove") // 写入类型标识
             } // 结束鼠标精细移动分支
+            is MappedAction.MouseFastMove -> { // 鼠标快速移动类型
+                json.put("type", "mouseFastMove") // 写入类型标识
+            } // 结束鼠标快速移动分支
             is MappedAction.SwitchLayer -> { // 切换操作层类型
                 json.put("type", "switchLayer") // 写入类型标识
                 json.put("layerName", action.layerName) // 写入目标层名
@@ -408,6 +411,7 @@ object ControllerConfig { // 单例对象：配置的 JSON 序列化/反序列�
             "mouseReleaseAll" -> MappedAction.MouseReleaseAll // 释放鼠标长按：直接返回单例对象
             "mouseClickSequence" -> MappedAction.MouseClickSequence // 交互键：直接返回单例对象
             "mouseFineMove" -> MappedAction.MouseFineMove // 鼠标精细移动：直接返回单例对象
+            "mouseFastMove" -> MappedAction.MouseFastMove // 鼠标快速移动：直接返回单例对象
             "switchLayer" -> { // 切换操作层类型
                 val layerName = json.getString("layerName") // 读取目标层名
                 MappedAction.SwitchLayer(layerName) // 构造切换层动作
