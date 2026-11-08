@@ -578,7 +578,20 @@ fn execute_mapping(source_vk: u32, is_long_press: bool) {
     };
 
     match action {
-        crate::config::MappedAction::None => {}
+        crate::config::MappedAction::None => {
+            // 映射存在但没设短按动作：不能把原键吞掉，否则游戏完全收不到这个键
+            // （典型场景：只想给某个键加长按动作，短按仍要保留原键功能）。
+            // 这里补发一次原键，间隔一小段保证游戏能跨过一帧读到。
+            if !is_long_press {
+                log(format!(
+                    "[映射] {} 未设置短按动作，原键透传",
+                    crate::ui::key_name(source_vk)
+                ));
+                win::inject_key(source_vk as u16, true);
+                std::thread::sleep(Duration::from_millis(15));
+                win::inject_key(source_vk as u16, false);
+            }
+        }
         crate::config::MappedAction::KeyboardKey { key_code, sub_commands } => {
             execute_keyboard_key(*key_code as u16, sub_commands);
         }
