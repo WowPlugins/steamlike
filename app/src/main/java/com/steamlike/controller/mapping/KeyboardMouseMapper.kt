@@ -76,6 +76,23 @@ class KeyboardMouseMapper( // 语法：class 类声明，定义键盘/鼠标映�
      */
     private val pressedMouseButtons = mutableMapOf<ControllerButton, MouseButton>() // 语法：val+mutableMapOf 可变映射，记录按下鼠标按钮的手柄按钮→鼠标按钮
 
+    // ====================================================================
+    // 「只切换层」状态（切层键按住时的修饰键暂时抬起）
+    // ====================================================================
+    // 切层+按键映射（如 LB = 切层 + Ctrl）按住期间，Ctrl 作为修饰键一直处于按下态。
+    // 层内某按键开启「只切换层」时，需要在该动作执行期间暂时抬起这些切层键，
+    // 只保留切层效果（如 A 映射 2 → 游戏收到 2 而不是 Ctrl+2），松开后自动恢复。
+    // ====================================================================
+
+    /** 当前按住「切层+按键」的手柄按钮 → 其注入的主键码（供「只切换层」抬起） */
+    private val heldLayerKeys = mutableMapOf<ControllerButton, Int>() // 语法：val+mutableMapOf 可变映射
+
+    /** 因「只切换层」而暂时抬起的切层键码（松开后重新按下） */
+    private val liftedLayerKeys = mutableSetOf<Int>() // 语法：val+mutableSetOf 可变集合
+
+    /** 当前处于「只切换层」动作按住中的手柄按钮（集合清空时恢复切层键） */
+    private val onlyLayerSwitchButtons = mutableSetOf<ControllerButton>() // 语法：val+mutableSetOf 可变集合
+
     /**
      * 左摇杆当前按下的方向键集合（WASD映射）
      *
@@ -338,6 +355,9 @@ class KeyboardMouseMapper( // 语法：class 类声明，定义键盘/鼠标映�
         pressedMainKeys.clear() // 清空主键按下记录
         pressedSubKeys.clear() // 清空子命令键按下记录
         pressedMouseButtons.clear() // 清空鼠标按钮按下记录
+        heldLayerKeys.clear() // 清空切层键归属记录
+        liftedLayerKeys.clear() // 清空被「只切换层」抬起的键
+        onlyLayerSwitchButtons.clear() // 清空「只切换层」按住记录
         leftStickPressedKeys.clear() // 清空左摇杆方向键集合
         toggledMouseButtons.clear() // 清空鼠标按钮锁存记录（含左摇杆移动自动锁定的右键）
         layerMouseActionButtons.clear() // 清空「层 → 操作过鼠标左右键的按钮」记录
@@ -447,6 +467,11 @@ class KeyboardMouseMapper( // 语法：class 类声明，定义键盘/鼠标映�
             return // 返回，等待松开时判定
         } // 结束长按判定分支
 
+        // 「只切换层」：先暂时抬起切层键同时按下的按键，使本次动作只保留切层效果
+        if (mapping.layerSwitchOnly && isOnlyLayerApplicable(mapping.action)) { // 语法：&& 逻辑与
+            suppressLayerKeys(button) // 抬起切层键（松开该按钮时由 releaseButtonInjection 恢复）
+        } // 结束「只切换层」判断
+
         when (val action = mapping.action) { // 语法：when 分支表达式，同时用 val 声明局部变量 action
             // 切换动作：始终处理
             is MappedAction.ToggleOverlay -> { onToggleOverlay?.invoke(); return } // 悬浮窗切换动作：触发回调后返回（语法：is 类型匹配 + 分号并列多语句）
@@ -459,7 +484,9 @@ class KeyboardMouseMapper( // 语法：class 类声明，定义键盘/鼠标映�
         // 非切换动作：始终处理（暂停时也转发到 bridge，让游戏接收手柄输入）
         when (val action = mapping.action) { // 语法：when 分支表达式，分发非切换动作
             is MappedAction.KeyboardKey -> handleKeyboardKey(button, true, action.keyCode, mapping.subCommands) // 键盘按键动作：处理主键+子命令（语法：is 类型匹配）
-            is MappedAction.SwitchLayerAndKey -> handleKeyboardKey(button, true, action.keyCode, mapping.subCommands) // 切层+按键动作：按键盘键注入（层切换由 SteamInput 处理）
+            is MappedAction.SwitchLayerAndKey -> if (!mapping.layerSwitchOnly) { // 切层+按键动作：开启「只切换层」时只切层、不注入按键
+                pressLayerKey(button, action.keyCode, mapping.subCommands) // 记录归属并注入同时按下的按键（语法：if 单表达式分支）
+            } // 结束切层+按键分支
             is MappedAction.NumpadKey -> handleKeyboardKey(button, true, action.keyCode, mapping.subCommands) // 数字小键盘动作：按键盘键注入（VK 映射到小键盘键）
             is MappedAction.MouseClick -> handleMouseClick(button, true, action.button) // 鼠标点击动作：按下鼠标按钮
             is MappedAction.MouseToggle -> handleMouseToggle(button, action.button) // 鼠标长按切换动作（仅在按下时到达此处）
@@ -590,6 +617,9 @@ class KeyboardMouseMapper( // 语法：class 类声明，定义键盘/鼠标映�
         val pending = deferredPresses[button] ?: return // 取出延迟按下上下文，已松开则返回（语法：?: 空值合并）
         val longAction = pending.mapping.longPressAction ?: return // 无长按动作（回退模式）则不注入
         if (isHoldableAction(longAction)) { // 保持型动作
+            if (pending.mapping.longPressLayerSwitchOnly && isOnlyLayerApplicable(longAction)) { // 长按动作开启「只切换层」
+                suppressLayerKeys(button) // 先抬起切层键，使长按输出不叠加其按键（松开时在释放流程中恢复）
+            } // 结束「只切换层」判断
             injectActionDown(button, longAction, pending.mapping.longPressSubCommands) // 注入按下（带长按子命令）并记录状态
             longHoldActive.add(button) // 记入保持型长按集合
         } else if (longAction is MappedAction.MouseFineMove) { // 长按为精细移动：阈值到达即进入精细模式
@@ -617,14 +647,23 @@ class KeyboardMouseMapper( // 语法：class 类声明，定义键盘/鼠标映�
         val threshold = steamInput.profile.globalSettings.longPressThresholdMs.toLong() // 读取长按阈值
         val longAction = pending.mapping.longPressAction // 取长按动作
         if (held < threshold) { // 短按：按住时长未达阈值
+            if (pending.mapping.layerSwitchOnly && isHoldableAction(pending.mapping.action)) { // 短按动作开启「只切换层」
+                suppressLayerKeys(button) // 先抬起切层键（点按内部的释放流程会恢复）
+            } // 结束「只切换层」判断
             tapAction(button, pending.mapping.action, pending.mapping.subCommands) // 执行短按动作（保持型点按/触发型触发）
         } else if (longAction != null) { // 长按：已配置长按动作
             if (longHoldActive.remove(button)) { // 保持型长按已按下 → 释放
                 releaseButtonInjection(button) // 释放长按注入的按键
             } else if (!longInstantFired.remove(button)) { // 瞬时型尚未触发（阈值回调与松开竞态）→ 补发一次
+                if (pending.mapping.longPressLayerSwitchOnly && isHoldableAction(longAction)) { // 长按动作开启「只切换层」
+                    suppressLayerKeys(button) // 先抬起切层键（点按内部的释放流程会恢复）
+                } // 结束「只切换层」判断
                 tapAction(button, longAction, pending.mapping.longPressSubCommands) // 补发执行长按动作（带长按子命令）
             } // 结束长按类型判断
         } else if (steamInput.profile.globalSettings.longPressFallbackToShort) { // 长按未配置动作：回退开关开启
+            if (pending.mapping.layerSwitchOnly && isHoldableAction(pending.mapping.action)) { // 回退执行的短按动作开启「只切换层」
+                suppressLayerKeys(button) // 先抬起切层键（点按内部的释放流程会恢复）
+            } // 结束「只切换层」判断
             tapAction(button, pending.mapping.action, pending.mapping.subCommands) // 松开时执行短按动作（保持型点按/触发型触发）
         } // 否则（未配置长按动作且回退关闭）：什么都不做
         Log.d(TAG, "LongPress end: $button held=${held}ms threshold=${threshold}ms") // 打印判定结束日志
@@ -645,6 +684,8 @@ class KeyboardMouseMapper( // 语法：class 类声明，定义键盘/鼠标映�
      * @param button 手柄按钮
      */
     private fun releaseButtonInjection(button: ControllerButton) { // 语法：private fun 私有函数，释放指定按钮的全部键鼠状态
+        // 0. 切层+按键：解除切层键归属；若该键已被「只切换层」抬起，则不再参与恢复
+        heldLayerKeys.remove(button)?.let { key -> liftedLayerKeys.remove(key) } // 语法：?.let 安全调用
         var released = false // 语法：var 可变变量，标记是否发生了释放动作
         // 1. 松开子命令键（逆序）
         pressedSubKeys.remove(button)?.reversed()?.forEach { subKeyCode -> // 取出并移除子命令列表，逆序遍历（语法：?. 安全调用链 + reversed() + forEach lambda）
@@ -661,10 +702,78 @@ class KeyboardMouseMapper( // 语法：class 类声明，定义键盘/鼠标映�
             injector.sendMouseUp(mouseButton) // 发送鼠标按钮松开事件
             released = true // 标记已发生释放
         } // 结束鼠标按钮释放 lambda
+        // 4. 「只切换层」动作松开：本按钮的按键先松开，再恢复此前抬起的切层键
+        restoreLayerKeys(button) // 无抑制记录时为空操作
         if (released) { // 语法：if 分支，若本按钮确有释放动作
             Log.d(TAG, "Released button $button injections") // 打印释放日志（语法：字符串模板 "$button"）
         } // 结束 if (released) 分支
     } // 结束 releaseButtonInjection 函数
+
+    /**
+     * 判断动作是否支持「只切换层」
+     *
+     * 只有会向游戏注入按键/鼠标的动作才有「叠加切层键按下的按键」问题：
+     * 键盘按键、数字小键盘、鼠标点击、切层+按键（自身也按住一个键）。
+     *
+     * @param action 映射动作
+     */
+    private fun isOnlyLayerApplicable(action: MappedAction): Boolean = // 语法：表达式体函数 + || 逻辑或
+        action is MappedAction.KeyboardKey || action is MappedAction.NumpadKey || // 键盘/数字小键盘（语法：is 类型判断）
+            action is MappedAction.MouseClick || action is MappedAction.SwitchLayerAndKey // 鼠标点击/切层+按键
+
+    /**
+     * 注入「切层+按键」同时按下的按键，并记录归属
+     *
+     * 归属记录用于「只切换层」在这些按键按住期间暂时抬起它们（[suppressLayerKeys]）。
+     *
+     * @param button 手柄按钮
+     * @param keyCode 同时按下的键盘键码（可能为 Shift 符号键）
+     * @param subCommands 该映射的子命令列表
+     */
+    private fun pressLayerKey(button: ControllerButton, keyCode: Int, subCommands: List<Int>) { // 语法：private fun 私有函数
+        val actual = if (KeyMapping.isShiftSymbolKey(keyCode)) KeyMapping.shiftSymbolBaseKey(keyCode) else keyCode // 还原符号键的实际键码
+        heldLayerKeys[button] = actual // 记录该按钮当前按住的切层键
+        handleKeyboardKey(button, true, keyCode, subCommands) // 注入按键按下（含子命令）
+        // 已有「只切换层」动作按住：新按下的切层键保持抬起，避免叠加影响该动作输出
+        if (onlyLayerSwitchButtons.isNotEmpty() && liftedLayerKeys.add(actual)) { // 集合非空且该键此前未抬起
+            injector.sendKeyUp(actual) // 立即抬起该切层键
+        } // 结束抑制中判断
+    } // 结束 pressLayerKey 函数
+
+    /**
+     * 抬起所有「切层+按键」正按住的按键（「只切换层」动作按下时调用）
+     *
+     * 多个「只切换层」动作同时按住时只抬起一次，全部松开后才恢复。
+     *
+     * @param button 触发「只切换层」的手柄按钮
+     */
+    private fun suppressLayerKeys(button: ControllerButton) { // 语法：private fun 私有函数
+        if (!onlyLayerSwitchButtons.add(button)) return // 该按钮已在抑制中，忽略重复调用
+        if (onlyLayerSwitchButtons.size > 1) return // 已有其它抑制动作，切层键已经是抬起状态
+        heldLayerKeys.values.forEach { key -> // 遍历当前按住的所有切层键
+            if (liftedLayerKeys.add(key)) injector.sendKeyUp(key) // 逐个抬起（集合去重，避免同一键重复抬）
+        } // 结束遍历
+        Log.d(TAG, "OnlyLayerSwitch: lift layer keys ${heldLayerKeys.values}") // 打印抬起日志
+    } // 结束 suppressLayerKeys 函数
+
+    /**
+     * 恢复被「只切换层」抬起的切层键（动作松开时调用）
+     *
+     * 仅当所有「只切换层」动作都松开后才恢复；已被按住的键才重新按下，
+     * 避免切层键在手柄键松开后又被按下导致卡键。
+     *
+     * @param button 触发「只切换层」的手柄按钮
+     */
+    private fun restoreLayerKeys(button: ControllerButton) { // 语法：private fun 私有函数
+        if (!onlyLayerSwitchButtons.remove(button)) return // 该按钮不在抑制中，无需恢复
+        if (onlyLayerSwitchButtons.isNotEmpty()) return // 仍有抑制动作按住，保持抬起
+        val keys = liftedLayerKeys.toList() // 复制待恢复键列表
+        liftedLayerKeys.clear() // 清空抬起记录
+        keys.forEach { key -> // 遍历待恢复键
+            if (pressedMainKeys.containsValue(key)) injector.sendKeyDown(key) // 仍被按住才重新按下
+        } // 结束遍历
+        if (keys.isNotEmpty()) Log.d(TAG, "OnlyLayerSwitch: restore layer keys $keys") // 打印恢复日志
+    } // 结束 restoreLayerKeys 函数
 
     /**
      * 处理键盘按键映射（含子命令）

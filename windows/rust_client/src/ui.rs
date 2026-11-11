@@ -316,6 +316,8 @@ pub struct App {
     full_editor: bool,
     /// 上次应用的窗口尺寸（用于检测面板状态切换时调整窗口大小）
     last_window_size: (f32, f32),
+    /// 上次核对实际窗口尺寸的时间（Winlator 下首次调整可能被忽略，需周期性纠正）
+    last_size_check: std::time::Instant,
     /// 上次裁剪圆角时的（窗口宽, 窗口高, 圆角半径），任一变化都要重新设置窗口区域
     last_region: (i32, i32, i32),
     /// 上次强制置顶的时间（魔兽窗口化全屏会盖住悬浮窗，需周期性重新置顶）
@@ -396,6 +398,7 @@ impl App {
             // 启动即显示完整主界面
             full_editor: true,
             last_window_size: (0.0, 0.0),
+            last_size_check: std::time::Instant::now(),
             last_region: (0, 0, 0),
             last_topmost_at: std::time::Instant::now(),
             pos_restored: false,
@@ -468,19 +471,30 @@ impl eframe::App for App {
         } else {
             egui::vec2(280.0, 250.0) // 小面板
         };
-        if self.last_window_size != (target.x, target.y) {
+        let title = format!("SteamLike InputBridge v{}", self.title_version);
+        let target_phys = ((target.x * scale) as i32, (target.y * scale) as i32);
+        // 形态变化时立即调整；此外周期性核对实际窗口尺寸并纠正：
+        // Winlator/Wine 下首次 SetWindowPos 可能被忽略（窗口尚未完成映射，或游戏启动瞬间
+        // 窗口被重置），只在目标变化时设置一次会永久停在错误尺寸，
+        // 表现为「自动启动魔兽后收起圆点却不缩小，圆点铺满整个程序界面」。
+        let size_changed = self.last_window_size != (target.x, target.y);
+        let size_drift = if self.last_size_check.elapsed() >= Duration::from_millis(500) {
+            self.last_size_check = std::time::Instant::now();
+            let actual = crate::win::own_window_size(&title);
+            // 读不到窗口尺寸（0,0）时也重试一次，确保窗口就绪后能补上
+            actual.0 == 0
+                || (actual.0 - target_phys.0).abs() > 2
+                || (actual.1 - target_phys.1).abs() > 2
+        } else {
+            false
+        };
+        if size_changed || size_drift {
             self.last_window_size = (target.x, target.y);
             // 用 Win32 直接调整窗口尺寸：eframe 的请求在 Winlator/Wine 下不一定生效
-            let scale = ctx.pixels_per_point();
-            crate::win::resize_own_window(
-                &format!("SteamLike InputBridge v{}", self.title_version),
-                (target.x * scale) as i32,
-                (target.y * scale) as i32,
-            );
+            crate::win::resize_own_window(&title, target_phys.0, target_phys.1);
         }
 
         // 圆角裁剪：把窗口区域设成圆角矩形，圆角外完全不绘制（Wine 下不依赖桌面透明合成）
-        let title = format!("SteamLike InputBridge v{}", self.title_version);
         let size = crate::win::own_window_size(&title);
         // 圆点态直接把窗口裁成圆形；展开态圆角半径按 DPI 换算成物理像素，与界面绘制的圆角一致
         let radius = if !self.cfg.overlay_expanded {

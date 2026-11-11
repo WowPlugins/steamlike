@@ -189,6 +189,35 @@
                 android:paddingBottom="10dp" />
         </LinearLayout>  <!-- 结束附加按键区域 -->
 
+        <!-- ===== 点击动作「只切换层」开关 ===== -->
+        <!-- 仅键盘按键/鼠标点击/切层+按键/数字小键盘类型显示（代码中控制显隐） -->
+        <!-- 开启后：该动作执行期间暂时抬起切层键（切层+按键）同时按住的按键，只保留切层效果 -->
+        <LinearLayout
+            android:id="@+id/layout_tap_only_layer"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical"
+            android:paddingHorizontal="10dp"
+            android:paddingBottom="10dp">
+
+            <!-- 说明：长文本单独一行自动换行，避免把开关挤出窗口 -->
+            <TextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="只切换层：开启后点击动作不叠加切层键同时按住的按键（如 Ctrl）"
+                android:textSize="12sp"
+                android:textColor="#FF999999"
+                android:paddingBottom="4dp" />
+
+            <Switch
+                android:id="@+id/switch_tap_only_layer"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="只切换层"
+                android:textSize="14sp"
+                android:textColor="#FFDDDDDD" />
+        </LinearLayout>  <!-- 结束点击动作「只切换层」开关 -->
+
         <!-- ===== 点击动作的子命令区域 ===== -->
         <!-- 紧跟在点击动作值下方，与长按子命令明确分开 -->
         <!-- 语法：LinearLayout 线性布局；点击子命令区域容器
@@ -296,6 +325,33 @@
             android:layout_height="wrap_content"
             android:paddingHorizontal="10dp"
             android:paddingBottom="10dp" />
+
+        <!-- ===== 长按动作「只切换层」开关 ===== -->
+        <!-- 仅长按为键盘按键/鼠标点击/数字小键盘类型显示（代码中控制显隐） -->
+        <LinearLayout
+            android:id="@+id/layout_long_only_layer"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical"
+            android:paddingHorizontal="10dp"
+            android:paddingBottom="10dp">
+
+            <TextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="只切换层：开启后长按动作不叠加切层键同时按住的按键（如 Ctrl）"
+                android:textSize="12sp"
+                android:textColor="#FF999999"
+                android:paddingBottom="4dp" />
+
+            <Switch
+                android:id="@+id/switch_long_only_layer"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="只切换层"
+                android:textSize="14sp"
+                android:textColor="#FFDDDDDD" />
+        </LinearLayout>  <!-- 结束长按动作「只切换层」开关 -->
 
         <!-- ===== 「180°转身」的每步间隔（属于长按动作） ===== -->
         <!-- 仅当长按动作类型选择「180°转身」时显示

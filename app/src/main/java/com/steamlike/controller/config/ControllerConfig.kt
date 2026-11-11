@@ -297,6 +297,8 @@ object ControllerConfig { // 单例对象：配置的 JSON 序列化/反序列�
         val longSubArray = JSONArray() // 创建长按子命令 JSON 数组
         mapping.longPressSubCommands.forEach { longSubArray.put(it) } // 遍历长按子命令加入数组
         json.put("longPressSubCommands", longSubArray) // 写入长按子命令数组（作用于长按动作）
+        if (mapping.layerSwitchOnly) json.put("layerSwitchOnly", true) // 短按「只切换层」开启时才写入（默认关闭，省体积）
+        if (mapping.longPressLayerSwitchOnly) json.put("longPressLayerSwitchOnly", true) // 长按「只切换层」开启时才写入
         return json // 返回 JSON 对象
     } // 结束 mappingToJson 函数
 
@@ -314,7 +316,11 @@ object ControllerConfig { // 单例对象：配置的 JSON 序列化/反序列�
         if (longPressSubCommands.size > KeyMapping.MAX_SUB_COMMANDS) { // 若长按子命令数量超上限
             return null // 长按子命令超限，拒绝加载
         } // 结束 if 判断
-        return KeyMapping(action, subCommands, longPressAction, longPressSubCommands) // 构造按键映射（含长按动作与其子命令）
+        return KeyMapping( // 构造按键映射（含长按动作与其子命令）
+            action, subCommands, longPressAction, longPressSubCommands, // 原有字段
+            json.optBoolean("layerSwitchOnly", false), // 短按「只切换层」（缺失=关闭，兼容旧配置）
+            json.optBoolean("longPressLayerSwitchOnly", false) // 长按「只切换层」（缺失=关闭）
+        ) // 结束 KeyMapping 构造
     } // 结束 parseMapping 函数
 
     private fun actionToJson(action: MappedAction): JSONObject { // 序列化映射动作为 JSON 对象

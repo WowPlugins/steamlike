@@ -22,6 +22,7 @@ import android.widget.EditText // 导入 EditText（文本输入框控件）
 import android.widget.LinearLayout // 导入 LinearLayout（线性布局容器）
 import android.widget.ListView // 导入 ListView（列表视图控件）
 import android.widget.Spinner // 导入 Spinner（下拉选择控件）
+import android.widget.Switch // 导入 Switch（开关控件，「只切换层」用）
 import android.widget.TextView // 导入 TextView（文本显示控件）
 import android.widget.Toast // 导入 Toast（轻量提示弹窗）
 import androidx.core.content.ContextCompat // 导入 ContextCompat（兼容性工具，如启动前台服务）
@@ -765,6 +766,8 @@ class LayerEditActivity : AppCompatActivity() { // 定义操作层编辑 Activit
     private fun showMappingEditDialog(button: ControllerButton) { // 私有函数：显示按键映射编辑对话框
         val layer = currentLayer ?: return // 取当前层，为空则退出（语法：?:=空值合并）
         val existingMapping = layer.buttonMappings[button] // 取该按键已有的映射，可能为 null
+        // 公共层本身承载切层键，不需要「只切换层」（该开关只在操作层内有意义）
+        val isCommonLayer = layer === currentActionSet?.commonLayer // 语法：=== 引用相等比较
 
         // 从布局文件加载对话框视图
         val dialogView = LayoutInflater.from(this).inflate(R.layout.dialog_mapping_edit, null) // 用布局填充器把对话框布局实例化为 View（语法：LayoutInflater=布局实例化器）
@@ -779,6 +782,10 @@ class LayerEditActivity : AppCompatActivity() { // 定义操作层编辑 Activit
         val spinnerLongPressValue = dialogView.findViewById<Spinner>(R.id.spinner_long_press_value) // 获取长按动作值下拉框
         val layoutExtraKey = dialogView.findViewById<LinearLayout>(R.id.layout_extra_key) // 获取「同时按下的按键」区域容器
         val spinnerExtraKey = dialogView.findViewById<Spinner>(R.id.spinner_extra_key) // 获取「同时按下的按键」下拉框
+        val layoutTapOnlyLayer = dialogView.findViewById<LinearLayout>(R.id.layout_tap_only_layer) // 获取点击动作「只切换层」区域
+        val switchTapOnlyLayer = dialogView.findViewById<Switch>(R.id.switch_tap_only_layer) // 获取点击动作「只切换层」开关
+        val layoutLongOnlyLayer = dialogView.findViewById<LinearLayout>(R.id.layout_long_only_layer) // 获取长按动作「只切换层」区域
+        val switchLongOnlyLayer = dialogView.findViewById<Switch>(R.id.switch_long_only_layer) // 获取长按动作「只切换层」开关
         val layoutSubCommands = dialogView.findViewById<LinearLayout>(R.id.layout_sub_commands) // 获取子命令区域父容器
         val layoutSubCommandList = dialogView.findViewById<LinearLayout>(R.id.layout_sub_command_list) // 获取子命令列表容器
         val btnAddSubCommand = dialogView.findViewById<Button>(R.id.btn_add_sub_command) // 获取「添加子命令」按钮
@@ -955,6 +962,20 @@ class LayerEditActivity : AppCompatActivity() { // 定义操作层编辑 Activit
         // 额外按键区域仅「切换层+按键」类型显示
         layoutExtraKey.visibility = if (initialActionType == 10) View.VISIBLE else View.GONE // 仅切层+按键类型显示附加按键区
 
+        // ===== 「只切换层」开关 =====
+        // 仅操作层显示：公共层不提供该开关；此外只有会注入按键/鼠标的动作类型才显示：
+        // 键盘按键(1)/鼠标点击(2)/切层+按键(10)/数字小键盘(11)
+        fun onlyLayerVisible(actionType: Int): Boolean = // 局部函数：判断点击动作类型是否支持「只切换层」
+            !isCommonLayer && (actionType == 1 || actionType == 2 || actionType == 10 || actionType == 11) // 语法：&& 逻辑与、|| 逻辑或
+        // 长按可选类型不含「切层+按键」(10)，故只判断键盘/鼠标点击/数字小键盘
+        fun longOnlyLayerVisible(actionType: Int): Boolean = // 局部函数：判断长按动作类型是否支持「只切换层」
+            !isCommonLayer && (actionType == 1 || actionType == 2 || actionType == 11) // 语法：&& 逻辑与、|| 逻辑或
+        layoutTapOnlyLayer.visibility = if (onlyLayerVisible(initialActionType)) View.VISIBLE else View.GONE // 点击开关区域显隐
+        // 新建映射默认开启「只切换层」；已有映射按保存值显示（旧配置无该字段时解析为 false）
+        switchTapOnlyLayer.isChecked = existingMapping?.layerSwitchOnly ?: true // 预填点击「只切换层」（默认打开）
+        layoutLongOnlyLayer.visibility = if (longOnlyLayerVisible(initialLongPressType)) View.VISIBLE else View.GONE // 长按开关区域显隐
+        switchLongOnlyLayer.isChecked = existingMapping?.longPressLayerSwitchOnly ?: true // 预填长按「只切换层」（默认打开）
+
         // 「180°转身」每步间隔输入框：仅转身类型显示，初值取已有动作的间隔（无则 8ms）
         layoutTurnStep.visibility = if (initialActionType == 18) View.VISIBLE else View.GONE // 点击动作显隐
         etTurnStep.setText(((existingMapping?.action as? MappedAction.Turn180)?.stepMs ?: 8).toString()) // 预填点击动作间隔
@@ -990,6 +1011,7 @@ class LayerEditActivity : AppCompatActivity() { // 定义操作层编辑 Activit
                         View.GONE else View.VISIBLE // 隐藏子命令区，否则显示
                 // 额外按键区域仅「切换层+按键」类型显示
                 layoutExtraKey.visibility = if (position == 10) View.VISIBLE else View.GONE // 仅切层+按键类型显示附加按键区
+                layoutTapOnlyLayer.visibility = if (onlyLayerVisible(position)) View.VISIBLE else View.GONE // 「只切换层」开关只在会注入按键的动作类型下显示
                 layoutTurnStep.visibility = if (position == 18) View.VISIBLE else View.GONE // 「180°转身」才显示每步间隔输入框
                 layoutTurnPixels.visibility = if (position == 18) View.VISIBLE else View.GONE // 「180°转身」才显示自定义像素输入框
                 // 动作类型与已有映射一致时，同步恢复动作值选中项：
@@ -1011,6 +1033,7 @@ class LayerEditActivity : AppCompatActivity() { // 定义操作层编辑 Activit
                 setupActionValueSpinner(spinnerLongPressValue, tvLongPressLabel, actionType, "长按 · ") // 按新类型重建长按动作值选项
                 // 长按子命令区可见性：仅键盘/鼠标点击/鼠标长按/数字小键盘类型显示（其余类型子命令无效）
                 layoutLongPressSubCommands.visibility = if (longPressSubVisible(actionType)) View.VISIBLE else View.GONE // 按新长按类型设置可见性
+                layoutLongOnlyLayer.visibility = if (longOnlyLayerVisible(actionType)) View.VISIBLE else View.GONE // 长按「只切换层」开关显隐
                 layoutLongTurnStep.visibility = if (actionType == 18) View.VISIBLE else View.GONE // 「180°转身」才显示每步间隔输入框
                 layoutLongTurnPixels.visibility = if (actionType == 18) View.VISIBLE else View.GONE // 「180°转身」才显示自定义像素输入框
                 // 与已有长按动作类型一致时恢复选中值（打开对话框/attach 触发时显示当前长按动作）
@@ -1065,7 +1088,10 @@ class LayerEditActivity : AppCompatActivity() { // 定义操作层编辑 Activit
                         else buildAction(longPressType - 1, spinnerLongPressValue.selectedItemPosition, 0, etLongTurnStep.text.toString().toIntOrNull() ?: 8, etLongTurnPixels.text.toString().trim().toIntOrNull()) // 否则构建长按动作（含转身间隔与自定义像素）
 
                     // 创建新的按键映射（含可选长按动作与其子命令）
-                    val newMapping = KeyMapping(action, subCommands, longPressAction, longPressSubCommands) // 构建新的按键映射对象（语法：四参构造）
+                    // 「只切换层」仅在对应动作类型支持时生效（隐藏状态下不保存开关值，避免切回类型后误开启）
+                    val tapOnlyLayer = onlyLayerVisible(actionType) && switchTapOnlyLayer.isChecked // 点击动作「只切换层」
+                    val longOnlyLayer = longOnlyLayerVisible(longPressType) && switchLongOnlyLayer.isChecked // 长按动作「只切换层」
+                    val newMapping = KeyMapping(action, subCommands, longPressAction, longPressSubCommands, tapOnlyLayer, longOnlyLayer) // 构建新的按键映射对象
 
                     // 写入当前操作层的 buttonMappings（MutableMap，可直接修改）
                     layer.buttonMappings[button] = newMapping // 将新映射写入当前层的映射表

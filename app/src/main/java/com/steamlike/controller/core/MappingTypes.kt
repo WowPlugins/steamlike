@@ -268,14 +268,27 @@ sealed class MappedAction { // 映射动作密封类（语法：sealed class 密
  *
  * @param action 主动作（短按动作）
  * @param subCommands 子命令列表（最多 3 个 Android [KeyEvent.KEYCODE_*] 常量），作用于短按动作
+ * ## 「只切换层」
+ * 短按/长按动作可各自开启「只切换层」：
+ * - 关闭（默认）：动作输出叠加切层键（[MappedAction.SwitchLayerAndKey]）同时按住的按键，
+ *   如按住 LB（切层 + Ctrl）时按 A（映射 2）→ 游戏收到 Ctrl+2
+ * - 开启：动作执行期间暂时抬起切层键同时按住的按键，只保留切层效果，
+ *   如按住 LB 时按 A → 游戏收到 2（松开 A 后自动恢复 Ctrl）
+ *
+ * @param action 主动作（短按动作）
+ * @param subCommands 子命令列表（最多 3 个 Android [KeyEvent.KEYCODE_*] 常量），作用于短按动作
  * @param longPressAction 长按动作（null=不启用长按判定）
  * @param longPressSubCommands 长按动作的子命令列表（最多 3 个），仅长按动作为键盘/数字小键盘时生效
+ * @param layerSwitchOnly 短按动作是否「只切换层」（不叠加切层键按下的按键）
+ * @param longPressLayerSwitchOnly 长按动作是否「只切换层」（不叠加切层键按下的按键）
  */
 data class KeyMapping( // 按键映射定义（语法：data class 数据类）
     val action: MappedAction, // 主动作（短按动作）
     val subCommands: List<Int> = emptyList(), // 短按子命令列表（语法：默认参数 = emptyList()）
     val longPressAction: MappedAction? = null, // 长按动作（语法：可空类型 + 默认参数 = null）
-    val longPressSubCommands: List<Int> = emptyList() // 长按子命令列表（作用于长按动作）
+    val longPressSubCommands: List<Int> = emptyList(), // 长按子命令列表（作用于长按动作）
+    val layerSwitchOnly: Boolean = false, // 短按「只切换层」（语法：默认参数 = false）
+    val longPressLayerSwitchOnly: Boolean = false // 长按「只切换层」
 ) { // 数据类主体开始
     init { // 初始化块校验（语法：init 初始化块）
         require(subCommands.size <= MAX_SUB_COMMANDS) { // 校验子命令数量不超上限（语法：require 前置条件检查）
@@ -293,9 +306,11 @@ data class KeyMapping( // 按键映射定义（语法：data class 数据类）
      */
     fun describe(): String { // 转为可读描述（语法：fun 成员函数声明）
         var text = composeLabel(action, subCommands) // 拼出短按动作描述（如 "Alt+3"）
+        if (layerSwitchOnly) text += "（只切换层）" // 短按开启「只切换层」时追加标记
         val lp = longPressAction // 取长按动作（局部变量便于智能转换）
         if (lp != null) { // 若配置了长按动作则追加显示
             text += " / 长按:${composeLabel(lp, longPressSubCommands)}" // 追加长按动作描述（含长按子命令，语法：+= 字符串拼接）
+            if (longPressLayerSwitchOnly) text += "（只切换层）" // 长按开启「只切换层」时追加标记
         } // 结束长按描述判断
         return text // 返回完整描述
     } // 结束 describe 函数
