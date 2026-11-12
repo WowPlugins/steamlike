@@ -182,6 +182,16 @@ class ControllerOverlayService : Service() {  // class=类声明；继承 Servic
         /** 前台应用查询时间窗（毫秒） */
         private const val SMART_FOREGROUND_WINDOW_MS = 60_000L  // const val=编译期常量；长整型；前台应用查询时间窗 60 秒
 
+        /**
+         * 进入捕获白名单应用后，延迟多久才自动恢复捕获的默认值（毫秒）
+         *
+         * Winlator 启动 wow 的容器/Wine 初始化阶段对窗口焦点与输入注入很敏感：
+         * 若在此阶段立刻创建可获焦点的捕获窗口，wow 会偶发崩溃退出。
+         * 延迟恢复可避开启动阶段；用户手动点「恢复捕获」不受此延迟限制。
+         * 实际值可在设置界面修改（AppConfig.smartResumeDelayMs）。
+         */
+        private const val DEFAULT_SMART_RESUME_DELAY_MS = 12_000L  // const val=编译期常量；长整型；默认延迟 12 秒再恢复捕获
+
         /** 默认层名匹配（未重命名的层显示预设中文名） */
         private val DEFAULT_LAYER_NAME_REGEX = Regex("Layer\\d+")  // val=只读变量；匹配 "Layer数字" 形式默认层名的正则
 
@@ -344,6 +354,10 @@ class ControllerOverlayService : Service() {  // class=类声明；继承 Servic
     @Volatile  // 注解：标记字段为 volatile，保证多线程可见性
     private var smartPauseEnabled: Boolean = true  // var=可变变量；智能暂停开关，默认开启
 
+    /** 进入白名单应用后延迟多久自动恢复捕获（毫秒，来自设置界面，默认 12 秒；0=立即） */
+    @Volatile  // 注解：多线程可见（智能监控线程读取）
+    private var smartResumeDelayMs: Long = DEFAULT_SMART_RESUME_DELAY_MS  // var=可变变量；恢复捕获延迟毫秒数
+
     /**
      * 捕获总开关（用户手动暂停/恢复，与 MainActivity 开关双向同步）
      *
@@ -442,6 +456,8 @@ class ControllerOverlayService : Service() {  // class=类声明；继承 Servic
         // ?.=安全调用；?.let{}=非空时执行；解析白名单并转为集合
         intent?.getStringExtra(EXTRA_WHITELIST)?.let { captureWhitelist = AppConfig.parseWhitelist(it).toSet() }
         intent?.getStringExtra(EXTRA_LAUNCHER_PACKAGE)?.let { launcherPackage = it }  // ?.=安全调用；?.let{}=非空时执行；读取拉起应用包名 extra
+        // 恢复捕获延时时长可能已在设置界面修改：从配置文件读取最新值（每次 startService 都可更新）
+        smartResumeDelayMs = AppConfigStore.load(this).smartResumeDelayMs.coerceIn(0, 120_000).toLong()
         when (intent?.action) {  // when=分支判断；根据 Intent action 分发处理
             ACTION_STOP -> {  // 分支：停止服务
                 stopSmartMonitor()  // 停止智能暂停监控
@@ -1545,6 +1561,10 @@ class ControllerOverlayService : Service() {  // class=类声明；继承 Servic
         }  // 结束 if 块
         smartMonitorRunning = true  // 标记监控运行中
         smartMonitorThread = Thread({  // Thread=线程；lambda 语法 { }；创建智能监控线程
+            // 本次进入白名单应用的起始时间（毫秒，0=当前不在白名单应用）
+            var whitelistSince = 0L  // var=可变变量；本次进入白名单应用的时间戳
+            // 最近一次观察到白名单应用在前台的时间（用于区分「首次进入」与「切出去又回来」）
+            var lastWhitelistAt = 0L  // var=可变变量；最近一次白名单应用在前台的时间戳
             while (smartMonitorRunning) {  // while=循环；监控运行期间持续轮询
                 try {  // try=异常捕获
                     // 手动暂停或捕获开关关闭时监控不动作，
@@ -1557,10 +1577,20 @@ class ControllerOverlayService : Service() {  // class=类声明；继承 Servic
                             // 否则应用内界面（MainActivity/操作层设置等）右滑返回
                             // 会被焦点窗口吃掉。
                             val needCapture = captureWhitelist.contains(fg)  // val=只读变量；判断前台应用是否在白名单
-                            if (needCapture && !isCapturing) {  // if 判断：需要捕获且当前未捕获
-                                Log.i(TAG, "Smart pause: foreground=$fg, resuming capture")  // 字符串模板 "$var"=插值变量；打印自动恢复日志
-                                mainHandler.post { resumeCapturing() }  // 回主线程恢复捕获
-                            } else if (!needCapture && isCapturing) {  // else if 判断：无需捕获且正在捕获
+                            val now = android.os.SystemClock.elapsedRealtime()  // val=只读变量；单调时钟，避免受系统时间同步影响
+                            if (needCapture) {  // if 判断：白名单应用在前台
+                                // 距上次在白名单应用内超过时间窗，视为「本次新进入」：
+                                // 重新计时，等过了启动保护期再恢复捕获
+                                if (lastWhitelistAt == 0L || now - lastWhitelistAt > SMART_FOREGROUND_WINDOW_MS) {  // if 判断：首次进入或已离开较久
+                                    whitelistSince = now  // 记录本次进入时间
+                                    Log.i(TAG, "Smart pause: entered whitelist app $fg, delay capture resume")  // 打印进入白名单应用日志
+                                }  // 结束进入判断
+                                lastWhitelistAt = now  // 刷新最近白名单前台时间
+                                if (!isCapturing && now - whitelistSince >= smartResumeDelayMs) {  // if 判断：未捕获且已过启动保护期（时长可在设置界面调整）
+                                    Log.i(TAG, "Smart pause: foreground=$fg, resuming capture")  // 字符串模板 "$var"=插值变量；打印自动恢复日志
+                                    mainHandler.post { resumeCapturing() }  // 回主线程恢复捕获
+                                }  // 结束恢复判断
+                            } else if (isCapturing) {  // else if 判断：非白名单应用在前台且正在捕获
                                 Log.i(TAG, "Smart pause: foreground=$fg, pausing capture")  // 字符串模板 "$var"=插值变量；打印自动暂停日志
                                 mainHandler.post { pauseCapturing() }  // 回主线程暂停捕获
                             }  // 结束 else if 块
@@ -1865,6 +1895,7 @@ class ControllerOverlayService : Service() {  // class=类声明；继承 Servic
         serverHost = cfg.serverHost  // 更新服务器地址
         serverPort = cfg.serverPort  // 更新服务器端口
         smartPauseEnabled = cfg.smartPauseEnabled  // 更新智能暂停开关
+        smartResumeDelayMs = cfg.smartResumeDelayMs.coerceIn(0, 120_000).toLong()  // 更新恢复捕获延时时长（0~120 秒）
         captureWhitelist = cfg.captureWhitelist.toSet()  // 更新捕获白名单
         captureEnabled = cfg.captureEnabled  // 更新捕获总开关
         launcherPackage = cfg.launcherPackage  // 更新拉起应用包名

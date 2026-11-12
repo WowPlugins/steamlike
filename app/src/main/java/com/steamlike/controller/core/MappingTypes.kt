@@ -34,6 +34,14 @@ fun MouseButton.toDisplayName(): String = when (this) { // 扩展函数：鼠标
 sealed class MappedAction { // 映射动作密封类（语法：sealed class 密封类，子类须在同一文件定义）
 
     /**
+     * 空动作（不执行任何点击动作）
+     *
+     * 用于「只配置长按」的按键：点击动作选择「未设置」但配置了长按时，
+     * 以本动作占位，按下/短按不注入任何键鼠事件，只由长按判定处理长按动作。
+     */
+    object None : MappedAction() // 空动作（点击不执行任何操作）
+
+    /**
      * 键盘按键动作
      *
      * 将手柄按键映射为键盘按键。keyCode 使用 Android [KeyEvent] 常量，
@@ -305,14 +313,16 @@ data class KeyMapping( // 按键映射定义（语法：data class 数据类）
      * 示例: "Alt+3"、"Ctrl+Shift+3"、"鼠标左键"、"切换到 Layer1"
      */
     fun describe(): String { // 转为可读描述（语法：fun 成员函数声明）
-        var text = composeLabel(action, subCommands) // 拼出短按动作描述（如 "Alt+3"）
-        if (layerSwitchOnly) text += "（只切换层）" // 短按开启「只切换层」时追加标记
+        // 点击动作未设置（仅配置长按）时省略短按部分，避免显示 "无 / 长按:..."
+        var text = if (action is MappedAction.None) "" else composeLabel(action, subCommands) // 拼出短按动作描述（如 "Alt+3"）
+        if (text.isNotEmpty() && layerSwitchOnly) text += "（只切换层）" // 短按开启「只切换层」时追加标记
         val lp = longPressAction // 取长按动作（局部变量便于智能转换）
         if (lp != null) { // 若配置了长按动作则追加显示
-            text += " / 长按:${composeLabel(lp, longPressSubCommands)}" // 追加长按动作描述（含长按子命令，语法：+= 字符串拼接）
+            if (text.isNotEmpty()) text += " / " // 已有短按描述时用斜杠分隔
+            text += "长按:${composeLabel(lp, longPressSubCommands)}" // 追加长按动作描述（含长按子命令，语法：+= 字符串拼接）
             if (longPressLayerSwitchOnly) text += "（只切换层）" // 长按开启「只切换层」时追加标记
         } // 结束长按描述判断
-        return text // 返回完整描述
+        return text.ifEmpty { "无" } // 返回完整描述（两者都为空时显示「无」）
     } // 结束 describe 函数
 
     /**
@@ -329,6 +339,7 @@ data class KeyMapping( // 按键映射定义（语法：data class 数据类）
      * 将单个动作转换为可读名称片段（供 [describe] 复用）
      */
     private fun actionLabel(action: MappedAction): String = when (action) { // 按动作类型分支（语法：when 表达式）
+        is MappedAction.None -> "无" // 空动作：无点击动作
         is MappedAction.KeyboardKey -> keyCodeToName(action.keyCode) // 键盘键：按键名（语法：is 类型判断分支）
         is MappedAction.MouseClick -> action.button.toDisplayName() // 鼠标点击：按钮名
         is MappedAction.SwitchLayer -> "切换→${action.layerName}" // 层切换：目标层名

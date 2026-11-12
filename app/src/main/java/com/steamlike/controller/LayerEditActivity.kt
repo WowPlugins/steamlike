@@ -911,7 +911,7 @@ class LayerEditActivity : AppCompatActivity() { // 定义操作层编辑 Activit
             is MappedAction.ToggleKeyboard -> position == 8 // 切换键盘 → 类型 8
             is MappedAction.ToggleKeyboardEnter -> position == 16 // 回车+切换键盘 → 类型 16
             is MappedAction.ToggleCapture -> position == 9 // 切换捕获 → 类型 9
-            is MappedAction.MouseMove, is MappedAction.LookAround -> position == 0 // 摇杆专用 → 未设置(0)
+            is MappedAction.MouseMove, is MappedAction.LookAround, is MappedAction.None -> position == 0 // 摇杆专用/空动作 → 未设置(0)
             null -> position == 0 // 未映射 → 未设置(0)
         } // 结束 actionTypeMatchesMapping 局部函数
 
@@ -1066,26 +1066,27 @@ class LayerEditActivity : AppCompatActivity() { // 定义操作层编辑 Activit
             .setView(dialogView) // 设置对话框显示的自定义视图
             .setPositiveButton("保存") { _, _ -> // 设置「保存」按钮及其点击回调（语法：setPositiveButton=设置确认按钮，lambda 参数 _,_=忽略）
                 val actionType = spinnerActionType.selectedItemPosition // 读取动作类型下拉框当前选中位置
-                if (actionType == 0) { // 若选择「未设置」
-                    // 未设置：取消该按键的映射（回退到公共层/无动作）
+                // 长按动作先计算：点击选「未设置」时也允许只配置长按
+                val longPressType = longPressTypeIndices[spinnerLongPressType.selectedItemPosition] // 长按动作类型索引
+                val longPressAction = if (longPressType == 0) null // 未设置 → 不启用长按判定（语法：if 表达式）
+                    else buildAction(longPressType - 1, spinnerLongPressValue.selectedItemPosition, 0, etLongTurnStep.text.toString().toIntOrNull() ?: 8, etLongTurnPixels.text.toString().trim().toIntOrNull()) // 否则构建长按动作（含转身间隔与自定义像素）
+                if (actionType == 0 && longPressAction == null) { // 点击与长按都未设置
+                    // 取消该按键的映射（回退到公共层/无动作）
                     layer.buttonMappings.remove(button) // 从映射表移除该按键的映射
                     Log.i(TAG, "Mapping removed: ${buttonDisplayName(button)}") // 打印日志：映射已移除（语法：字符串模板）
-                } else { // 否则（选择了具体动作类型）
-                    // 构建动作（actionType-1 映射回 0=键盘/1=鼠标点击/2=鼠标长按/3=切换层/9=切层+按键/10=数字小键盘）
-                    val action = buildAction( // 调用构建动作函数（跨行参数）
-                        actionType - 1, // 动作类型减去 1 还原为构建函数使用的索引
-                        spinnerActionValue.selectedItemPosition, // 动作值下拉框当前选中位置
-                        spinnerExtraKey.selectedItemPosition, // 附加按键下拉框当前选中位置（仅切层+按键类型生效）
-                        etTurnStep.text.toString().toIntOrNull() ?: 8, // 定角转身每步间隔（毫秒，非转身类型忽略）
-                        etTurnPixels.text.toString().trim().toIntOrNull() // 定角转身自定义像素（留空=用档位）
-                    ) // 结束 buildAction 调用
+                } else { // 否则（点击或长按至少配置了一项）
+                    // 点击动作：选「未设置」时用空动作占位，只保留长按
+                    val action = if (actionType == 0) MappedAction.None // 仅长按：点击不执行任何动作
+                        else buildAction( // 调用构建动作函数（跨行参数）
+                            actionType - 1, // 动作类型减去 1 还原为构建函数使用的索引
+                            spinnerActionValue.selectedItemPosition, // 动作值下拉框当前选中位置
+                            spinnerExtraKey.selectedItemPosition, // 附加按键下拉框当前选中位置（仅切层+按键类型生效）
+                            etTurnStep.text.toString().toIntOrNull() ?: 8, // 定角转身每步间隔（毫秒，非转身类型忽略）
+                            etTurnPixels.text.toString().trim().toIntOrNull() // 定角转身自定义像素（留空=用档位）
+                        ) // 结束 buildAction 调用
                     // 收集子命令（跳过"无"选项）
                     val subCommands = collectSubCommands(subCommandSpinners) // 收集所有已选短按子命令 KeyCode
                     val longPressSubCommands = collectSubCommands(longPressSubCommandSpinners) // 收集所有已选长按子命令 KeyCode
-                    // 长按动作：位置还原为动作类型索引，0=未设置（不启用长按判定）
-                    val longPressType = longPressTypeIndices[spinnerLongPressType.selectedItemPosition] // 长按动作类型索引
-                    val longPressAction = if (longPressType == 0) null // 未设置 → 不启用长按判定（语法：if 表达式）
-                        else buildAction(longPressType - 1, spinnerLongPressValue.selectedItemPosition, 0, etLongTurnStep.text.toString().toIntOrNull() ?: 8, etLongTurnPixels.text.toString().trim().toIntOrNull()) // 否则构建长按动作（含转身间隔与自定义像素）
 
                     // 创建新的按键映射（含可选长按动作与其子命令）
                     // 「只切换层」仅在对应动作类型支持时生效（隐藏状态下不保存开关值，避免切回类型后误开启）
@@ -1749,7 +1750,7 @@ class LayerEditActivity : AppCompatActivity() { // 定义操作层编辑 Activit
         is MappedAction.MouseFineMove -> 15 // 鼠标精细移动 → 类型 15
         is MappedAction.MouseFastMove -> 17 // 鼠标快速移动 → 类型 17
         is MappedAction.Turn180 -> 18 // 定角转身 → 类型 18
-        is MappedAction.MouseMove, is MappedAction.LookAround -> 0 // 摇杆专用 → 未设置（语法：多类型分支）
+        is MappedAction.MouseMove, is MappedAction.LookAround, is MappedAction.None -> 0 // 摇杆专用/空动作 → 未设置（语法：多类型分支）
         null -> 0 // 未映射 → 未设置
     } // 结束 when 表达式
 
@@ -1770,7 +1771,7 @@ class LayerEditActivity : AppCompatActivity() { // 定义操作层编辑 Activit
     private fun setupActionValueSpinner(spinner: Spinner, label: TextView, actionType: Int, labelPrefix: String = ""): Unit { // 私有函数：根据动作类型设置动作值下拉框选项（labelPrefix 用于区分点击/长按分组）
         val options: List<String> = when (actionType) { // 按动作类型计算选项列表（语法：when=分支表达式，显式声明 List<String> 类型）
             0 -> {  // 未设置（取消映射） // 未设置类型分支：保存时取消映射
-                label.text = "未设置（保存后取消该按键映射）" // 更新动作标签文字
+                label.text = "未设置（不执行点击动作，仍可配置长按）" // 更新动作标签文字
                 listOf("（无）") // 返回占位选项「（无）」（语法：listOf=列表工厂）
             } // 结束未设置分支
             1 -> {  // 键盘按键 // 键盘按键类型分支

@@ -9,6 +9,7 @@ package com.steamlike.controller.config // 包声明：config 配置模块
  * ## 包含的配置
  * - [serverHost]/[serverPort]: TCP 监听地址/端口
  * - [smartPauseEnabled]: 智能暂停开关（前台应用检测自动移除/恢复焦点窗口）
+ * - [smartResumeDelayMs]: 进入白名单应用后延迟多久自动恢复捕获（毫秒）
  * - [captureWhitelist]: 捕获白名单（前台在此列表内时保持手柄捕获，支持多个包名）
  * - [captureEnabled]: 捕获总开关（悬浮窗按钮与 App 内开关双向同步）
  * - [launcherPackage]: 悬浮窗"游戏"按钮拉起的应用包名
@@ -16,6 +17,7 @@ package com.steamlike.controller.config // 包声明：config 配置模块
  * @param serverHost TCP 监听地址
  * @param serverPort TCP 监听端口
  * @param smartPauseEnabled 智能暂停开关
+ * @param smartResumeDelayMs 进入白名单应用后延迟多久自动恢复捕获（毫秒，0=立即）
  * @param captureWhitelist 捕获白名单包名列表（多个）
  * @param captureEnabled 捕获总开关
  * @param launcherPackage 悬浮窗拉起的目标应用包名
@@ -24,6 +26,7 @@ data class AppConfig( // 运行时配置数据类（语法：data class=数据�
     val serverHost: String = DEFAULT_HOST, // 服务器监听地址（语法：val=只读属性；默认参数引用伴生常量）
     val serverPort: Int = DEFAULT_PORT, // 服务器监听端口（默认 27015）
     val smartPauseEnabled: Boolean = true, // 智能暂停开关（默认开启）
+    val smartResumeDelayMs: Int = DEFAULT_SMART_RESUME_DELAY_MS, // 进入白名单应用后延迟多久恢复捕获（毫秒，默认 12 秒）
     val captureWhitelist: List<String> = DEFAULT_WHITELIST, // 捕获白名单包名列表（默认 Winlator 系列）
     val captureEnabled: Boolean = true, // 捕获总开关（默认开启）
     val launcherPackage: String = DEFAULT_LAUNCHER // 悬浮窗拉起的目标应用包名
@@ -32,6 +35,8 @@ data class AppConfig( // 运行时配置数据类（语法：data class=数据�
         const val DEFAULT_HOST = "0.0.0.0" // 默认监听地址（语法：const val=编译期常量）
         const val DEFAULT_PORT = 27015 // 默认 TCP 端口（与 Windows 客户端约定的 27015）
         const val DEFAULT_LAUNCHER = "com.winlator" // 默认拉起的应用包名（Winlator 官方）
+        /** 进入白名单应用后延迟恢复捕获的默认时长（毫秒）：避开 Winlator 启动游戏时的敏感阶段 */
+        const val DEFAULT_SMART_RESUME_DELAY_MS = 12_000 // 默认 12 秒
 
         /**
          * 默认捕获白名单（前台应用在此集合内时保持焦点窗口捕获手柄）

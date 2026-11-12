@@ -483,6 +483,7 @@ class KeyboardMouseMapper( // 语法：class 类声明，定义键盘/鼠标映�
 
         // 非切换动作：始终处理（暂停时也转发到 bridge，让游戏接收手柄输入）
         when (val action = mapping.action) { // 语法：when 分支表达式，分发非切换动作
+            is MappedAction.None -> {} // 空动作（点击未设置，仅配置长按）：不注入任何事件
             is MappedAction.KeyboardKey -> handleKeyboardKey(button, true, action.keyCode, mapping.subCommands) // 键盘按键动作：处理主键+子命令（语法：is 类型匹配）
             is MappedAction.SwitchLayerAndKey -> if (!mapping.layerSwitchOnly) { // 切层+按键动作：开启「只切换层」时只切层、不注入按键
                 pressLayerKey(button, action.keyCode, mapping.subCommands) // 记录归属并注入同时按下的按键（语法：if 单表达式分支）

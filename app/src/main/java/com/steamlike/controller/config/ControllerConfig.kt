@@ -97,6 +97,7 @@ object ControllerConfig { // 单例对象：配置的 JSON 序列化/反序列�
         json.put("serverHost", cfg.serverHost) // 写入服务器监听地址
         json.put("serverPort", cfg.serverPort) // 写入服务器监听端口
         json.put("smartPauseEnabled", cfg.smartPauseEnabled) // 写入智能暂停开关
+        json.put("smartResumeDelayMs", cfg.smartResumeDelayMs) // 写入进入白名单应用后的恢复延时时长
         val whitelist = JSONArray() // 创建白名单 JSON 数组
         cfg.captureWhitelist.forEach { whitelist.put(it) } // 遍历白名单包名加入数组（语法：it=lambda 隐式参数）
         json.put("captureWhitelist", whitelist) // 写入捕获白名单数组
@@ -114,6 +115,8 @@ object ControllerConfig { // 单例对象：配置的 JSON 序列化/反序列�
             serverHost = json.optString("serverHost", AppConfig.DEFAULT_HOST), // 读取监听地址，缺失用默认值（语法：optString=带默认值读取）
             serverPort = json.optInt("serverPort", AppConfig.DEFAULT_PORT), // 读取端口，缺失用默认值（语法：optInt=带默认值读取）
             smartPauseEnabled = json.optBoolean("smartPauseEnabled", true), // 读取智能暂停开关，默认开启
+            smartResumeDelayMs = json.optInt("smartResumeDelayMs", AppConfig.DEFAULT_SMART_RESUME_DELAY_MS) // 读取恢复延时时长，默认 12 秒
+                .coerceIn(0, 120_000), // 限制在 0~120 秒，避免异常配置导致长时间不恢复捕获
             captureWhitelist = json.optJSONArray("captureWhitelist")?.let { arr -> // 读取白名单数组（语法：?.=安全调用；let=作用域函数）
                 (0 until arr.length()).map { arr.getString(it) } // 遍历索引取出包名列表（语法：until=开区间；map=集合转换）
                     .filter { it.isNotBlank() } // 过滤空白项（语法：filter=按条件过滤；it=隐式参数）
@@ -326,6 +329,9 @@ object ControllerConfig { // 单例对象：配置的 JSON 序列化/反序列�
     private fun actionToJson(action: MappedAction): JSONObject { // 序列化映射动作为 JSON 对象
         val json = JSONObject() // 创建 JSON 对象
         when (action) { // 按动作类型分发（语法：when=分支表达式）
+            is MappedAction.None -> { // 空动作（仅配置了长按）类型
+                json.put("type", "none") // 写入类型标识
+            } // 结束空动作分支
             is MappedAction.KeyboardKey -> { // 键盘按键类型（语法：is=类型判断）
                 json.put("type", "keyboard") // 写入类型标识
                 json.put("keyCode", action.keyCode) // 写入按键码
@@ -402,6 +408,7 @@ object ControllerConfig { // 单例对象：配置的 JSON 序列化/反序列�
     private fun parseAction(json: JSONObject): MappedAction? { // 解析映射动作（语法：MappedAction?=可空返回类型）
         val type = json.getString("type") // 读取动作类型标识
         return when (type) { // 按类型字符串分发解析（语法：when=按值分支）
+            "none" -> MappedAction.None // 空动作（点击未设置，仅配置长按）：直接返回单例对象
             "keyboard" -> { // 键盘按键类型
                 val keyCode = json.getInt("keyCode") // 读取按键码
                 MappedAction.KeyboardKey(keyCode) // 构造键盘按键动作（块内最后一行即返回值）

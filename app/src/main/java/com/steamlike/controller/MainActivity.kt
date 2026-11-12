@@ -55,6 +55,8 @@ class MainActivity : AppCompatActivity() { // 声明主界面 Activity，继承 
     private lateinit var batteryStatusText: TextView // 手柄电量显示文本（语法：lateinit 延迟初始化变量）
     /** 智能暂停开关 */
     private lateinit var smartPauseSwitch: Switch // 智能暂停开关控件（语法：lateinit 延迟初始化变量）
+    /** 进入白名单应用后延迟恢复捕获的秒数输入框 */
+    private lateinit var smartResumeDelayEditText: EditText // 恢复捕获延时输入框（秒）
     /** 捕获白名单输入框 */
     private lateinit var whitelistEditText: EditText // 捕获白名单输入框
     /** 使用情况访问授权入口按钮 */
@@ -246,6 +248,18 @@ class MainActivity : AppCompatActivity() { // 声明主界面 Activity，继承 
             toastLog(if (checked) "智能暂停已开启（切出游戏自动暂停捕获）" else "智能暂停已关闭（手动模式）") // 弹出开关结果提示（语法：if/else 表达式）
         } // 结束智能暂停开关回调
         smartCard.addView(smartPauseSwitch) // 把开关加入卡片
+
+        // 进入白名单应用后延迟恢复捕获（默认 12 秒，避开 Winlator 启动游戏的敏感阶段）
+        smartCard.addView(UiKit.label(this, "进入白名单应用后延迟恢复捕获（秒，0=立即）")) // 添加延时标签
+        smartResumeDelayEditText = UiKit.input( // 创建延时输入框
+            this, // 上下文参数
+            "默认 12 秒", // 输入框提示文字
+            (appCfg.smartResumeDelayMs / 1000).toString() // 毫秒换算为秒作为初始值
+        ).apply { // apply 作用域：配置输入类型
+            inputType = android.text.InputType.TYPE_CLASS_NUMBER // 仅允许输入数字
+        } // 结束 apply 块
+        smartCard.addView(smartResumeDelayEditText) // 把延时输入框加入卡片
+        smartCard.addView(UiKit.spacer(this, 6)) // 添加 6dp 间距
 
         // 捕获开关（与悬浮窗暂停/恢复按钮双向同步）
         captureSwitch = UiKit.switchRow(this, "手柄捕获", appCfg.captureEnabled) { checked -> // 创建手柄捕获开关行（语法：lambda 回调）
@@ -787,6 +801,8 @@ class MainActivity : AppCompatActivity() { // 声明主界面 Activity，继承 
             serverHost = hostEditText.text.toString().trim().ifBlank { AppConfig.DEFAULT_HOST }, // 监听地址，为空时用默认值（语法：ifBlank 兜底）
             serverPort = portEditText.text.toString().trim().toIntOrNull() ?: AppConfig.DEFAULT_PORT, // 端口，非法时用默认值（语法：?: 空值合并）
             smartPauseEnabled = smartPauseSwitch.isChecked, // 智能暂停开关状态
+            smartResumeDelayMs = (smartResumeDelayEditText.text.toString().trim().toIntOrNull() ?: 12) // 读取延时时长（秒，非法时默认 12）
+                .coerceIn(0, 120) * 1000, // 限制 0~120 秒并换算为毫秒
             captureWhitelist = AppConfig.parseWhitelist(whitelistEditText.text.toString()), // 解析白名单包名列表
             captureEnabled = captureSwitch.isChecked, // 捕获开关状态
             launcherPackage = launcherEditText.text.toString().trim().ifBlank { AppConfig.DEFAULT_LAUNCHER } // 拉起应用包名，为空时用默认值
