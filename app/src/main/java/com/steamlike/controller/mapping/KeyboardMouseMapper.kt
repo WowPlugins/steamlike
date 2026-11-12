@@ -179,7 +179,8 @@ class KeyboardMouseMapper( // 语法：class 类声明，定义键盘/鼠标映�
     /** 一次延迟按下（长按判定中）的上下文 */
     private data class DeferredPress( // 语法：private data class 私有数据类，封装延迟按下上下文
         val mapping: KeyMapping, // 按下时生效的映射（松开时按它判定，避免层切换后映射变化）
-        val pressTimeMs: Long // 按下时刻（SystemClock.elapsedRealtime）
+        val pressTimeMs: Long, // 按下时刻（SystemClock.elapsedRealtime）
+        val layerName: String? // 映射所属操作层名（null=公共层），用于「只切换层」只抵消本层切层键
     ) // 结束 DeferredPress 数据类
 
     /** 处于长按判定中的按键 → 延迟按下上下文 */
@@ -307,9 +308,9 @@ class KeyboardMouseMapper( // 语法：class 类声明，定义键盘/鼠标映�
      * @return true=启动成功
      */
     fun start(): Boolean { // 语法：fun 函数声明，返回 Boolean，启动映射器并注册回调
-        steamInput.onButtonMapped = { button, isPressed, mapping -> // 注册按钮映射回调（语法：lambda 表达式赋给属性）
-            handleMapping(button, isPressed, mapping) // 分发按钮映射到内部处理方法
-        } // 结束按钮映射 lambda
+        steamInput.onButtonMapped = { button, isPressed, mapping, layerName -> // 注册按钮映射回调（语法：lambda 表达式赋给属性）
+            handleMapping(button, isPressed, mapping, layerName) // 分发按钮映射到内部处理方法
+        } // 结束回调注册 // 结束按钮映射 lambda
         steamInput.onStickMapped = { stick, x, y -> // 注册摇杆映射回调（语法：lambda 表达式）
             handleStick(stick, x, y) // 分发摇杆事件到内部处理方法
         } // 结束摇杆映射 lambda
@@ -451,8 +452,9 @@ class KeyboardMouseMapper( // 语法：class 类声明，定义键盘/鼠标映�
      * @param button 手柄按钮
      * @param isPressed true=按下, false=释放
      * @param mapping 按键映射
+     * @param layerName 映射所属操作层名（null=公共层）
      */
-    private fun handleMapping(button: ControllerButton, isPressed: Boolean, mapping: KeyMapping) { // 语法：private fun 私有函数，按动作类型分发按键映射
+    private fun handleMapping(button: ControllerButton, isPressed: Boolean, mapping: KeyMapping, layerName: String?) { // 语法：private fun 私有函数，按动作类型分发按键映射
         if (!isPressed) { // 语法：if 分支，判断是否为松开事件
             clearFineMove(button) // 若该按钮正按住「精细移动」则退出，恢复普通灵敏度
             clearFastMove(button) // 若该按钮正按住「快速移动」则退出，恢复普通灵敏度
@@ -463,13 +465,13 @@ class KeyboardMouseMapper( // 语法：class 类声明，定义键盘/鼠标映�
 
         // 长按判定：仅对「已配置长按动作」或「全局回退开启」的可延迟短按动作生效
         if (isLongPressEligible(mapping)) { // 语法：if 判断是否启用长按判定
-            beginDeferredPress(button, mapping) // 按下时不注入，记录时间并启动阈值定时器
+            beginDeferredPress(button, mapping, layerName) // 按下时不注入，记录时间并启动阈值定时器
             return // 返回，等待松开时判定
         } // 结束长按判定分支
 
         // 「只切换层」：先暂时抬起切层键同时按下的按键，使本次动作只保留切层效果
         if (mapping.layerSwitchOnly && isOnlyLayerApplicable(mapping.action)) { // 语法：&& 逻辑与
-            suppressLayerKeys(button) // 抬起切层键（松开该按钮时由 releaseButtonInjection 恢复）
+            suppressLayerKeys(button, layerName) // 抬起本层切层键（松开该按钮时由 releaseButtonInjection 恢复）
         } // 结束「只切换层」判断
 
         when (val action = mapping.action) { // 语法：when 分支表达式，同时用 val 声明局部变量 action
@@ -594,10 +596,10 @@ class KeyboardMouseMapper( // 语法：class 类声明，定义键盘/鼠标映�
      * 按下时不注入任何事件，仅记录按下时间；若配置了长按动作，则在阈值到达时
      * 由 [onLongPressThreshold] 注入长按按下。
      */
-    private fun beginDeferredPress(button: ControllerButton, mapping: KeyMapping) { // 语法：private fun 私有函数，开始长按判定
+    private fun beginDeferredPress(button: ControllerButton, mapping: KeyMapping, layerName: String?) { // 语法：private fun 私有函数，开始长按判定
         if (deferredPresses.containsKey(button)) return // 已在判定中则忽略，防重复（语法：containsKey 判断）
         val pressTime = SystemClock.elapsedRealtime() // 记录按下时刻（单调时钟，不受系统时间调整影响）
-        deferredPresses[button] = DeferredPress(mapping, pressTime) // 存入延迟按下上下文
+        deferredPresses[button] = DeferredPress(mapping, pressTime, layerName) // 存入延迟按下上下文（含所属层）
         if (mapping.longPressAction != null) { // 仅配置了长按动作时才需要阈值定时器
             val threshold = steamInput.profile.globalSettings.longPressThresholdMs.toLong() // 读取长按阈值（毫秒）
             val runnable = Runnable { onLongPressThreshold(button) } // 构造阈值到达回调（语法：Runnable{}=可运行 lambda）
@@ -619,7 +621,7 @@ class KeyboardMouseMapper( // 语法：class 类声明，定义键盘/鼠标映�
         val longAction = pending.mapping.longPressAction ?: return // 无长按动作（回退模式）则不注入
         if (isHoldableAction(longAction)) { // 保持型动作
             if (pending.mapping.longPressLayerSwitchOnly && isOnlyLayerApplicable(longAction)) { // 长按动作开启「只切换层」
-                suppressLayerKeys(button) // 先抬起切层键，使长按输出不叠加其按键（松开时在释放流程中恢复）
+                suppressLayerKeys(button, pending.layerName) // 先抬起本层切层键，使长按输出不叠加其按键（松开时在释放流程中恢复）
             } // 结束「只切换层」判断
             injectActionDown(button, longAction, pending.mapping.longPressSubCommands) // 注入按下（带长按子命令）并记录状态
             longHoldActive.add(button) // 记入保持型长按集合
@@ -649,7 +651,7 @@ class KeyboardMouseMapper( // 语法：class 类声明，定义键盘/鼠标映�
         val longAction = pending.mapping.longPressAction // 取长按动作
         if (held < threshold) { // 短按：按住时长未达阈值
             if (pending.mapping.layerSwitchOnly && isHoldableAction(pending.mapping.action)) { // 短按动作开启「只切换层」
-                suppressLayerKeys(button) // 先抬起切层键（点按内部的释放流程会恢复）
+                suppressLayerKeys(button, pending.layerName) // 先抬起本层切层键（点按内部的释放流程会恢复）
             } // 结束「只切换层」判断
             tapAction(button, pending.mapping.action, pending.mapping.subCommands) // 执行短按动作（保持型点按/触发型触发）
         } else if (longAction != null) { // 长按：已配置长按动作
@@ -657,13 +659,13 @@ class KeyboardMouseMapper( // 语法：class 类声明，定义键盘/鼠标映�
                 releaseButtonInjection(button) // 释放长按注入的按键
             } else if (!longInstantFired.remove(button)) { // 瞬时型尚未触发（阈值回调与松开竞态）→ 补发一次
                 if (pending.mapping.longPressLayerSwitchOnly && isHoldableAction(longAction)) { // 长按动作开启「只切换层」
-                    suppressLayerKeys(button) // 先抬起切层键（点按内部的释放流程会恢复）
+                    suppressLayerKeys(button, pending.layerName) // 先抬起本层切层键（点按内部的释放流程会恢复）
                 } // 结束「只切换层」判断
                 tapAction(button, longAction, pending.mapping.longPressSubCommands) // 补发执行长按动作（带长按子命令）
             } // 结束长按类型判断
         } else if (steamInput.profile.globalSettings.longPressFallbackToShort) { // 长按未配置动作：回退开关开启
             if (pending.mapping.layerSwitchOnly && isHoldableAction(pending.mapping.action)) { // 回退执行的短按动作开启「只切换层」
-                suppressLayerKeys(button) // 先抬起切层键（点按内部的释放流程会恢复）
+                suppressLayerKeys(button, pending.layerName) // 先抬起本层切层键（点按内部的释放流程会恢复）
             } // 结束「只切换层」判断
             tapAction(button, pending.mapping.action, pending.mapping.subCommands) // 松开时执行短按动作（保持型点按/触发型触发）
         } // 否则（未配置长按动作且回退关闭）：什么都不做
@@ -742,20 +744,36 @@ class KeyboardMouseMapper( // 语法：class 类声明，定义键盘/鼠标映�
     } // 结束 pressLayerKey 函数
 
     /**
-     * 抬起所有「切层+按键」正按住的按键（「只切换层」动作按下时调用）
+     * 抬起「本层」切层键正按住的键盘键（「只切换层」动作按下时调用）
      *
-     * 多个「只切换层」动作同时按住时只抬起一次，全部松开后才恢复。
+     * 只抵消当前动作所属层的切层键：例如先按住 R2（切层+Shift）再切到 L2 层，
+     * L2 层内开启「只切换层」的动作不会抬起 R2 的 Shift，Shift 仍保持按下。
+     *
+     * 多个「只切换层」动作同时按住时按集合去重，全部松开后才恢复。
      *
      * @param button 触发「只切换层」的手柄按钮
+     * @param layerName 动作所属操作层名（null=公共层，不抵消任何切层键）
      */
-    private fun suppressLayerKeys(button: ControllerButton) { // 语法：private fun 私有函数
-        if (!onlyLayerSwitchButtons.add(button)) return // 该按钮已在抑制中，忽略重复调用
-        if (onlyLayerSwitchButtons.size > 1) return // 已有其它抑制动作，切层键已经是抬起状态
-        heldLayerKeys.values.forEach { key -> // 遍历当前按住的所有切层键
+    private fun suppressLayerKeys(button: ControllerButton, layerName: String?) { // 语法：private fun 私有函数
+        onlyLayerSwitchButtons.add(button) // 记录抑制中的按钮（松开时由 restoreLayerKeys 恢复）
+        // 找出本层的切层键：公共层中「切换到该层」的按钮当前正注入的键盘键
+        val layerKeys = if (layerName == null) emptyList() else { // 公共层动作不抵消任何切层键
+            steamInput.profile.commonLayer.buttonMappings // 公共层按钮映射表
+                .filterValues { m -> layerTargetOf(m.action) == layerName } // 只保留切换到本层的切层按钮
+                .keys.mapNotNull { heldLayerKeys[it] } // 取这些按钮当前注入的键盘键
+        } // 结束层键收集
+        layerKeys.forEach { key -> // 遍历本层切层键
             if (liftedLayerKeys.add(key)) injector.sendKeyUp(key) // 逐个抬起（集合去重，避免同一键重复抬）
         } // 结束遍历
-        Log.d(TAG, "OnlyLayerSwitch: lift layer keys ${heldLayerKeys.values}") // 打印抬起日志
+        if (layerKeys.isNotEmpty()) Log.d(TAG, "OnlyLayerSwitch: lift keys $layerKeys for layer $layerName") // 打印抬起日志
     } // 结束 suppressLayerKeys 函数
+
+    /** 取「切换层」类动作的目标层名（其它动作返回 null） */
+    private fun layerTargetOf(action: MappedAction): String? = when (action) { // 语法：when 表达式直接返回结果
+        is MappedAction.SwitchLayer -> action.layerName // 切层动作：返回目标层
+        is MappedAction.SwitchLayerAndKey -> action.layerName // 切层+按键动作：返回目标层
+        else -> null // 其它动作：不是切层键
+    } // 结束 layerTargetOf 函数
 
     /**
      * 恢复被「只切换层」抬起的切层键（动作松开时调用）

@@ -155,9 +155,10 @@ class SteamInput(context: Context) { // 主控制器类（语法：class 声明�
      * @param button 手柄按钮
      * @param isPressed true=按下, false=释放
      * @param mapping 找到的按键映射
+     * @param layerName 映射所属的操作层名（null=公共层），供「只切换层」只抵消本层切层键
      */
     // 按钮映射回调（语法：lambda 带命名参数 + 可空类型 + Unit 无返回值；该行超长故注释置上方）
-    var onButtonMapped: ((button: ControllerButton, isPressed: Boolean, mapping: KeyMapping) -> Unit)? = null
+    var onButtonMapped: ((button: ControllerButton, isPressed: Boolean, mapping: KeyMapping, layerName: String?) -> Unit)? = null
 
     /**
      * 无映射按钮的松开回调
@@ -395,13 +396,28 @@ class SteamInput(context: Context) { // 主控制器类（语法：class 声明�
      * @return 找到的映射；未绑定返回 null
      */
     fun getEffectiveMapping(button: ControllerButton): KeyMapping? { // 查找按钮有效映射（语法：返回可空类型 KeyMapping?）
+        return getEffectiveMappingWithLayer(button)?.first // 复用带层信息的查找，只返回映射
+    } // 结束 getEffectiveMapping 函数
+
+    /**
+     * 查找按钮有效映射，并返回映射所在的操作层
+     *
+     * 查找顺序与 [getEffectiveMapping] 一致：激活层（按激活顺序）→ 公共层。
+     * 返回的层用于「只切换层」逻辑：只有本层动作才抵消本层的切层键，
+     * 不会影响其它仍按住的层（例如先按住 R2 叠加 Shift 再切到 L2 层）。
+     *
+     * @param button 要查找的按钮
+     * @return 映射 + 所在层（公共层时为 null）；未绑定返回 null
+     */
+    fun getEffectiveMappingWithLayer(button: ControllerButton): Pair<KeyMapping, OperationLayer?>? { // 查找映射及所属层（语法：返回可空 Pair）
         // 1. 从激活层查找
         for (layer in activeLayers) { // 遍历激活层（语法：for(x in y) 遍历）
-            layer.getMapping(button)?.let { return it } // 找到映射立即返回（语法：?. 安全调用 + let + return 局部返回）
+            layer.getMapping(button)?.let { return it to layer } // 找到映射立即返回映射+层
         } // 结束 for
         // 2. 回退到公共层
-        return profile.commonLayer.getMapping(button) // 回退到公共层查询
-    } // 结束 getEffectiveMapping 函数
+        profile.commonLayer.getMapping(button)?.let { return it to null } // 公共层映射的层名记为 null
+        return null // 无映射
+    } // 结束 getEffectiveMappingWithLayer 函数 // 结束 getEffectiveMapping 函数
 
     // ====================================================================
     // 输入分发
@@ -491,7 +507,7 @@ class SteamInput(context: Context) { // 主控制器类（语法：class 声明�
 
         Log.i(TAG, "Paused key: $button -> ${action.javaClass.simpleName}") // 打印暂停按键日志
         // 转发到 KeyboardMouseMapper.handleMapping，触发对应 Toggle 回调（恢复捕获等）
-        onButtonMapped?.invoke(button, true, mapping) // 触发映射回调
+        onButtonMapped?.invoke(button, true, mapping, null) // 触发映射回调（暂停时无层信息）
         return true // 返回已处理
     } // 结束 dispatchKeyEventWhilePaused 函数
 
@@ -707,14 +723,16 @@ class SteamInput(context: Context) { // 主控制器类（语法：class 声明�
                 // 「切层+按键」类型：停用层后还需注入按键松开，避免同时按下的键盘键卡住
                 val savedMapping = switchLayerAndKeyMappings.remove(button) // 取出缓存的切层+按键原映射
                 if (savedMapping != null) { // 存在缓存映射则注入按键松开
-                    onButtonMapped?.invoke(button, false, savedMapping) // 触发映射回调，注入按键松开
+                    onButtonMapped?.invoke(button, false, savedMapping, null) // 触发映射回调，注入按键松开
                 } // 结束缓存映射判断
                 return // 提前返回
             } // 结束 if
         } // 结束松开分支
 
-        // 查找有效映射（先查激活层，回退到 Common 层）
-        val mapping = getEffectiveMapping(button) // 查找按钮有效映射
+        // 查找有效映射（先查激活层，回退到 Common 层），同时拿到映射所属层名
+        val mappingWithLayer = getEffectiveMappingWithLayer(button) // 查找按钮有效映射及所属层
+        val mapping = mappingWithLayer?.first // 取出映射
+        val mappingLayerName = mappingWithLayer?.second?.name // 映射所属操作层名（null=公共层）
         if (mapping == null) { // 无有效映射
             // 松开时也必须通知外部释放：按下时可能是在某个操作层里绑定了动作，
             // 松开前该层已被停用（查不到映射），不通知会让注入的键/鼠标按钮永久卡住
@@ -752,11 +770,11 @@ class SteamInput(context: Context) { // 主控制器类（语法：class 声明�
                     } // 结束目标层存在判断
                 } // 结束捕获判断
                 // 同时注入键盘按键（与 KeyboardKey 相同的注入路径）
-                onButtonMapped?.invoke(button, isPressed, mapping) // 触发映射回调，交由外部注入按键
+                onButtonMapped?.invoke(button, isPressed, mapping, mappingLayerName) // 触发映射回调，交由外部注入按键
             } // 结束 SwitchLayerAndKey 分支
             else -> { // 其他动作分支
                 // 键盘/鼠标动作 → 通知外部注入
-                onButtonMapped?.invoke(button, isPressed, mapping) // 触发映射回调，交由外部注入
+                onButtonMapped?.invoke(button, isPressed, mapping, mappingLayerName) // 触发映射回调，交由外部注入
             } // 结束 else 分支
         } // 结束 when
     } // 结束 handleButtonEvent 函数
