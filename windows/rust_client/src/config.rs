@@ -38,6 +38,11 @@ pub struct ClientConfig {
     pub interaction_vk: u32,
     /// 长按交换键虚拟键码（默认 1）
     pub swap_vk: u32,
+    /// 右键锁定切换键虚拟键码（默认 0 = 未绑定）
+    ///
+    /// 按下后按当前锁存状态锁定/解锁鼠标右键（视角锁定），行为与 APK 的
+    /// 「右键锁定切换」映射动作一致。
+    pub right_lock_vk: u32,
     /// 长按判定阈值（毫秒）
     pub long_press_ms: u32,
     /// 拦截路径中 WASD 触发时的归位落点：true = 屏幕左下角之外、下边缘下方 2/3 屏高处，
@@ -86,6 +91,7 @@ impl Default for ClientConfig {
             intercept_enabled: false,
             interaction_vk: 0x58,
             swap_vk: 0x31,
+            right_lock_vk: 0,
             long_press_ms: 500,
             cursor_park_offscreen: true,
             clipboard_sync: true,
@@ -125,6 +131,8 @@ pub enum MappedAction {
     MouseSwapToggle,
     /// 释放所有鼠标长按锁存
     MouseReleaseAll,
+    /// 右键锁定切换（未锁定 → 光标停到屏幕外并按下右键；已锁定 → 松开并延时居中）
+    RightLockToggle,
     /// 交互键（解锁存 → 居中 → 右键点击 → 恢复锁存）
     Interact,
     /// 悬浮窗展开/收起
@@ -211,6 +219,7 @@ impl MappedAction {
             Self::ScrollDown => "滚轮下滚".to_string(),
             Self::MouseSwapToggle => "鼠标长按交换".to_string(),
             Self::MouseReleaseAll => "释放鼠标长按".to_string(),
+            Self::RightLockToggle => "右键锁定切换".to_string(),
             Self::Interact => "交互键".to_string(),
             Self::OverlayToggle => "悬浮窗展开/收起".to_string(),
             Self::ShowKeyboard => "显示安卓键盘".to_string(),

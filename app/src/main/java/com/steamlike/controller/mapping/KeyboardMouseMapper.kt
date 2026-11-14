@@ -122,6 +122,23 @@ class KeyboardMouseMapper( // 语法：class 类声明，定义键盘/鼠标映�
     private val toggledMouseButtons = mutableSetOf<MouseButton>() // 语法：val+mutableSetOf 可变集合，记录鼠标按钮锁存状态（全局统一标志）
 
     /**
+     * Windows 客户端（Rust 原生侧）上报的锁存状态
+     *
+     * APK 手柄映射与 Rust 快捷键各自维护一份锁存，互不知情。Rust 侧一旦用快捷键
+     * 锁定/解锁右键，会通过 0x28 报文上报，这里记录下来与 [toggledMouseButtons]
+     * 合并成统一的「锁定视图」（见 [isMouseLocked]）：
+     * - 悬浮窗边框高亮、右键锁定切换动作的判断都用合并后的状态
+     * - 「释放全部」时，仅远端锁存的情况改为通知客户端解锁，避免多发一条 MouseUp
+     */
+    private val remoteLockedButtons = mutableSetOf<MouseButton>() // 远端（Rust）上报的锁存按钮
+
+    /** 已向外部通知过「锁存中」的按钮（合并视图变化时才回调，避免重复/错误通知） */
+    private val notifiedLockedButtons = mutableSetOf<MouseButton>() // 语法：val+mutableSetOf 可变集合
+
+    /** 客户端（重）连接后等待同步：收到一次 0x28 锁存上报后再对齐物理鼠标状态 */
+    private var pendingLockResync = false // 语法：var 可变布尔标志
+
+    /**
      * 在激活期间触发过鼠标左右键动作的操作层集合
      *
      * 用于限制「层停用释放鼠标锁存」的触发条件：
@@ -292,6 +309,15 @@ class KeyboardMouseMapper( // 语法：class 类声明，定义键盘/鼠标映�
     var onMouseToggleChanged: ((MouseButton, Boolean) -> Unit)? = null // 语法：var+函数类型+? 可空回调，MouseToggle 锁存状态变化时触发
 
     /**
+     * 请求 Windows 客户端解除鼠标锁存（发 0x26 报文）
+     *
+     * 用于「右键锁定切换 / 释放全部」遇到仅由 Rust 快捷键锁定的情况：
+     * 锁存由客户端本地维护，APK 无法直接松开，只能通知客户端解锁并延时居中。
+     * 由 ControllerOverlayService 设置为 [InputBridgeServer.sendUnlockMouse]。
+     */
+    var onRequestRemoteUnlock: (() -> Unit)? = null // 语法：var+函数类型+? 可空回调
+
+    /**
      * 是否正在捕获（历史字段，当前无实际作用）
      *
      * 早期设计中暂停捕获时由服务设置此字段，映射器据此仅处理切换动作。
@@ -361,6 +387,9 @@ class KeyboardMouseMapper( // 语法：class 类声明，定义键盘/鼠标映�
         onlyLayerSwitchButtons.clear() // 清空「只切换层」按住记录
         leftStickPressedKeys.clear() // 清空左摇杆方向键集合
         toggledMouseButtons.clear() // 清空鼠标按钮锁存记录（含左摇杆移动自动锁定的右键）
+        remoteLockedButtons.clear() // 清空客户端上报的锁存记录
+        notifiedLockedButtons.clear() // 清空已通知过的锁存状态
+        pendingLockResync = false // 取消待同步标记
         layerMouseActionButtons.clear() // 清空「层 → 操作过鼠标左右键的按钮」记录
         fineMoveButtons.clear() // 清空精细移动按住记录
         fineMoveActive = false // 关闭精细移动标志
@@ -495,6 +524,7 @@ class KeyboardMouseMapper( // 语法：class 类声明，定义键盘/鼠标映�
             is MappedAction.MouseToggle -> handleMouseToggle(button, action.button) // 鼠标长按切换动作（仅在按下时到达此处）
             is MappedAction.MouseSwapToggle -> handleMouseSwapToggle() // 鼠标长按交换动作：在左右键长按间交换
             is MappedAction.MouseReleaseAll -> handleMouseReleaseAll() // 释放鼠标所有长按动作：解除全部长按锁存
+            is MappedAction.MouseRightLockToggle -> handleRightLockToggle() // 右键锁定切换动作：按当前状态锁定/解锁视角
             is MappedAction.MouseClickSequence -> handleMouseClickSequence() // 交互键动作：临时释放锁存→左键点击→右键点击→恢复锁存
             is MappedAction.MouseFineMove -> enterFineMove(button) // 精细移动动作：按住期间缩小右摇杆鼠标位移
             is MappedAction.MouseFastMove -> enterFastMove(button) // 快速移动动作：按住期间放大右摇杆鼠标位移
@@ -561,6 +591,7 @@ class KeyboardMouseMapper( // 语法：class 类声明，定义键盘/鼠标映�
             is MappedAction.MouseToggle -> handleMouseToggle(button, action.button) // 鼠标长按锁存：切换锁存状态
             is MappedAction.MouseSwapToggle -> handleMouseSwapToggle() // 鼠标长按交换：交换左右键锁存
             is MappedAction.MouseReleaseAll -> handleMouseReleaseAll() // 释放鼠标所有长按：解除全部锁存
+            is MappedAction.MouseRightLockToggle -> handleRightLockToggle() // 右键锁定切换：按当前状态锁定/解锁视角
             is MappedAction.MouseClickSequence -> handleMouseClickSequence() // 交互键：临时释放锁存后左右键依次点击
             is MappedAction.Turn180 -> turnByPixels(action.pixels, action.stepMs) // 定角转身：一次注入整段水平位移（长按/短按都走这里）
             is MappedAction.MouseScrollUp -> handleMouseScroll(SCROLL_DELTA) // 滚轮上滚：发送一次上滚
@@ -950,18 +981,137 @@ class KeyboardMouseMapper( // 语法：class 类声明，定义键盘/鼠标映�
      * 使悬浮窗边框恢复默认色。集合为空（无任何长按锁存）时不做任何处理。
      */
     private fun handleMouseReleaseAll() { // 语法：private fun 私有函数，释放所有鼠标长按锁存
-        if (toggledMouseButtons.isEmpty()) { // 无任何长按锁存
+        if (toggledMouseButtons.isEmpty() && remoteLockedButtons.isEmpty()) { // 本地与远端都没有长按锁存
             Log.d(TAG, "Release all MouseToggles: none active, ignored") // 打印忽略日志
             return // 直接返回
         } // 结束空集合判断
-        val released = toggledMouseButtons.toList() // 复制当前锁存按钮列表（复制后逐个释放，避免遍历中修改）
+        val released = toggledMouseButtons.toList() // 复制当前本地锁存按钮列表（复制后逐个释放，避免遍历中修改）
         released.forEach { button -> // 逐个释放（语法：forEach 遍历 + lambda）
             setMouseLockState(button, false) // 释放该按钮（右键会改发 F12 解锁）——解锁立即发出
         } // 结束逐个释放遍历
+        // 远端（Rust 快捷键）锁存只能由客户端松开：通知客户端解锁并延时居中，
+        // 避免 APK 再发一条无意义的 MouseUp
+        if (remoteLockedButtons.isNotEmpty()) onRequestRemoteUnlock?.invoke() // 语法：?. 安全调用
         // 解锁之后再居中，且延后 [unlockCenterDelayMs]：让游戏先处理完退出 mouselook 再放指针
         mainHandler.postDelayed({ injector.sendMouseCenterExact() }, unlockCenterDelayMs) // 延时居中央（语法：postDelayed 延迟投递）
-        Log.d(TAG, "Release all MouseToggles: $released") // 打印释放日志
+        Log.d(TAG, "Release all MouseToggles: $released, remote=$remoteLockedButtons") // 打印释放日志
     } // 结束 handleMouseReleaseAll 函数
+
+    /**
+     * 处理「右键锁定切换」动作（视角锁定 / mouselook 开关）
+     *
+     * 按当前状态执行以下动作之一：
+     * | 当前状态 | 行为 |
+     * | --- | --- |
+     * | 右键未锁定 | 光标停到屏幕左下角之外，发送 MouseDown(RIGHT) 进入视角锁定 |
+     * | 右键已锁定 | 松开右键，等待 [unlockCenterDelayMs] 让游戏退出 mouselook，再把光标移到屏幕正中央 |
+     * | 左键锁存中 | 不执行任何动作（手柄按键本身不会透传给游戏） |
+     *
+     * 锁存状态取本地与远端（Rust 上报）的合并视图 [isMouseLocked]。解锁时两套锁存
+     * 各自独立解除：本地有锁存就发真实 MouseUp，远端有锁存就发 0x26 让客户端松开，
+     * 不能只解其中一份，否则合并视图会一直停留在「锁定」。
+     */
+    private fun handleRightLockToggle() { // 语法：private fun 私有函数，右键锁定切换
+        if (isMouseLocked(MouseButton.LEFT)) { // 左键锁存中：什么也不做
+            Log.d(TAG, "RightLockToggle: left button locked, ignored") // 打印忽略日志
+            return // 直接返回
+        } // 结束左键锁存判断
+        if (isMouseLocked(MouseButton.RIGHT)) { // 右键已锁定 → 解锁 + 延时居中
+            // 锁存分本地与远端两份，必须都解除：任一残留都会让合并视图继续显示「锁定」，
+            // 边框不恢复、WASD 自动锁定被跳过，只能再按一次客户端快捷键才能自愈
+            if (toggledMouseButtons.contains(MouseButton.RIGHT)) { // 本地锁存：发送真实 MouseUp
+                setMouseLockState(MouseButton.RIGHT, false) // 释放右键——立即发出
+            } // 结束本地锁存判断
+            if (remoteLockedButtons.contains(MouseButton.RIGHT)) { // 远端（Rust）锁存：通知客户端松开
+                onRequestRemoteUnlock?.invoke() // 0x26：客户端松开并自行延时居中
+            } // 结束远端锁存判断
+            mainHandler.postDelayed({ injector.sendMouseCenterExact() }, unlockCenterDelayMs) // 延时把光标移到屏幕正中央
+            Log.d(TAG, "RightLockToggle: MouseUp RIGHT, center after ${unlockCenterDelayMs}ms") // 打印解锁日志
+        } else { // 未锁定 → 停到屏幕外 + 按下右键
+            injector.sendMouseCenter(true) // 固定停到屏幕左下角之外（锁定瞬间视角不会从偏移位置开始漂移）
+            setMouseLockState(MouseButton.RIGHT, true) // 锁存右键（发送 MouseDown）
+            Log.d(TAG, "RightLockToggle: MouseDown RIGHT (cursor parked offscreen)") // 打印锁定日志
+        } // 结束状态分支
+    } // 结束 handleRightLockToggle 函数
+
+    /**
+     * 应用 Windows 客户端上报的锁存状态（0x28 报文）
+     *
+     * 只更新远端记录与悬浮窗边框，不注入任何鼠标事件：客户端已经发出过真实的
+     * 按下/松开事件，APK 再发一次会造成重复按键。
+     *
+     * @param leftLocked 客户端侧左键是否处于锁存
+     * @param rightLocked 客户端侧右键是否处于锁存
+     */
+    fun applyRemoteLockState(leftLocked: Boolean, rightLocked: Boolean) { // 语法：fun 公开函数，供服务在收到上报时调用
+        applyRemoteLock(MouseButton.LEFT, leftLocked) // 同步左键
+        applyRemoteLock(MouseButton.RIGHT, rightLocked) // 同步右键
+        if (pendingLockResync) { // 刚（重）连接：客户端状态已就绪，可以对齐物理鼠标状态
+            pendingLockResync = false // 只对齐一次
+            resyncMouseLockState() // 重放本地锁存，修复断线期间丢失的按下/松开
+        } // 结束待同步判断
+    } // 结束 applyRemoteLockState 函数
+
+    /**
+     * 客户端已连接（含重连）
+     *
+     * 断线期间的鼠标报文会丢失，两端物理状态可能不一致。这里只做标记，
+     * 等客户端回传一次 0x28 锁存状态后再对齐（见 [applyRemoteLockState]），
+     * 避免在不知道客户端锁存时贸然补发 MouseUp 把客户端自己的锁定解开。
+     */
+    fun onBridgeConnected() { // 语法：fun 公开函数，由服务在客户端连接时调用
+        pendingLockResync = true // 标记待同步（等首次 0x28）
+    } // 结束 onBridgeConnected 函数
+
+    /**
+     * 客户端已断开
+     *
+     * 远端锁存记录只能靠上报更新，断开后不会再有上报：继续保留会让合并视图
+     * 永远停在「锁定」，导致边框不恢复、WASD 自动锁定被跳过，所以这里清空。
+     * 本地锁存（[toggledMouseButtons]）是 APK 自己的状态，不动。
+     */
+    fun onBridgeDisconnected() { // 语法：fun 公开函数，由服务在客户端断开时调用
+        pendingLockResync = false // 断开后不能再等 0x28
+        if (remoteLockedButtons.isEmpty()) return // 无远端锁存则无需清理
+        remoteLockedButtons.clear() // 清空远端锁存记录
+        refreshToggleNotify(MouseButton.LEFT) // 按合并视图刷新左键边框
+        refreshToggleNotify(MouseButton.RIGHT) // 按合并视图刷新右键边框
+        Log.d(TAG, "Bridge disconnected: remote lock state cleared") // 打印清理日志
+    } // 结束 onBridgeDisconnected 函数
+
+    /**
+     * 按「本地锁存 + 远端锁存」对齐鼠标按钮的物理按下状态（重连后调用）
+     *
+     * - 本地锁存 → 补发 MouseDown，确保断线期间未送达的按下生效
+     * - 两端都未锁 → 补发 MouseUp，确保断线期间残留的按下被释放
+     * - 仅远端锁存 → 不干预（客户端自己维护它的锁存）
+     *
+     * 正被按住（如 MouseClick 按住）的按钮跳过，避免打断进行中的按键。
+     */
+    private fun resyncMouseLockState() { // 语法：private fun 私有函数
+        listOf(MouseButton.LEFT, MouseButton.RIGHT).forEach { button -> // 逐个按钮对齐
+            if (pressedMouseButtons.containsValue(button)) return@forEach // 正在按住：跳过（语法：return@forEach 结束本次循环）
+            when { // 语法：when 无参数分支
+                toggledMouseButtons.contains(button) -> injector.sendMouseDown(button, latch = true) // 本地锁存：恢复物理按下并同步客户端标志
+                !remoteLockedButtons.contains(button) -> injector.sendMouseUp(button, latch = true) // 两端都未锁：确保释放并同步客户端标志
+                else -> {} // 仅远端锁存：客户端维护，不干预
+            } // 结束状态分支
+        } // 结束逐按钮对齐
+        Log.d(TAG, "Resync mouse lock: local=$toggledMouseButtons remote=$remoteLockedButtons") // 打印重同步日志
+    } // 结束 resyncMouseLockState 函数
+
+    /** 更新单个按钮的远端锁存记录，并在合并视图变化时通知悬浮窗 */
+    private fun applyRemoteLock(button: MouseButton, locked: Boolean) { // 语法：private fun 私有函数
+        val changed = if (locked) remoteLockedButtons.add(button) else remoteLockedButtons.remove(button) // 更新集合（语法：if 表达式）
+        if (changed) { // 状态确有变化才通知
+            refreshToggleNotify(button) // 按合并视图回调边框高亮
+            Log.d(TAG, "Remote lock state: $button=$locked") // 打印远端状态日志
+        } // 结束变化判断
+    } // 结束 applyRemoteLock 函数
+
+    /** 按钮是否处于锁存（本地锁存 或 客户端上报的远端锁存） */
+    private fun isMouseLocked(button: MouseButton): Boolean = // 语法：表达式体函数 + || 逻辑或
+        toggledMouseButtons.contains(button) || remoteLockedButtons.contains(button) // 合并两套锁存
 
     /**
      * 记录当前激活的操作层「触发过鼠标左右键动作」的手柄按钮
@@ -1111,15 +1261,29 @@ class KeyboardMouseMapper( // 语法：class 类声明，定义键盘/鼠标映�
     private fun setMouseLockState(button: MouseButton, locked: Boolean) { // 语法：private fun 私有函数，设置鼠标长按锁存状态
         if (toggledMouseButtons.contains(button) == locked) return // 状态一致，无需变更
         if (locked) { // 需要锁定
-            injector.sendMouseDown(button) // 锁定：发送真实鼠标按下
+            injector.sendMouseDown(button, latch = true) // 锁定：发送真实鼠标按下（标记为锁存，客户端同步其标志）
             toggledMouseButtons.add(button) // 记入锁存集合
-            onMouseToggleChanged?.invoke(button, true) // 通知回调已锁定（语法：?. 安全调用）
+            refreshToggleNotify(button) // 通知回调（按本地+远端合并视图）
         } else { // 需要释放
-            injector.sendMouseUp(button) // 解锁：发送真实鼠标松开
+            injector.sendMouseUp(button, latch = true) // 解锁：发送真实鼠标松开（客户端同步清除其标志）
             toggledMouseButtons.remove(button) // 移出锁存集合
-            onMouseToggleChanged?.invoke(button, false) // 通知回调已释放
+            refreshToggleNotify(button) // 通知回调（远端仍锁存时保持高亮）
         } // 结束状态分支
     } // 结束 setMouseLockState 函数
+
+    /**
+     * 按「本地锁存 + 远端锁存」的合并状态刷新外部通知
+     *
+     * 只在合并状态真正变化时回调 [onMouseToggleChanged]，避免本地解锁但远端仍锁存时
+     * 错误地把悬浮窗边框恢复成普通色。
+     */
+    private fun refreshToggleNotify(button: MouseButton) { // 语法：private fun 私有函数
+        val locked = isMouseLocked(button) // 合并后的锁定状态
+        val wasLocked = notifiedLockedButtons.contains(button) // 上次通知过的状态
+        if (locked == wasLocked) return // 状态未变，无需通知
+        if (locked) notifiedLockedButtons.add(button) else notifiedLockedButtons.remove(button) // 记录本次状态
+        onMouseToggleChanged?.invoke(button, locked) // 通知外部更新悬浮窗边框（语法：?. 安全调用）
+    } // 结束 refreshToggleNotify 函数
 
     /**
      * 处理鼠标交互键动作
@@ -1168,8 +1332,8 @@ class KeyboardMouseMapper( // 语法：class 类声明，定义键盘/鼠标映�
      * 需再按一次映射到右键长按的手柄键解锁（见 [handleMouseToggle]）。
      */
     private fun ensureRightButtonLockedOnMove() { // 语法：private fun 私有函数，左摇杆移动时自动锁定鼠标右键
-        if (toggledMouseButtons.contains(MouseButton.LEFT)) return // 左键长按锁存时不做自动锁定右键（避免与左键锁存冲突）
-        if (toggledMouseButtons.contains(MouseButton.RIGHT)) return // 右键已锁定：直接返回不重复锁定（语法：if 单行返回）
+        if (isMouseLocked(MouseButton.LEFT)) return // 左键长按锁存时不做自动锁定右键（避免与左键锁存冲突）
+        if (isMouseLocked(MouseButton.RIGHT)) return // 右键已锁定（含客户端上报的锁存）：不重复锁定（语法：if 单行返回）
         if (pressedMouseButtons.containsValue(MouseButton.RIGHT)) return // 右键正被临时按住（MouseClick 动作）：不重复按下，避免其松开时打断锁定态（语法：containsValue 映射值包含判断）
         // 开关开启时把鼠标光标归位（落点由「居中落点」开关决定：屏幕外下方 / 屏幕正中央）
         if (steamInput.profile.globalSettings.wasdAutoCenterMouse) injector.sendMouseCenter(steamInput.profile.globalSettings.cursorParkOffscreen) // 避免锁定瞬间视角从偏移位置开始漂移（语法：if 单行语句）

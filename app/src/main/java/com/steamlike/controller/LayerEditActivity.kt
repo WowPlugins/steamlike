@@ -808,9 +808,10 @@ class LayerEditActivity : AppCompatActivity() { // 定义操作层编辑 Activit
         // 0=未设置(取消映射), 1=键盘按键, 2=鼠标点击, 3=鼠标长按, 4=切换操作层,
         // 5=滚轮上滚, 6=滚轮下滚, 7=切换悬浮窗, 8=切换键盘, 9=切换捕获, 10=切换层+按键, 11=数字小键盘, 12=鼠标长按交换,
         // 13=释放鼠标长按, 14=交互键, 15=鼠标精细移动, 16=回车+切换键盘, 17=鼠标快速移动, 18=180°转身
+        // 13=释放鼠标长按, 14=交互键, 15=鼠标精细移动, 16=回车+切换键盘, 17=鼠标快速移动, 18=180°转身, 19=右键锁定切换
         val actionTypes = listOf("未设置", "键盘按键", "鼠标点击", "鼠标长按", "切换操作层", // 定义动作类型选项列表（语法：listOf=列表工厂）
             "滚轮上滚", "滚轮下滚", "切换悬浮窗", "切换键盘", "切换捕获", "切换层+按键", "数字小键盘", "鼠标长按交换", "释放鼠标长按", "交互键", // 动作类型列表续行
-            "鼠标精细移动", "回车+切换键盘", "鼠标快速移动", "180°转身") // 动作类型列表续行（共 19 种）
+            "鼠标精细移动", "回车+切换键盘", "鼠标快速移动", "180°转身", "右键锁定切换") // 动作类型列表续行（共 20 种）
         // 设置动作类型下拉框的适配器（语法：ArrayAdapter=数组适配器，also{}=作用域函数）
         spinnerActionType.adapter = ArrayAdapter(this, android.R.layout.simple_spinner_item, actionTypes).also {
             it.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item) // 设置下拉展开项的布局资源
@@ -824,7 +825,7 @@ class LayerEditActivity : AppCompatActivity() { // 定义操作层编辑 Activit
 
         // ===== 长按动作类型 Spinner =====
         // 长按可选类型：排除「切换操作层」「切层+按键」（层切换按键保持原有「按住即切层」语义）
-        val longPressTypeIndices = listOf(0, 1, 2, 3, 5, 6, 7, 8, 9, 11, 12, 13, 14, 15, 16, 17, 18) // 长按可选动作类型索引列表；含精细移动(15)、快速移动(17)、转身(18)
+        val longPressTypeIndices = listOf(0, 1, 2, 3, 5, 6, 7, 8, 9, 11, 12, 13, 14, 15, 16, 17, 18, 19) // 长按可选动作类型索引列表；含精细移动(15)、快速移动(17)、转身(18)、右键锁定切换(19)
         spinnerLongPressType.adapter = ArrayAdapter(this, android.R.layout.simple_spinner_item, // 设置长按类型下拉框适配器
             longPressTypeIndices.map { actionTypes[it] }).also { // 用可选项索引映射出显示名（语法：map lambda）
             it.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item) // 设置下拉展开项的布局资源
@@ -898,6 +899,7 @@ class LayerEditActivity : AppCompatActivity() { // 定义操作层编辑 Activit
             is MappedAction.MouseToggle -> position == 3 // 鼠标长按 → 类型 3
             is MappedAction.MouseSwapToggle -> position == 12 // 鼠标长按交换 → 类型 12
             is MappedAction.MouseReleaseAll -> position == 13 // 释放鼠标长按 → 类型 13
+            is MappedAction.MouseRightLockToggle -> position == 19 // 右键锁定切换 → 类型 19
             is MappedAction.MouseClickSequence -> position == 14 // 交互键 → 类型 14
             is MappedAction.MouseFineMove -> position == 15 // 鼠标精细移动 → 类型 15
             is MappedAction.MouseFastMove -> position == 17 // 鼠标快速移动 → 类型 17
@@ -956,6 +958,7 @@ class LayerEditActivity : AppCompatActivity() { // 定义操作层编辑 Activit
                 initialActionType == 15 || // 或为鼠标精细移动(15)
                 initialActionType == 17 || // 或为鼠标快速移动(17)
                 initialActionType == 18 || // 或为定角转身(18)
+                initialActionType == 19 || // 或为右键锁定切换(19)
                 initialActionType == 16) // 或为回车+切换键盘(16)
                 View.GONE else View.VISIBLE // 上述类型隐藏子命令区，否则显示（语法：if...else 表达式，View.GONE=隐藏且不占位）
 
@@ -1007,6 +1010,7 @@ class LayerEditActivity : AppCompatActivity() { // 定义操作层编辑 Activit
                         position == 15 || // 或为鼠标精细移动(15)
                         position == 17 || // 或为鼠标快速移动(17)
                         position == 18 || // 或为定角转身(18)
+                        position == 19 || // 或为右键锁定切换(19)
                         position == 16) // 或为回车+切换键盘(16)
                         View.GONE else View.VISIBLE // 隐藏子命令区，否则显示
                 // 额外按键区域仅「切换层+按键」类型显示
@@ -1746,6 +1750,7 @@ class LayerEditActivity : AppCompatActivity() { // 定义操作层编辑 Activit
         is MappedAction.NumpadKey -> 11 // 数字小键盘 → 类型 11
         is MappedAction.MouseSwapToggle -> 12 // 鼠标长按交换 → 类型 12
         is MappedAction.MouseReleaseAll -> 13 // 释放鼠标长按 → 类型 13
+        is MappedAction.MouseRightLockToggle -> 19 // 右键锁定切换 → 类型 19
         is MappedAction.MouseClickSequence -> 14 // 交互键 → 类型 14
         is MappedAction.MouseFineMove -> 15 // 鼠标精细移动 → 类型 15
         is MappedAction.MouseFastMove -> 17 // 鼠标快速移动 → 类型 17
@@ -1846,6 +1851,10 @@ class LayerEditActivity : AppCompatActivity() { // 定义操作层编辑 Activit
                 label.text = "按下立即转身（像素越大转得越多，800px≈180°）" // 更新动作标签文字
                 turnOptions.map { it.first } // 返回转身档位选项（方向 + 像素）
             } // 结束定角转身分支
+            19 -> {  // 右键锁定切换 // 右键锁定切换类型分支
+                label.text = "按下切换右键锁定：未锁定→屏幕外并按住右键；已锁定→松开并居中" // 更新动作标签文字
+                listOf("（右键锁定切换）") // 返回占位选项
+            } // 结束右键锁定切换分支
             else -> emptyList() // 其它类型返回空列表（语法：else=默认分支）
         } // 结束选项列表 when 表达式
 
@@ -1904,6 +1913,7 @@ class LayerEditActivity : AppCompatActivity() { // 定义操作层编辑 Activit
                     ?: turnOptions.getOrElse(valuePosition) { turnOptions[1] }.second, // 档位像素（越界回退 800）
                 stepMs.coerceIn(1, 50) // 每步间隔限制 1~50ms
             ) // 结束 Turn180 构造
+            18 -> MappedAction.MouseRightLockToggle // 右键锁定切换动作：按当前状态锁定/解锁右键
             4 -> MappedAction.MouseScrollUp   // 滚轮上滚 // 滚轮上滚动作
             5 -> MappedAction.MouseScrollDown  // 滚轮下滚 // 滚轮下滚动作
             6 -> MappedAction.ToggleOverlay   // 切换悬浮窗 // 切换悬浮窗动作

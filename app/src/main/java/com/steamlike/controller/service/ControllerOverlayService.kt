@@ -524,12 +524,16 @@ class ControllerOverlayService : Service() {  // class=类声明；继承 Servic
                     Log.i(TAG, "Client connected: $addr")  // 字符串模板 "$var"=插值变量；打印客户端连接日志
                     updateStatus("✅ 客户端已连接: $addr")  // 字符串模板 "$var"=插值变量；更新状态文本
                     broadcastClientStatus("客户端: $addr", true)  // 字符串模板 "$var"=插值变量；广播客户端连接状态
+                    // 切主线程标记「待同步」：等客户端回传锁存状态后对齐物理鼠标（断线期间报文会丢失）
+                    mainHandler.post { mapper?.onBridgeConnected() }  // ?.=安全调用；标记重连同步
                 }  // 结束 onClientConnected lambda
                 bridgeServer?.onClientDisconnected = { addr ->  // ?.=安全调用；lambda {addr->}；设置客户端断开回调
                     Log.i(TAG, "Client disconnected: $addr")  // 字符串模板 "$var"=插值变量；打印客户端断开日志
                     val msg = waitMessage()  // val=只读变量；生成等待连接状态文本
                     updateStatus(msg)  // 更新状态文本
                     broadcastClientStatus(msg, false)  // 广播断开状态
+                    // 清空远端锁存记录：断开后不会再有 0x28 上报，残留会让边框和 WASD 判断卡住
+                    mainHandler.post { mapper?.onBridgeDisconnected() }  // ?.=安全调用；清理远端锁存
                 }  // 结束 onClientDisconnected lambda
                 bridgeServer?.onServerError = { msg ->  // ?.=安全调用；lambda {msg->}；设置服务器错误回调
                     Log.e(TAG, "Server error: $msg")  // 字符串模板 "$var"=插值变量；打印服务器错误日志
@@ -565,6 +569,12 @@ class ControllerOverlayService : Service() {  // class=类声明；继承 Servic
                     Log.i(TAG, "0x25 show keyboard request received")  // 记录反向通知到达
                     mainHandler.post { showSystemKeyboard() }  // 回主线程弹出键盘（已在显示时忽略）
                 }  // 结束 onShowKeyboardRequest lambda
+
+                // 客户端上报左右键锁存状态（Rust 快捷键/映射锁定右键时），同步到映射器
+                bridgeServer?.onLockStateReport = { leftLocked, rightLocked ->  // ?.=安全调用；lambda {leftLocked, rightLocked->}
+                    // 回调在网络线程：切回主线程，与手柄事件共用同一套锁存集合，避免并发修改
+                    mainHandler.post { mapper?.applyRemoteLockState(leftLocked, rightLocked) }  // ?.=安全调用；合并远端锁存状态
+                }  // 结束 onLockStateReport lambda
 
                 if (bridgeServer?.start() != true) {  // ?.=安全调用；if 判断：服务器启动失败
                     Log.e(TAG, "TCP server start failed")  // 打印服务器启动失败日志
@@ -647,6 +657,11 @@ class ControllerOverlayService : Service() {  // class=类声明；继承 Servic
                 mapper?.onMouseToggleChanged = { mouseButton, active ->  // ?.=安全调用；lambda {mouseButton, active->}；设置鼠标长按切换回调
                     onMouseToggleStateChanged(mouseButton, active)  // 更新锁存集合并刷新悬浮窗边框颜色
                 }  // 结束 onMouseToggleChanged lambda
+
+                // 仅远端（Rust 快捷键）锁存时，APK 无法直接松开：请求客户端解锁
+                mapper?.onRequestRemoteUnlock = {  // ?.=安全调用；右键锁定切换/释放全部遇到远端锁存时触发
+                    if (bridgeServer?.hasClients() == true) bridgeServer?.sendUnlockMouse()  // 发 0x26，由客户端松开并延时居中
+                }  // 结束 onRequestRemoteUnlock lambda
 
                 if (mapper?.start() == true) {  // ?.=安全调用；if 判断：映射器启动成功
                     Log.i(TAG, "Mapper started successfully")  // 打印映射器启动成功日志

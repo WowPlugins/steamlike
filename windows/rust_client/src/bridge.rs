@@ -3,7 +3,7 @@
 //! 协议：8 字节定长包
 //! - 0x01 键盘事件：Byte1-2 VK(uint16 LE)，Byte3 是否按下
 //! - 0x02 鼠标移动：Byte1-2 dx(int16 LE)，Byte3-4 dy(int16 LE)
-//! - 0x03 鼠标按钮：Byte1 按钮(0左/1右/2中/3前进/4后退)，Byte2 是否按下
+//! - 0x03 鼠标按钮：Byte1 按钮(0左/1右/2中/3前进/4后退)，Byte2 是否按下，Byte3 锁存标记(1=同步本地锁存标志)
 //! - 0x04 鼠标滚轮：Byte1-2 delta(int16 LE)
 //! - 0x05 释放所有按键
 //! - 0x06 心跳（忽略）
@@ -19,6 +19,7 @@
 //! - 0x23 切换安卓键盘（exe → APK）：8 字节定长包、无载荷，用于映射动作反向通知
 //! - 0x25 显示安卓键盘（exe → APK）：8 字节定长包、无载荷，仅弹出键盘（已在显示时忽略）
 //! - 0x26 解锁鼠标锁定（APK → exe）：8 字节定长包、无载荷，解除左右键长按锁定并延时居中
+//! - 0x28 鼠标锁存状态（exe → APK）：Byte1=右键锁存，Byte2=左键锁存，状态变化时上报
 //! - 0x22 Unicode 文本（APK → exe）：8 字节头之后跟随 UTF-8 正文，用于软键盘输入中文
 //!   头字节下标 4..7 为 UTF-8 字节长度（uint32 小端），其后紧接文本正文
 //!   exe 收到后写入剪贴板并注入 Ctrl+V 粘贴（直接 Unicode 注入在 WoW 中文界面会乱码）
@@ -29,8 +30,8 @@ use std::sync::atomic::Ordering;
 use std::sync::Mutex;
 use std::time::Duration;
 
-use crate::runtime::{self, log, set_status, BRIDGE_TARGET, CONNECTED, WANT_CONNECT};
-use crate::win;
+use crate::runtime::{self, log, set_status, BRIDGE_TARGET, CONNECTED, RT, WANT_CONNECT};
+use crate::win::{self, BTN_LEFT, BTN_RIGHT};
 
 const PACKET_SIZE: usize = 8;
 
@@ -62,6 +63,24 @@ pub fn send_show_keyboard() {
     }
     let mut packet = [0u8; PACKET_SIZE];
     packet[0] = 0x25;
+    if let Ok(mut queue) = OUTBOX.lock() {
+        queue.push(packet.to_vec());
+    }
+}
+
+/// 上报鼠标锁存状态（0x28，8 字节定长包）
+///
+/// Byte1 = 右键是否锁存，Byte2 = 左键是否锁存。锁存由本客户端维护
+/// （WASD 自动锁定 / 快捷键 / 映射动作），APK 只知道自己那边的锁存，
+/// 需要这条反向报文来统一「解锁全部」与悬浮窗边框高亮。
+fn send_lock_state(right_locked: bool, left_locked: bool) {
+    if !CONNECTED.load(Ordering::Relaxed) {
+        return;
+    }
+    let mut packet = [0u8; PACKET_SIZE];
+    packet[0] = 0x28;
+    packet[1] = right_locked as u8;
+    packet[2] = left_locked as u8;
     if let Ok(mut queue) = OUTBOX.lock() {
         queue.push(packet.to_vec());
     }
@@ -131,6 +150,8 @@ fn bridge_thread() {
     let mut stream: Option<TcpStream> = None;
     let mut connected_to: Option<(String, u16)> = None;
     let mut buf: Vec<u8> = Vec::with_capacity(4096);
+    // 上一次上报给 APK 的锁存状态（None = 尚未上报，连接建立后强制上报一次）
+    let mut last_lock_state: Option<(bool, bool)> = None;
 
     loop {
         if !WANT_CONNECT.load(Ordering::Relaxed) {
@@ -138,6 +159,7 @@ fn bridge_thread() {
                 stream = None;
                 connected_to = None;
                 buf.clear();
+                last_lock_state = None;
                 CONNECTED.store(false, Ordering::Relaxed);
                 log("[网络] 已断开与 APK 服务器的连接");
             }
@@ -153,6 +175,7 @@ fn bridge_thread() {
             stream = None;
             connected_to = None;
             buf.clear();
+            last_lock_state = None;
             CONNECTED.store(false, Ordering::Relaxed);
         }
 
@@ -173,6 +196,8 @@ fn bridge_thread() {
                     stream = Some(s);
                     connected_to = Some(target.clone());
                     CONNECTED.store(true, Ordering::Relaxed);
+                    // 新连接建立后强制上报一次当前锁存状态
+                    last_lock_state = None;
                     set_status(format!("已连接 {}:{}", target.0, target.1));
                     log(format!("[网络] 已连接 APK 服务器 {}:{}", target.0, target.1));
                 }
@@ -185,6 +210,15 @@ fn bridge_thread() {
         }
 
         if let Some(s) = stream.as_mut() {
+            // 锁存状态变化时上报 APK（钩子线程只改原子量，这里无锁读取）
+            let lock_state = (
+                RT.left_locked.load(Ordering::Relaxed),
+                RT.right_locked.load(Ordering::Relaxed),
+            );
+            if last_lock_state != Some(lock_state) {
+                last_lock_state = Some(lock_state);
+                send_lock_state(lock_state.1, lock_state.0);
+            }
             // 先把剪贴板文本队列发出去（read 有 200ms 超时，最长延迟可接受）
             let sent = flush_outbox(s);
             if !sent || !pump(s, &mut buf) {
@@ -253,7 +287,21 @@ fn process_packet(data: &[u8; PACKET_SIZE]) {
             let dy = i16::from_le_bytes([data[3], data[4]]) as i32;
             win::inject_mouse_move(dx, dy);
         }
-        0x03 => win::inject_mouse_button(data[1], data[2] != 0),
+        0x03 => {
+            let down = data[2] != 0;
+            win::inject_mouse_button(data[1], down);
+            // Byte3=1：APK 的锁存操作（长按/右键锁定切换/交互键末尾恢复）。
+            // 事件本身带 MAGIC 标记，鼠标钩子只放行不记状态；这里主动同步锁存标志，
+            // 让 WASD 自动锁定（已锁则跳过）和 0x28 状态上报能感知 APK 的锁存，
+            // 否则 Rust 会认为未锁定，在 WASD 时再次归位光标并重复按下右键
+            if data[3] != 0 {
+                if data[1] == BTN_LEFT {
+                    RT.left_locked.store(down, Ordering::Relaxed);
+                } else if data[1] == BTN_RIGHT {
+                    RT.right_locked.store(down, Ordering::Relaxed);
+                }
+            }
+        }
         0x04 => {
             let delta = i16::from_le_bytes([data[1], data[2]]);
             win::inject_mouse_wheel(delta);

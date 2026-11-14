@@ -583,6 +583,8 @@ impl eframe::App for App {
         RT.interaction_vk
             .store(self.cfg.interaction_vk, Ordering::SeqCst);
         RT.swap_vk.store(self.cfg.swap_vk, Ordering::SeqCst);
+        RT.right_lock_vk
+            .store(self.cfg.right_lock_vk, Ordering::SeqCst);
         RT.long_press_ms
             .store(self.cfg.long_press_ms.max(50), Ordering::SeqCst);
         RT.cursor_park_offscreen
@@ -887,6 +889,44 @@ impl App {
                     *dirty = true;
                 }
             });
+            // 右键锁定切换键单独一行：与上面三个控件同排会超出小窗口宽度
+            ui.horizontal(|ui| {
+                ui.label("右键锁定键：");
+                let before = self.cfg.right_lock_vk;
+                let text = if self.cfg.right_lock_vk == 0 {
+                    "未设置".to_string()
+                } else {
+                    key_name(self.cfg.right_lock_vk)
+                };
+                Self::choice_dropdown(ui, "right_lock_key", &text, |ui| {
+                    let mut chosen = false;
+                    if ui
+                        .selectable_label(self.cfg.right_lock_vk == 0, "未设置")
+                        .clicked()
+                    {
+                        self.cfg.right_lock_vk = 0;
+                        chosen = true;
+                    }
+                    for (vk, name) in KEY_CHOICES {
+                        if ui
+                            .selectable_label(self.cfg.right_lock_vk == *vk, *name)
+                            .clicked()
+                        {
+                            self.cfg.right_lock_vk = *vk;
+                            chosen = true;
+                        }
+                    }
+                    chosen
+                });
+                if self.cfg.right_lock_vk != before {
+                    *dirty = true;
+                }
+            });
+            // 说明放在单独一行：与下拉框同排会在窄窗口里被挤出窗口
+            ui.label(
+                egui::RichText::new("右键锁定键：按下切换右键视角锁定（左键锁存中时不生效）")
+                    .weak(),
+            );
             if ui
                 .checkbox(
                     &mut self.cfg.cursor_park_offscreen,
@@ -899,7 +939,7 @@ impl App {
             ui.label(
                 egui::RichText::new(
                     "拦截开启后：WASD 自动锁定右键；交互键执行左右键点击且不透传；\
-                     长按交换键切换左右键长按；已锁定一侧的点击用于解锁；鼠标移动改发相对移动。",
+                     长按交换键切换左右键长按；右键锁定键切换视角锁定；已锁定一侧的点击用于解锁；鼠标移动改发相对移动。",
                 )
                 .weak(),
             );
@@ -1155,6 +1195,11 @@ impl App {
                 self.edit_tap_value = 0;
                 self.edit_tap_subs.clear();
             }
+            crate::config::MappedAction::RightLockToggle => {
+                self.edit_tap_type = 15;
+                self.edit_tap_value = 0;
+                self.edit_tap_subs.clear();
+            }
             crate::config::MappedAction::Interact => {
                 self.edit_tap_type = 9;
                 self.edit_tap_value = 0;
@@ -1236,6 +1281,11 @@ impl App {
             }
             crate::config::MappedAction::MouseReleaseAll => {
                 self.edit_long_press_type = 8;
+                self.edit_long_press_value = 0;
+                self.edit_long_press_subs.clear();
+            }
+            crate::config::MappedAction::RightLockToggle => {
+                self.edit_long_press_type = 15;
                 self.edit_long_press_value = 0;
                 self.edit_long_press_subs.clear();
             }
@@ -1344,6 +1394,7 @@ impl App {
                 pixels: value as i32,
                 step_ms: turn_step_ms.clamp(1, 50),
             },
+            15 => crate::config::MappedAction::RightLockToggle,
             _ => crate::config::MappedAction::None,
         }
     }
@@ -1356,7 +1407,7 @@ impl App {
             "未设置", "键盘按键", "数字小键盘", "鼠标点击", "鼠标长按",
             "滚轮上滚", "滚轮下滚", "鼠标长按交换", "释放鼠标长按",
             "交互键", "悬浮窗展开/收起", "回车+切换键盘", "显示安卓键盘",
-            "解锁+居中+按键", "快速转身",
+            "解锁+居中+按键", "快速转身", "右键锁定切换",
         ];
         // 长按与短按支持完全相同的动作类型
         let long_press_types = action_types;

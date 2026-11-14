@@ -98,7 +98,7 @@ class BridgeInputInjector(  // 语法：class 声明类；桥接输入注入器�
         server.sendMappedKeyEvent(vkCode, isDown = false)  // 发送释放事件
     }  // 结束 sendVkKeyPress 函数
 
-    override fun sendMouseDown(button: MouseButton) {  // 语法：override 覆写；发送鼠标按钮按下事件
+    override fun sendMouseDown(button: MouseButton, latch: Boolean) {  // 语法：override 覆写；发送鼠标按钮按下事件
         val btnId = when (button) {  // 语法：val + when 分支表达式；把鼠标按钮枚举映射为协议按钮 ID
             MouseButton.LEFT -> 0  // 左键映射为 ID 0
             MouseButton.RIGHT -> 1  // 右键映射为 ID 1
@@ -107,10 +107,10 @@ class BridgeInputInjector(  // 语法：class 声明类；桥接输入注入器�
             MouseButton.BACK -> 4  // 后退键映射为 ID 4
         }  // 结束 when 分支
         pressedButtons.add(button)  // 记录该按钮处于按下状态
-        server.sendMouseButton(btnId, isDown = true)  // 语法：命名参数 isDown=true；经 TCP 发送鼠标按下事件
+        server.sendMouseButton(btnId, isDown = true, latch = latch)  // 经 TCP 发送鼠标按下事件（锁存标记随包下发）
     }  // 结束 sendMouseDown 函数
 
-    override fun sendMouseUp(button: MouseButton) {  // 语法：override 覆写；发送鼠标按钮释放事件
+    override fun sendMouseUp(button: MouseButton, latch: Boolean) {  // 语法：override 覆写；发送鼠标按钮释放事件
         val btnId = when (button) {  // 语法：val + when 分支；把鼠标按钮枚举映射为协议按钮 ID
             MouseButton.LEFT -> 0  // 左键映射为 ID 0
             MouseButton.RIGHT -> 1  // 右键映射为 ID 1
@@ -119,7 +119,7 @@ class BridgeInputInjector(  // 语法：class 声明类；桥接输入注入器�
             MouseButton.BACK -> 4  // 后退键映射为 ID 4
         }  // 结束 when 分支
         pressedButtons.remove(button)  // 从按下集合中移除该按钮
-        server.sendMouseButton(btnId, isDown = false)  // 语法：命名参数 isDown=false；经 TCP 发送鼠标释放事件
+        server.sendMouseButton(btnId, isDown = false, latch = latch)  // 经 TCP 发送鼠标释放事件（锁存标记随包下发）
     }  // 结束 sendMouseUp 函数
 
     /**

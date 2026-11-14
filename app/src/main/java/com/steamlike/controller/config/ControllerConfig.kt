@@ -350,6 +350,9 @@ object ControllerConfig { // 单例对象：配置的 JSON 序列化/反序列�
             is MappedAction.MouseReleaseAll -> { // 释放鼠标长按类型
                 json.put("type", "mouseReleaseAll") // 写入类型标识
             } // 结束释放鼠标长按分支
+            is MappedAction.MouseRightLockToggle -> { // 右键锁定切换类型
+                json.put("type", "mouseRightLockToggle") // 写入类型标识
+            } // 结束右键锁定切换分支
             is MappedAction.MouseClickSequence -> { // 交互键类型
                 json.put("type", "mouseClickSequence") // 写入类型标识
             } // 结束交互键分支
@@ -427,6 +430,7 @@ object ControllerConfig { // 单例对象：配置的 JSON 序列化/反序列�
             } // 结束鼠标切换分支
             "mouseSwapToggle" -> MappedAction.MouseSwapToggle // 鼠标长按交换：直接返回单例对象
             "mouseReleaseAll" -> MappedAction.MouseReleaseAll // 释放鼠标长按：直接返回单例对象
+            "mouseRightLockToggle" -> MappedAction.MouseRightLockToggle // 右键锁定切换：直接返回单例对象
             "mouseClickSequence" -> MappedAction.MouseClickSequence // 交互键：直接返回单例对象
             "mouseFineMove" -> MappedAction.MouseFineMove // 鼠标精细移动：直接返回单例对象
             "mouseFastMove" -> MappedAction.MouseFastMove // 鼠标快速移动：直接返回单例对象

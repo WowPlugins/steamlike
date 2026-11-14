@@ -9,6 +9,7 @@
 //! | 事件 | 处理 |
 //! | --- | --- |
 //! | 交互键 | 吞掉，交给动作线程执行「解锁 → 居中 → 右键点击 → 恢复锁存」序列，不透传 |
+//! | 右键锁定键 | 吞掉，交给动作线程锁定/解锁右键视角锁定（左键锁存中时不做动作，但仍吞掉） |
 //! | 长按交换键 | 吞掉，交给动作线程做长按判定；短按则补发一次普通点按 |
 //! | 映射按键 | 吞掉，交给动作线程按短按/长按映射执行目标动作，不透传 |
 //! | WASD | 吞掉并由本程序注入，保证「光标归位 → 右键锁定 → WASD」的顺序 |
@@ -40,6 +41,8 @@ const WM_APP_QUIT: u32 = 0x8003;
 enum Cmd {
     /// 交互键按下
     Interact,
+    /// 右键锁定切换键按下（锁定 / 解锁鼠标右键视角锁定）
+    RightLockToggle,
     /// 长按交换键按下
     SwapDown,
     /// 长按交换键抬起
@@ -116,6 +119,33 @@ fn ensure_right_locked_on_move() {
     win::position_cursor(RT.cursor_park_offscreen.load(Ordering::Relaxed));
     if set_lock(BTN_RIGHT, true) {
         queue_cmd(Cmd::Note("[锁存] WASD 触发：右键锁定"));
+    }
+}
+
+/// 右键锁定切换（快捷键与映射动作共用）
+///
+/// - 左键锁存中：不执行任何动作（调用方负责吞掉触发键，不透传给游戏）
+/// - 右键已锁定：松开右键 → 等游戏退出 mouselook → 光标移到屏幕正中央
+/// - 右键未锁定：光标停到屏幕左下角之外 → 按下右键进入视角锁定
+///
+/// 在动作线程执行：解锁后的居中需要等待 [UNLOCK_CENTER_DELAY_MS]，不能阻塞钩子回调。
+fn do_right_lock_toggle() {
+    if RT.left_locked.load(Ordering::Relaxed) {
+        log("[锁存] 右键锁定切换：左键锁存中，忽略");
+        return;
+    }
+    if RT.right_locked.load(Ordering::Relaxed) {
+        set_lock(BTN_RIGHT, false);
+        log("[锁存] 右键锁定切换：已松开右键，等待游戏退出 mouselook");
+        std::thread::sleep(Duration::from_millis(UNLOCK_CENTER_DELAY_MS));
+        win::center_cursor();
+        log("[锁存] 右键锁定切换：光标已居中");
+    } else {
+        // 固定停到屏幕左下角之外（与 APK 的右键锁定切换动作一致），
+        // 避免锁定瞬间光标停在界面元素上弹出 tooltip 或视角从偏移位置开始漂移
+        win::park_cursor_offscreen();
+        set_lock(BTN_RIGHT, true);
+        log("[锁存] 右键锁定切换：光标停到屏幕外，右键已锁定");
     }
 }
 
@@ -270,6 +300,14 @@ unsafe extern "system" fn keyboard_proc(ncode: i32, wparam: WPARAM, lparam: LPAR
     if vk as u32 == RT.interaction_vk.load(Ordering::Relaxed) {
         if down {
             queue_cmd(Cmd::Interact);
+        }
+        return LRESULT(1);
+    }
+
+    // 右键锁定切换键：完全吞掉（左键锁存中时也不透传给游戏）
+    if vk as u32 == RT.right_lock_vk.load(Ordering::Relaxed) {
+        if down {
+            queue_cmd(Cmd::RightLockToggle);
         }
         return LRESULT(1);
     }
@@ -499,6 +537,7 @@ fn action_thread(rx: Receiver<Cmd>) {
                 }
             }
             Cmd::Interact => do_interact(),
+            Cmd::RightLockToggle => do_right_lock_toggle(),
             Cmd::UnlockKey(vk, subs) => do_unlock_key(vk, &subs),
             Cmd::UnlockCenter => {
                 // 解锁已由钩子回调立即发出，这里等游戏处理完退出 mouselook 再把光标放到屏幕正中央
@@ -619,6 +658,9 @@ fn execute_mapping(source_vk: u32, is_long_press: bool) {
             set_lock(BTN_LEFT, false);
             set_lock(BTN_RIGHT, false);
             log("[映射] 释放所有鼠标长按锁存");
+        }
+        crate::config::MappedAction::RightLockToggle => {
+            do_right_lock_toggle();
         }
         crate::config::MappedAction::Interact => {
             do_interact();

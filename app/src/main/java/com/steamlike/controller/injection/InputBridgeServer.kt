@@ -64,7 +64,8 @@ import java.util.concurrent.atomic.AtomicInteger  // 导入原子整数类（自
  * 鼠标按钮 (0x03):
  *   Byte 1: 按钮 (0=左, 1=右, 2=中)
  *   Byte 2: 是否按下 (0=释放, 1=按下)
- *   Byte 3-7: 保留
+ *   Byte 3: 锁存标记 (0=普通点击/临时按住, 1=锁存操作，客户端同步本地锁存标志)
+ *   Byte 4-7: 保留
  *
  * 鼠标滚轮 (0x04):
  *   Byte 1-2: delta (int16 LE)
@@ -127,6 +128,7 @@ class InputBridgeServer(  // 语法：class 声明类；InputBridge TCP 服务�
         const val MSG_SHOW_KEYBOARD: Byte = 0x25  // 消息类型：显示安卓键盘（客户端 → APK，无载荷，仅弹出不收起）
         const val MSG_UNLOCK_MOUSE: Byte = 0x26  // 消息类型：解锁鼠标锁定（APK → 客户端，无载荷，解除左右键长按锁定）
         const val MSG_MAPPED_KEY: Byte = 0x27  // 消息类型：键位映射按键（APK → 客户端，可被客户端本地按键映射再次命中）
+        const val MSG_LOCK_STATE: Byte = 0x28  // 消息类型：鼠标锁存状态上报（客户端 → APK，Byte1=右键锁存，Byte2=左键锁存）
 
         const val PACKET_SIZE = 8  // 语法：const val 编译期常量；协议数据包固定长度 8 字节
         const val MAX_CLIPBOARD_BYTES = 1 shl 20  // 单个剪贴板文本正文上限（1 MB，防御异常数据）
@@ -145,6 +147,7 @@ class InputBridgeServer(  // 语法：class 声明类；InputBridge TCP 服务�
     var onClipboardText: ((String) -> Unit)? = null  // 语法：var + lambda 类型 + ?可空；收到 Windows 客户端剪贴板文本回调
     var onToggleKeyboardRequest: (() -> Unit)? = null  // 语法：var + lambda 类型 + ?可空；收到 Windows 客户端「切换键盘」反向通知回调
     var onShowKeyboardRequest: (() -> Unit)? = null  // 语法：var + lambda 类型 + ?可空；收到 Windows 客户端「显示键盘」反向通知回调
+    var onLockStateReport: ((Boolean, Boolean) -> Unit)? = null  // 收到客户端锁存状态上报回调（左键锁存, 右键锁存）
 
     /**
      * 启动TCP服务器
@@ -261,12 +264,14 @@ class InputBridgeServer(  // 语法：class 声明类；InputBridge TCP 服务�
      * 发送鼠标按钮事件
      * @param button 0=左键, 1=右键, 2=中键
      * @param isDown true=按下, false=释放
+     * @param latch true=锁存操作（客户端同步本地锁存标志）；普通点击/临时按住为 false
      */
-    fun sendMouseButton(button: Int, isDown: Boolean) {  // 语法：fun 函数；发送鼠标按钮事件
+    fun sendMouseButton(button: Int, isDown: Boolean, latch: Boolean = false) {  // 语法：fun 函数；发送鼠标按钮事件
         val packet = ByteArray(PACKET_SIZE)  // 语法：val + ByteArray；创建 8 字节数据包
         packet[0] = MSG_MOUSE_BUTTON  // 写入消息类型：鼠标按钮
         packet[1] = button.toByte()  // 写入按钮 ID（0=左,1=右,2=中）
         packet[2] = if (isDown) 1 else 0  // 语法：if 表达式；写入按下标志
+        packet[3] = if (latch) 1 else 0  // 写入锁存标记（客户端据此同步 RT 锁存标志）
         enqueue(packet)  // 加入发送队列
     }  // 结束 sendMouseButton 函数
 
@@ -556,7 +561,12 @@ class InputBridgeServer(  // 语法：class 声明类；InputBridge TCP 服务�
             onToggleKeyboardRequest?.invoke()  // 通知外部切换软键盘（由回调切回主线程执行）
             return  // 该包无其它载荷
         }  // 结束切换键盘分支
-        if (packet[0] != MSG_CLIENT_VERSION) return  // 只处理客户端信息包
+        if (packet[0] != MSG_CLIENT_VERSION) {  // 其余为锁存状态上报或未知包
+            if (packet[0] == MSG_LOCK_STATE) {  // 鼠标锁存状态上报（客户端快捷键/映射改变锁存时发送）
+                onLockStateReport?.invoke(packet[2].toInt() != 0, packet[1].toInt() != 0)  // 回调（左, 右）
+            }  // 结束锁存状态分支
+            return  // 不参与版本比对
+        }  // 结束包类型判断
         val clientVersion = "${packet[1]}.${packet[2]}.${packet[3]}"  // 拼成 主.次.修订 版本号
         if (clientVersion != BuildConfig.RUST_CLIENT_VERSION) {  // 与 APK 期望版本比对
             Log.w(TAG, "客户端 exe 版本不一致: 实际 $clientVersion, 期望 ${BuildConfig.RUST_CLIENT_VERSION}")  // 打印版本不一致警告

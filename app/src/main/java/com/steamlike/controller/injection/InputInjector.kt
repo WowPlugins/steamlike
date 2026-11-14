@@ -85,15 +85,18 @@ interface InputInjector {  // 语法：interface 声明接口；输入注入器�
      * 鼠标按下
      *
      * @param button 鼠标按钮（[MouseButton.LEFT] / [MouseButton.RIGHT] / [MouseButton.MIDDLE]）
+     * @param latch true=锁存操作：客户端会同步本地锁存标志（供 WASD 自动锁定与状态上报使用），
+     *              普通点击/临时按住保持 false，避免被误当作锁存
      */
-    fun sendMouseDown(button: MouseButton)  // 语法：fun 抽象方法；鼠标按下
+    fun sendMouseDown(button: MouseButton, latch: Boolean = false)  // 语法：fun 抽象方法 + 默认参数；鼠标按下
 
     /**
      * 鼠标释放
      *
      * @param button 鼠标按钮
+     * @param latch true=锁存操作（与 [sendMouseDown] 对应），客户端据此清除本地锁存标志
      */
-    fun sendMouseUp(button: MouseButton)  // 语法：fun 抽象方法；鼠标释放
+    fun sendMouseUp(button: MouseButton, latch: Boolean = false)  // 语法：fun 抽象方法 + 默认参数；鼠标释放
 
     /**
      * 鼠标点击（按下 + 立即释放）

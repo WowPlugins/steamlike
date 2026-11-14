@@ -151,6 +151,19 @@ sealed class MappedAction { // 映射动作密封类（语法：sealed class 密
     data object MouseReleaseAll : MappedAction() // 释放鼠标所有长按动作
 
     /**
+     * 鼠标右键锁定切换动作（视角锁定 / mouselook 开关）
+     *
+     * 按一下切换一次右键锁定状态：
+     * - **未锁定**：先把光标停到屏幕左下角之外，再发送 MouseDown(RIGHT) 进入视角锁定
+     * - **右键已锁定**：发送 MouseUp(RIGHT)，等待游戏退出 mouselook 后再把光标移到屏幕正中央
+     * - **左键锁存中**：不执行任何动作（手柄按键本身不会透传给游戏）
+     *
+     * 与 [MouseToggle] 的区别：本动作固定操作右键，且锁定前会先把光标停到屏幕外、
+     * 解锁后会延时居中，专门用于「一键开关视角锁定」。
+     */
+    data object MouseRightLockToggle : MappedAction() // 鼠标右键锁定切换动作
+
+    /**
      * 鼠标交互键动作
      *
      * 记录左右键当前的长按锁存状态后，临时释放已锁定的键，立即依次发送
@@ -350,6 +363,7 @@ data class KeyMapping( // 按键映射定义（语法：data class 数据类）
         is MappedAction.MouseToggle -> "长按${action.button.toDisplayName()}" // 鼠标长按描述
         is MappedAction.MouseSwapToggle -> "长按交换" // 鼠标长按交换描述
         is MappedAction.MouseReleaseAll -> "释放鼠标长按" // 释放鼠标所有长按描述
+        is MappedAction.MouseRightLockToggle -> "右键锁定切换" // 右键锁定切换描述
         is MappedAction.MouseClickSequence -> "交互键" // 鼠标交互键描述
         is MappedAction.MouseFineMove -> "精细移动" // 鼠标精细移动描述
         is MappedAction.MouseFastMove -> "快速移动" // 鼠标快速移动描述

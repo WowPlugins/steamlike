@@ -149,6 +149,8 @@ fn apply_runtime(cfg: &config::ClientConfig) {
     RT.interaction_vk
         .store(cfg.interaction_vk, Ordering::SeqCst);
     RT.swap_vk.store(cfg.swap_vk, Ordering::SeqCst);
+    RT.right_lock_vk
+        .store(cfg.right_lock_vk, Ordering::SeqCst);
     RT.long_press_ms
         .store(cfg.long_press_ms.max(50), Ordering::SeqCst);
     RT.cursor_park_offscreen

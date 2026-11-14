@@ -22,6 +22,8 @@ pub struct Runtime {
     pub interaction_vk: AtomicU32,
     /// 长按交换键虚拟键码
     pub swap_vk: AtomicU32,
+    /// 右键锁定切换键虚拟键码（0 = 未绑定）
+    pub right_lock_vk: AtomicU32,
     /// 长按判定阈值（毫秒）
     pub long_press_ms: AtomicU32,
     /// 鼠标左键长按锁存中
@@ -54,6 +56,7 @@ pub static RT: Runtime = Runtime {
     input_seq: AtomicU64::new(0),
     interaction_vk: AtomicU32::new(0x58), // X
     swap_vk: AtomicU32::new(0x31),        // 1
+    right_lock_vk: AtomicU32::new(0),     // 未绑定（界面可配置）
     long_press_ms: AtomicU32::new(500),
     left_locked: AtomicBool::new(false),
     right_locked: AtomicBool::new(false),
