@@ -547,7 +547,7 @@ class MainActivity : AppCompatActivity() { // 声明主界面 Activity，继承 
         longPressCard.addView(UiKit.label(this, "长按判定阈值")) // 添加阈值标签
         longPressCard.addView(UiKit.caption(this, "按住时长达到该值即视为长按（默认 500 ms）", 0xFF999999.toInt(), 10f)) // 添加阈值说明
         longPressCard.addView(UiKit.spacer(this, 4)) // 添加 4dp 间距
-        val longPressThresholdOptions = listOf(300, 500, 800, 1000) // 阈值档位列表（毫秒）
+        val longPressThresholdOptions = (100..800 step 50).toList() // 阈值档位列表：100~800 ms，50 ms 一档
         val longPressThresholdSpinner = Spinner(this).apply { // 创建阈值下拉框并配置（语法：apply{}=作用域函数）
             adapter = ArrayAdapter(this@MainActivity, android.R.layout.simple_spinner_item, // 设置适配器
                 longPressThresholdOptions.map { "${it} ms" }).also { // 显示为「500 ms」形式（语法：map lambda）

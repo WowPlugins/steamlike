@@ -883,15 +883,24 @@ impl App {
 
                 ui.add_space(12.0);
                 ui.label("长按阈值：");
-                if ui
-                    .add(
-                        egui::DragValue::new(&mut self.cfg.long_press_ms)
-                            .clamp_range(50..=5000)
-                            .speed(10.0)
-                            .suffix(" ms"),
-                    )
-                    .changed()
-                {
+                // 旧配置可能不在档位上（如 250）：对齐到最近的 50ms 档位，保证下拉能选中
+                self.cfg.long_press_ms =
+                    (self.cfg.long_press_ms.clamp(100, 800) + 25) / 50 * 50;
+                let before_long_press = self.cfg.long_press_ms;
+                egui::ComboBox::from_id_source("rust_long_press_ms")
+                    .selected_text(format!("{} ms", self.cfg.long_press_ms))
+                    .width(72.0)
+                    .show_ui(ui, |ui| {
+                        // 100~800 ms，50 ms 一档
+                        for ms in (100..=800).step_by(50) {
+                            ui.selectable_value(
+                                &mut self.cfg.long_press_ms,
+                                ms,
+                                format!("{} ms", ms),
+                            );
+                        }
+                    });
+                if self.cfg.long_press_ms != before_long_press {
                     *dirty = true;
                 }
             });
