@@ -24,6 +24,11 @@ pub struct Runtime {
     pub swap_vk: AtomicU32,
     /// 右键锁定切换键虚拟键码（0 = 未绑定）
     pub right_lock_vk: AtomicU32,
+    /// 挂起中：本次「解锁+居中+按键」后临时禁用 WASD 自动锁定右键
+    ///
+    /// 指向型技能需要鼠标指针自由移动；一旦发生左键/右键点击、ESC、普通键盘按键或
+    /// APK 释放鼠标长按，就结束挂起并恢复「归位 + 右键锁定」。
+    pub wasd_lock_suspend: AtomicBool,
     /// 长按判定阈值（毫秒）
     pub long_press_ms: AtomicU32,
     /// 鼠标左键长按锁存中
@@ -57,6 +62,7 @@ pub static RT: Runtime = Runtime {
     interaction_vk: AtomicU32::new(0x58), // X
     swap_vk: AtomicU32::new(0x31),        // 1
     right_lock_vk: AtomicU32::new(0),     // 未绑定（界面可配置）
+    wasd_lock_suspend: AtomicBool::new(false), // 默认未挂起
     long_press_ms: AtomicU32::new(500),
     left_locked: AtomicBool::new(false),
     right_locked: AtomicBool::new(false),

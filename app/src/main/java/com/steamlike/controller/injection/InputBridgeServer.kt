@@ -128,7 +128,7 @@ class InputBridgeServer(  // 语法：class 声明类；InputBridge TCP 服务�
         const val MSG_SHOW_KEYBOARD: Byte = 0x25  // 消息类型：显示安卓键盘（客户端 → APK，无载荷，仅弹出不收起）
         const val MSG_UNLOCK_MOUSE: Byte = 0x26  // 消息类型：解锁鼠标锁定（APK → 客户端，无载荷，解除左右键长按锁定）
         const val MSG_MAPPED_KEY: Byte = 0x27  // 消息类型：键位映射按键（APK → 客户端，可被客户端本地按键映射再次命中）
-        const val MSG_LOCK_STATE: Byte = 0x28  // 消息类型：鼠标锁存状态上报（客户端 → APK，Byte1=右键锁存，Byte2=左键锁存）
+        const val MSG_LOCK_STATE: Byte = 0x28  // 消息类型：鼠标锁存状态上报（客户端 → APK，Byte1=右键锁存，Byte2=左键锁存，Byte3=临时禁用 WASD 自动锁定）
 
         const val PACKET_SIZE = 8  // 语法：const val 编译期常量；协议数据包固定长度 8 字节
         const val MAX_CLIPBOARD_BYTES = 1 shl 20  // 单个剪贴板文本正文上限（1 MB，防御异常数据）
@@ -147,7 +147,7 @@ class InputBridgeServer(  // 语法：class 声明类；InputBridge TCP 服务�
     var onClipboardText: ((String) -> Unit)? = null  // 语法：var + lambda 类型 + ?可空；收到 Windows 客户端剪贴板文本回调
     var onToggleKeyboardRequest: (() -> Unit)? = null  // 语法：var + lambda 类型 + ?可空；收到 Windows 客户端「切换键盘」反向通知回调
     var onShowKeyboardRequest: (() -> Unit)? = null  // 语法：var + lambda 类型 + ?可空；收到 Windows 客户端「显示键盘」反向通知回调
-    var onLockStateReport: ((Boolean, Boolean) -> Unit)? = null  // 收到客户端锁存状态上报回调（左键锁存, 右键锁存）
+    var onLockStateReport: ((Boolean, Boolean, Boolean) -> Unit)? = null  // 收到客户端锁存状态上报回调（左键锁存, 右键锁存, 临时禁用 WASD 自动锁定）
 
     /**
      * 启动TCP服务器
@@ -563,7 +563,7 @@ class InputBridgeServer(  // 语法：class 声明类；InputBridge TCP 服务�
         }  // 结束切换键盘分支
         if (packet[0] != MSG_CLIENT_VERSION) {  // 其余为锁存状态上报或未知包
             if (packet[0] == MSG_LOCK_STATE) {  // 鼠标锁存状态上报（客户端快捷键/映射改变锁存时发送）
-                onLockStateReport?.invoke(packet[2].toInt() != 0, packet[1].toInt() != 0)  // 回调（左, 右）
+                onLockStateReport?.invoke(packet[2].toInt() != 0, packet[1].toInt() != 0, packet[3].toInt() != 0)  // 回调（左, 右, 挂起）
             }  // 结束锁存状态分支
             return  // 不参与版本比对
         }  // 结束包类型判断

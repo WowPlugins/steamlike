@@ -145,6 +145,9 @@ pub enum MappedAction {
     UnlockKey {
         key_code: u32,
         sub_commands: Vec<u32>,
+        /// 本次按键后临时禁用 WASD 自动锁定（指向型技能用，逐映射独立配置）
+        #[serde(default = "default_true")]
+        suspend_wasd: bool,
     },
     /// 快速转身：分多步注入水平鼠标位移，一键把视角转到身后
     ///
@@ -160,6 +163,11 @@ pub enum MappedAction {
 /// 「快速转身」每步间隔的默认值（毫秒）
 fn default_turn_step_ms() -> u32 {
     8
+}
+
+/// 布尔字段缺省值：true（旧配置没有该字段时按「启用」处理）
+fn default_true() -> bool {
+    true
 }
 
 impl Default for MappedAction {
@@ -227,10 +235,12 @@ impl MappedAction {
             Self::UnlockKey {
                 key_code,
                 sub_commands,
+                suspend_wasd,
             } => {
                 format!(
-                    "解锁+居中+{}",
-                    crate::ui::combo_name(*key_code, sub_commands)
+                    "解锁+居中+{}{}",
+                    crate::ui::combo_name(*key_code, sub_commands),
+                    if *suspend_wasd { "（禁用WASD锁定）" } else { "" }
                 )
             }
             Self::Turn180 { pixels, step_ms } => format!(

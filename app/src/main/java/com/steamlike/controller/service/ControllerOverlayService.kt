@@ -571,9 +571,9 @@ class ControllerOverlayService : Service() {  // class=类声明；继承 Servic
                 }  // 结束 onShowKeyboardRequest lambda
 
                 // 客户端上报左右键锁存状态（Rust 快捷键/映射锁定右键时），同步到映射器
-                bridgeServer?.onLockStateReport = { leftLocked, rightLocked ->  // ?.=安全调用；lambda {leftLocked, rightLocked->}
+                bridgeServer?.onLockStateReport = { leftLocked, rightLocked, wasdSuspended ->  // ?.=安全调用；lambda 三参数
                     // 回调在网络线程：切回主线程，与手柄事件共用同一套锁存集合，避免并发修改
-                    mainHandler.post { mapper?.applyRemoteLockState(leftLocked, rightLocked) }  // ?.=安全调用；合并远端锁存状态
+                    mainHandler.post { mapper?.applyRemoteLockState(leftLocked, rightLocked, wasdSuspended) }  // ?.=安全调用；合并远端锁存/挂起状态
                 }  // 结束 onLockStateReport lambda
 
                 if (bridgeServer?.start() != true) {  // ?.=安全调用；if 判断：服务器启动失败

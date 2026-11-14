@@ -302,6 +302,10 @@ pub struct App {
     edit_tap_turn_step_ms: u32,
     /// 映射编辑对话框：长按「快速转身」的每步间隔（毫秒）
     edit_long_press_turn_step_ms: u32,
+    /// 映射编辑对话框：短按「解锁+居中+按键」是否临时禁用 WASD 自动锁定（指向型技能）
+    edit_tap_suspend_wasd: bool,
+    /// 映射编辑对话框：长按「解锁+居中+按键」是否临时禁用 WASD 自动锁定
+    edit_long_press_suspend_wasd: bool,
     /// 映射编辑对话框：源按键
     edit_source_vk: u32,
     /// 映射编辑对话框：源按键的修饰键（组合键，如 Ctrl+7 里的 Ctrl）
@@ -390,6 +394,8 @@ impl App {
             edit_long_press_subs: Vec::new(),
             edit_tap_turn_step_ms: 8,
             edit_long_press_turn_step_ms: 8,
+            edit_tap_suspend_wasd: true,
+            edit_long_press_suspend_wasd: true,
             edit_source_vk: 0,
             edit_source_mods: Vec::new(),
             edit_enabled: true,
@@ -1223,10 +1229,12 @@ impl App {
             crate::config::MappedAction::UnlockKey {
                 key_code,
                 sub_commands,
+                suspend_wasd,
             } => {
                 self.edit_tap_type = 13;
                 self.edit_tap_value = *key_code;
                 self.edit_tap_subs = sub_commands.clone();
+                self.edit_tap_suspend_wasd = *suspend_wasd;
             }
             crate::config::MappedAction::Turn180 { pixels, step_ms } => {
                 self.edit_tap_type = 14;
@@ -1307,10 +1315,12 @@ impl App {
             crate::config::MappedAction::UnlockKey {
                 key_code,
                 sub_commands,
+                suspend_wasd,
             } => {
                 self.edit_long_press_type = 13;
                 self.edit_long_press_value = *key_code;
                 self.edit_long_press_subs = sub_commands.clone();
+                self.edit_long_press_suspend_wasd = *suspend_wasd;
             }
             crate::config::MappedAction::ToggleKeyboardEnter => {
                 self.edit_long_press_type = 11;
@@ -1335,8 +1345,8 @@ impl App {
     fn save_mapping_editor(&mut self) {
         if let Some(index) = self.editing_mapping {
             // 先构建动作（只读借用编辑字段），再拿映射的可变借用写入，避免与 &self 冲突
-            let tap = self.build_action(self.edit_tap_type, self.edit_tap_value, &self.edit_tap_subs, self.edit_tap_turn_step_ms);
-            let lp = self.build_action(self.edit_long_press_type, self.edit_long_press_value, &self.edit_long_press_subs, self.edit_long_press_turn_step_ms);
+            let tap = self.build_action(self.edit_tap_type, self.edit_tap_value, &self.edit_tap_subs, self.edit_tap_turn_step_ms, self.edit_tap_suspend_wasd);
+            let lp = self.build_action(self.edit_long_press_type, self.edit_long_press_value, &self.edit_long_press_subs, self.edit_long_press_turn_step_ms, self.edit_long_press_suspend_wasd);
             let mapping = &mut self.cfg.key_mappings[index];
             mapping.source_vk = self.edit_source_vk;
             mapping.source_mods = self.edit_source_mods.clone();
@@ -1360,6 +1370,7 @@ impl App {
         value: u32,
         subs: &[u32],
         turn_step_ms: u32,
+        suspend_wasd: bool,
     ) -> crate::config::MappedAction {
         match action_type {
             1 => crate::config::MappedAction::KeyboardKey {
@@ -1389,6 +1400,7 @@ impl App {
             13 => crate::config::MappedAction::UnlockKey {
                 key_code: value,
                 sub_commands: subs.to_vec(),
+                suspend_wasd,
             },
             14 => crate::config::MappedAction::Turn180 {
                 pixels: value as i32,
@@ -1534,6 +1546,7 @@ impl App {
                     &mut self.edit_tap_value,
                     &mut self.edit_tap_subs,
                     &mut self.edit_tap_turn_step_ms,
+                    &mut self.edit_tap_suspend_wasd,
                     "tap",
                 );
 
@@ -1563,6 +1576,7 @@ impl App {
                     &mut self.edit_long_press_value,
                     &mut self.edit_long_press_subs,
                     &mut self.edit_long_press_turn_step_ms,
+                    &mut self.edit_long_press_suspend_wasd,
                     "lp",
                 );
 
@@ -1683,6 +1697,7 @@ impl App {
         value: &mut u32,
         subs: &mut Vec<u32>,
         turn_step_ms: &mut u32,
+        suspend_wasd: &mut bool,
         id_prefix: &str,
     ) {
         match action_type {
@@ -1719,6 +1734,17 @@ impl App {
                     Self::render_key_picker(ui, value, subs, id_prefix);
                 });
                 Self::render_sub_commands_editor(ui, subs, id_prefix);
+                ui.checkbox(
+                    suspend_wasd,
+                    "本次按键后临时禁用 WASD 自动锁定（指向型技能）",
+                );
+                ui.label(
+                    egui::RichText::new(
+                        "临时禁用后 WASD 不再锁定右键，直到左/右键点击、ESC、普通键盘按键\
+                         或 APK 释放鼠标长按：此时光标归位到屏幕外并重新锁定右键。",
+                    )
+                    .weak(),
+                );
             }
             3 | 4 => {
                 // 鼠标点击 / 鼠标长按

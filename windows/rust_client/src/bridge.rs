@@ -19,7 +19,7 @@
 //! - 0x23 切换安卓键盘（exe → APK）：8 字节定长包、无载荷，用于映射动作反向通知
 //! - 0x25 显示安卓键盘（exe → APK）：8 字节定长包、无载荷，仅弹出键盘（已在显示时忽略）
 //! - 0x26 解锁鼠标锁定（APK → exe）：8 字节定长包、无载荷，解除左右键长按锁定并延时居中
-//! - 0x28 鼠标锁存状态（exe → APK）：Byte1=右键锁存，Byte2=左键锁存，状态变化时上报
+//! - 0x28 鼠标锁存状态（exe → APK）：Byte1=右键锁存，Byte2=左键锁存，Byte3=临时禁用 WASD 自动锁定，状态变化时上报
 //! - 0x22 Unicode 文本（APK → exe）：8 字节头之后跟随 UTF-8 正文，用于软键盘输入中文
 //!   头字节下标 4..7 为 UTF-8 字节长度（uint32 小端），其后紧接文本正文
 //!   exe 收到后写入剪贴板并注入 Ctrl+V 粘贴（直接 Unicode 注入在 WoW 中文界面会乱码）
@@ -73,7 +73,8 @@ pub fn send_show_keyboard() {
 /// Byte1 = 右键是否锁存，Byte2 = 左键是否锁存。锁存由本客户端维护
 /// （WASD 自动锁定 / 快捷键 / 映射动作），APK 只知道自己那边的锁存，
 /// 需要这条反向报文来统一「解锁全部」与悬浮窗边框高亮。
-fn send_lock_state(right_locked: bool, left_locked: bool) {
+/// Byte1 = 右键是否锁存，Byte2 = 左键是否锁存，Byte3 = 是否临时禁用 WASD 自动锁定
+fn send_lock_state(right_locked: bool, left_locked: bool, wasd_suspend: bool) {
     if !CONNECTED.load(Ordering::Relaxed) {
         return;
     }
@@ -81,6 +82,7 @@ fn send_lock_state(right_locked: bool, left_locked: bool) {
     packet[0] = 0x28;
     packet[1] = right_locked as u8;
     packet[2] = left_locked as u8;
+    packet[3] = wasd_suspend as u8;
     if let Ok(mut queue) = OUTBOX.lock() {
         queue.push(packet.to_vec());
     }
@@ -151,7 +153,7 @@ fn bridge_thread() {
     let mut connected_to: Option<(String, u16)> = None;
     let mut buf: Vec<u8> = Vec::with_capacity(4096);
     // 上一次上报给 APK 的锁存状态（None = 尚未上报，连接建立后强制上报一次）
-    let mut last_lock_state: Option<(bool, bool)> = None;
+    let mut last_lock_state: Option<(bool, bool, bool)> = None;
 
     loop {
         if !WANT_CONNECT.load(Ordering::Relaxed) {
@@ -214,10 +216,11 @@ fn bridge_thread() {
             let lock_state = (
                 RT.left_locked.load(Ordering::Relaxed),
                 RT.right_locked.load(Ordering::Relaxed),
+                RT.wasd_lock_suspend.load(Ordering::Relaxed),
             );
             if last_lock_state != Some(lock_state) {
                 last_lock_state = Some(lock_state);
-                send_lock_state(lock_state.1, lock_state.0);
+                send_lock_state(lock_state.1, lock_state.0, lock_state.2);
             }
             // 先把剪贴板文本队列发出去（read 有 200ms 超时，最长延迟可接受）
             let sent = flush_outbox(s);
@@ -295,18 +298,30 @@ fn process_packet(data: &[u8; PACKET_SIZE]) {
             // 让 WASD 自动锁定（已锁则跳过）和 0x28 状态上报能感知 APK 的锁存，
             // 否则 Rust 会认为未锁定，在 WASD 时再次归位光标并重复按下右键
             if data[3] != 0 {
+                if down {
+                    // 手动锁存（右键锁定切换/鼠标长按）：走统一恢复流程，
+                    // 已锁定/已锁存左键时它会自动跳过，避免和左键锁存抢右键
+                    crate::hooks::request_resume_wasd_lock();
+                }
                 if data[1] == BTN_LEFT {
                     RT.left_locked.store(down, Ordering::Relaxed);
                 } else if data[1] == BTN_RIGHT {
                     RT.right_locked.store(down, Ordering::Relaxed);
                 }
+            } else if !down && (data[1] == BTN_LEFT || data[1] == BTN_RIGHT) {
+                // APK 的鼠标点击完成（非锁存）：结束「临时禁用 WASD 自动锁定」
+                crate::hooks::request_resume_wasd_lock();
             }
         }
         0x04 => {
             let delta = i16::from_le_bytes([data[1], data[2]]);
             win::inject_mouse_wheel(delta);
         }
-        0x05 => win::release_all(),
+        0x05 => {
+            win::release_all();
+            // APK 释放全部按键/按钮：同时结束「临时禁用 WASD 自动锁定」
+            crate::hooks::request_resume_wasd_lock();
+        }
         0x06 => {} // 心跳
         0x07 => {
             // 落点由报文 Byte1 决定，仅作用于本次归位；
