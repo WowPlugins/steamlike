@@ -295,6 +295,13 @@ pub fn unlock_from_apk() {
 /// 2. 解除左右锁存 → 等游戏退出 mouselook → 光标居中 → 右键点击一次
 /// 3. 光标移回原位置 → 恢复原有锁存状态
 fn do_interact() {
+    // 整段序列期间抑制 WASD 自动锁定右键（与 APK 交互序列同一条规则）：
+    // 序列自己会「先解锁、后恢复」，中途若被自动锁定插进来（键盘钩子线程与这里并发），
+    // 末尾那次右键点击的抬起会把游戏里的按住状态放掉，而锁存标志仍是 true，
+    // 之后 set_lock 变成空操作，表现为「右键锁定不上」。800ms 覆盖整段并留兜底。
+    RT.interact_hold_ms
+        .store(win::now_ms() + 800, Ordering::Relaxed);
+
     let left_locked = RT.left_locked.load(Ordering::Relaxed);
     let right_locked = RT.right_locked.load(Ordering::Relaxed);
     let (saved_x, saved_y) = win::current_cursor(); // 1. 记录光标原位置
@@ -314,6 +321,7 @@ fn do_interact() {
     win::move_cursor_to(saved_x, saved_y);
     set_lock(BTN_LEFT, left_locked);
     set_lock(BTN_RIGHT, right_locked);
+    RT.interact_hold_ms.store(0, Ordering::Relaxed);
 
     log(format!(
         "[交互] 完成（原锁存 左={} 右={}，光标还原到 {},{}）",
