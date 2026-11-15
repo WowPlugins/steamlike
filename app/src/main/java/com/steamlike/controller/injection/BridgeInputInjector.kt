@@ -143,11 +143,11 @@ class BridgeInputInjector(  // 语法：class 声明类；桥接输入注入器�
     }  // 结束 sendMouseMove 函数
 
     /**
-     * 将鼠标光标归位到开关决定的落点（屏幕外下方 / 屏幕正中央）
+     * 将鼠标光标挪到开关决定的落点（屏幕左下角之外 / 屏幕正中央）
      *
      * 归位前先清空位移小数余量，避免残留的亚像素位移在归位后被补发。
      *
-     * @param parkOffscreen true=停放到屏幕外下方，false=屏幕正中央
+     * @param parkOffscreen true=停放到屏幕左下角之外，false=屏幕正中央
      */
     override fun sendMouseCenter(parkOffscreen: Boolean) {  // 语法：override 覆写；发送鼠标归位命令
         mouseRemainderX = 0f  // 清零 X 轴位移余量

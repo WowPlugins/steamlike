@@ -237,8 +237,8 @@ object ControllerConfig { // 单例对象：配置的 JSON 序列化/反序列�
         json.put("longPressThresholdMs", settings.longPressThresholdMs) // 写入长按判定阈值
         json.put("longPressFallbackToShort", settings.longPressFallbackToShort) // 写入长按回退开关
         json.put("wasdAutoRightLock", settings.wasdAutoRightLock) // 写入 WASD 自动锁定右键开关
-        json.put("wasdAutoCenterMouse", settings.wasdAutoCenterMouse) // 写入 WASD 自动锁定前的鼠标居中开关
-        json.put("cursorParkOffscreen", settings.cursorParkOffscreen) // 写入居中落点开关（是否停放到屏幕外下方）
+        json.put("wasdAutoCenterMouse", settings.wasdAutoCenterMouse) // 写入 WASD 自动锁定前的光标归位开关
+        json.put("cursorParkOffscreen", settings.cursorParkOffscreen) // 写入归位落点开关（是否停放到屏幕左下角之外）
         return json // 返回 JSON 对象
     } // 结束 globalSettingsToJson 函数
 
@@ -252,8 +252,8 @@ object ControllerConfig { // 单例对象：配置的 JSON 序列化/反序列�
             longPressThresholdMs = json.optInt("longPressThresholdMs", 500), // 读取长按阈值（语法：optInt=带默认值读取整数）
             longPressFallbackToShort = json.optBoolean("longPressFallbackToShort", false), // 读取长按回退开关
             wasdAutoRightLock = json.optBoolean("wasdAutoRightLock", true), // 读取 WASD 自动锁定右键开关（默认开启）
-            wasdAutoCenterMouse = json.optBoolean("wasdAutoCenterMouse", true), // 读取 WASD 自动锁定前的鼠标居中开关（默认开启）
-            cursorParkOffscreen = json.optBoolean("cursorParkOffscreen", true) // 读取居中落点开关（默认停放到屏幕外下方）
+            wasdAutoCenterMouse = json.optBoolean("wasdAutoCenterMouse", true), // 读取 WASD 自动锁定前的光标归位开关（默认开启）
+            cursorParkOffscreen = json.optBoolean("cursorParkOffscreen", true) // 读取归位落点开关（默认停放到屏幕左下角之外）
         ) // 结束 GlobalSettings 构造
     } // 结束 parseGlobalSettings 函数
 

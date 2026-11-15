@@ -160,9 +160,9 @@ class ControllerOverlayService : Service() {  // class=类声明；继承 Servic
         /** Intent extra: 左摇杆移动时是否自动锁定鼠标右键 (Boolean) */
         const val EXTRA_WASD_AUTO_RIGHT_LOCK = "wasd_auto_right_lock"  // const val=编译期常量；WASD 自动锁定右键开关的 extra 键
         /** Intent extra: 自动锁定右键前是否先把鼠标移到屏幕中央 (Boolean) */
-        const val EXTRA_WASD_AUTO_CENTER_MOUSE = "wasd_auto_center_mouse"  // const val=编译期常量；WASD 自动锁定前鼠标居中开关的 extra 键
-        /** Intent extra: 居中落点是否停放到屏幕外下方 (Boolean) */
-        const val EXTRA_CURSOR_PARK_OFFSCREEN = "cursor_park_offscreen"  // const val=编译期常量；居中落点（屏幕外下方 / 屏幕正中央）开关的 extra 键
+        const val EXTRA_WASD_AUTO_CENTER_MOUSE = "wasd_auto_center_mouse"  // const val=编译期常量；WASD 自动锁定前光标归位开关的 extra 键
+        /** Intent extra: 归位落点是否停放到屏幕左下角之外 (Boolean) */
+        const val EXTRA_CURSOR_PARK_OFFSCREEN = "cursor_park_offscreen"  // const val=编译期常量；归位落点（屏幕左下角之外 / 屏幕正中央）开关的 extra 键
 
         /** 广播: 客户端连接状态变化 */
         const val ACTION_CLIENT_STATUS = "CLIENT_STATUS"  // const val=编译期常量；客户端连接状态广播 action
@@ -901,8 +901,8 @@ class ControllerOverlayService : Service() {  // class=类声明；继承 Servic
             longPressThresholdMs = intent.getIntExtra(EXTRA_LONG_PRESS_THRESHOLD_MS, old.longPressThresholdMs),  // 命名参数；读取长按阈值
             longPressFallbackToShort = intent.getBooleanExtra(EXTRA_LONG_PRESS_FALLBACK, old.longPressFallbackToShort),  // 命名参数；读取长按回退开关
             wasdAutoRightLock = intent.getBooleanExtra(EXTRA_WASD_AUTO_RIGHT_LOCK, old.wasdAutoRightLock),  // 命名参数；读取 WASD 自动锁定右键开关
-            wasdAutoCenterMouse = intent.getBooleanExtra(EXTRA_WASD_AUTO_CENTER_MOUSE, old.wasdAutoCenterMouse),  // 命名参数；读取 WASD 自动锁定前的鼠标居中开关
-            cursorParkOffscreen = intent.getBooleanExtra(EXTRA_CURSOR_PARK_OFFSCREEN, old.cursorParkOffscreen)  // 命名参数；读取居中落点开关（屏幕外下方 / 屏幕正中央）
+            wasdAutoCenterMouse = intent.getBooleanExtra(EXTRA_WASD_AUTO_CENTER_MOUSE, old.wasdAutoCenterMouse),  // 命名参数；读取 WASD 自动锁定前的光标归位开关
+            cursorParkOffscreen = intent.getBooleanExtra(EXTRA_CURSOR_PARK_OFFSCREEN, old.cursorParkOffscreen)  // 命名参数；读取归位落点开关（屏幕左下角之外 / 屏幕正中央）
         )  // 结束 GlobalSettings 构造
         // 更新运行时 profile（loadProfile 会重置操作层状态，设置更新时合理）
         si.loadProfile(si.profile.copy(globalSettings = newSettings))  // copy()=复制对象并修改指定属性；应用新设置

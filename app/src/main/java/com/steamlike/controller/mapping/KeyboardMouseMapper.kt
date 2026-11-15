@@ -1331,7 +1331,7 @@ class KeyboardMouseMapper( // 语法：class 类声明，定义键盘/鼠标映�
      * 2. 若左右键处于锁定则先解锁（**立即发出**），再把鼠标移到屏幕正中央，然后左键点击一下、右键点击一下；
      * 3. 最后把鼠标移回原位置，再恢复记录时的长按锁存状态。
      *
-     * 居中固定用屏幕正中央，不受「居中落点」开关影响；解锁立即发出，第 2 步的居中
+     * 居中固定用屏幕正中央，不受「归位落点」开关影响；解锁立即发出，第 2 步的居中
      * 与之后的点击/还原/恢复锁存整体延后 [unlockCenterDelayMs]（WoW 退出 mouselook 需要时间，
      * 否则居中会被游戏侧的光标接管覆盖），相对顺序不变。
      */
@@ -1379,7 +1379,7 @@ class KeyboardMouseMapper( // 语法：class 类声明，定义键盘/鼠标映�
         if (remoteWasdLockSuspended) return // 客户端「解锁+居中+按键」临时禁用中：APK 同样不自动锁定
         if (isMouseLocked(MouseButton.RIGHT)) return // 右键已锁定（含客户端上报的锁存）：不重复锁定（语法：if 单行返回）
         if (pressedMouseButtons.containsValue(MouseButton.RIGHT)) return // 右键正被临时按住（MouseClick 动作）：不重复按下，避免其松开时打断锁定态（语法：containsValue 映射值包含判断）
-        // 开关开启时把鼠标光标归位（落点由「居中落点」开关决定：屏幕外下方 / 屏幕正中央）
+        // 开关开启时把光标挪到画面外（落点由「归位落点」开关决定：屏幕左下角之外 / 屏幕正中央）
         if (steamInput.profile.globalSettings.wasdAutoCenterMouse) injector.sendMouseCenter(steamInput.profile.globalSettings.cursorParkOffscreen) // 避免锁定瞬间视角从偏移位置开始漂移（语法：if 单行语句）
         setMouseLockState(MouseButton.RIGHT, true) // 锁存右键（内部发送 F11 锁定，不发真实鼠标右键按下）
         Log.d(TAG, "Auto MouseDown: RIGHT (left stick move)") // 打印自动锁定日志

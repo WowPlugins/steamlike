@@ -291,17 +291,17 @@ class InputBridgeServer(  // 语法：class 声明类；InputBridge TCP 服务�
     /**
      * 发送鼠标归位事件
      *
-     * Byte 1 携带落点：0=屏幕正中央，1=屏幕中央正下方、屏幕下边缘之外 1/10 屏高处。
+     * Byte 1 携带落点：0=屏幕正中央，1=屏幕左下角之外、屏幕下边缘再往下约 2/3 屏高处。
      * Windows 客户端收到后按落点调用 SetCursorPos。
-     * 用于左摇杆 WASD 移动自动锁定右键前，先把光标归位，
+     * 用于左摇杆 WASD 移动自动锁定右键前，先把光标挪到画面外，
      * 避免锁定瞬间视角从偏移位置开始漂移。
      *
-     * @param parkOffscreen true=停放到屏幕外下方，false=屏幕正中央
+     * @param parkOffscreen true=停放到屏幕左下角之外，false=屏幕正中央
      */
     fun sendMouseCenter(parkOffscreen: Boolean) {  // 语法：fun 函数；发送鼠标归位事件
         val packet = ByteArray(PACKET_SIZE)  // 语法：val + ByteArray；创建 8 字节数据包
         packet[0] = MSG_MOUSE_CENTER  // 写入消息类型：鼠标归位
-        packet[1] = if (parkOffscreen) 1 else 0  // 写入落点：1=屏幕外下方，0=屏幕正中央
+        packet[1] = if (parkOffscreen) 1 else 0  // 写入落点：1=屏幕左下角之外，0=屏幕正中央
         enqueue(packet)  // 加入发送队列
     }  // 结束 sendMouseCenter 函数
 

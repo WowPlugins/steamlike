@@ -38,7 +38,7 @@ import java.io.File // 导入 File（配置状态判断）
  * - 智能暂停 / 手柄捕获 / 白名单 / 拉起应用包名
  * - 右摇杆优化（死区、灵敏度、平滑、加速、光标速度）
  * - 长按映射（阈值、长按未映射时回退短按）
- * - WASD 自动锁定（自动锁定、自动居中、居中落点）
+ * - WASD 自动锁定（自动锁定、锁定前归位、归位落点）
  * - 调试（手柄按键测试入口）
  *
  * 所有配置仍然写入同一个运行时配置文件（[AppConfigStore]），
@@ -314,10 +314,10 @@ class AdvancedSettingsActivity : AppCompatActivity() { // 声明高级设置页�
         wasdLockCard.addView(UiKit.spacer(this, 4))
         wasdLockCard.addView(UiKit.caption(
             this,
-            ("左摇杆移动（WASD）时是否自动锁定鼠标右键：\n"
-                + "• 开启：移动时自动把鼠标居中并锁定右键（视角跟随移动方向）\n"
-                + "• 关闭：移动不会自动锁定右键，需按键手动锁定\n"
-                + "• 居中落点：默认停放到屏幕外下方，可改为屏幕正中央"),
+            ("左摇杆推方向（映射为 WASD）时是否自动按住鼠标右键：\n"
+                + "• 开启：首次移动时先把光标挪到画面外，再按住右键，之后可用右摇杆自由转视角\n"
+                + "• 关闭：移动时不碰鼠标，需按「右键锁定」键手动进入视角模式\n"
+                + "• 落点：默认挪到屏幕左下角之外，可改为屏幕正中央"),
             0xFF999999.toInt(), 11f
         ))
         wasdLockCard.addView(UiKit.spacer(this, 8))
@@ -329,13 +329,13 @@ class AdvancedSettingsActivity : AppCompatActivity() { // 声明高级设置页�
         wasdLockCard.addView(UiKit.spacer(this, 4))
 
         val wasdAutoCenterSwitch = UiKit.switchRow(
-            this, "自动锁定前把鼠标移到屏幕正中央", currentSettings.wasdAutoCenterMouse
+            this, "锁定前先把光标挪到画面外（避免视角跳一下）", currentSettings.wasdAutoCenterMouse
         ) {}
         wasdLockCard.addView(wasdAutoCenterSwitch)
         wasdLockCard.addView(UiKit.spacer(this, 4))
 
         val cursorParkSwitch = UiKit.switchRow(
-            this, "居中时停放到屏幕外下方（关闭则为屏幕正中央）", currentSettings.cursorParkOffscreen
+            this, "画面外落点：屏幕左下角之外（关闭则停在屏幕正中央）", currentSettings.cursorParkOffscreen
         ) {}
         wasdLockCard.addView(cursorParkSwitch)
         wasdLockCard.addView(UiKit.spacer(this, 6))
