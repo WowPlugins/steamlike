@@ -1420,6 +1420,7 @@ class KeyboardMouseMapper( // 语法：class 类声明，定义键盘/鼠标映�
         if (remoteWasdLockSuspended) return // 客户端「解锁+居中+按键」临时禁用中：APK 同样不自动锁定
         if (isMouseLocked(MouseButton.RIGHT)) return // 右键已锁定（含客户端上报的锁存）：不重复锁定（语法：if 单行返回）
         if (pressedMouseButtons.containsValue(MouseButton.RIGHT)) return // 右键正被临时按住（MouseClick 动作）：不重复按下，避免其松开时打断锁定态（语法：containsValue 映射值包含判断）
+        if (interactSequenceActive) return // 交互键序列进行中：该序列已临时解锁并会在末尾恢复锁存，中途锁定会把光标挪离交互目标、并让末尾的右键点击把锁定放掉
         // 开关开启时把光标挪到画面外（落点由「归位落点」开关决定：屏幕左下角之外 / 屏幕正中央）
         if (steamInput.profile.globalSettings.wasdAutoCenterMouse) injector.sendMouseCenter(steamInput.profile.globalSettings.cursorParkOffscreen) // 避免锁定瞬间视角从偏移位置开始漂移（语法：if 单行语句）
         setMouseLockState(MouseButton.RIGHT, true) // 锁存右键（内部发送 F11 锁定，不发真实鼠标右键按下）

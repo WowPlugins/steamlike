@@ -182,8 +182,8 @@ pub fn inject_mouse_move(dx: i32, dy: i32) {
 /// 一次指针移动调用中判断「游戏是否在运行」的最大缓存时长（毫秒）
 const GAME_CHECK_MS: u64 = 500;
 
-/// 鼠标移动调用时的时间戳（毫秒）
-fn now_ms() -> u64 {
+/// 当前 epoch 毫秒（用于比较交互键序列的抑制截止时间）
+pub fn now_ms() -> u64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_millis() as u64)

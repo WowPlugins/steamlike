@@ -41,6 +41,12 @@ pub struct Runtime {
     pub cursor_park_offscreen: AtomicBool,
     /// 交互键序列开始时记录的光标位置（高 32 位 X，低 32 位 Y），供序列末尾还原
     pub saved_cursor: AtomicI64,
+    /// APK 交互键序列的抑制截止时间（epoch 毫秒）：在此之前不做 WASD 自动锁定右键
+    ///
+    /// 序列内部自己会「解锁左右键 → 归中 → 点击 → 还原位置 → 恢复锁存」，
+    /// 中途若被 WASD 自动锁定插进来，光标会被挪离交互目标，序列末尾的右键点击
+    /// 还会把游戏里的按住状态放掉（锁定标志却仍为 true，表现为「锁定不上」）。
+    pub interact_hold_ms: AtomicU64,
     /// 剪贴板同步开关（默认开启）：开启后剪贴板文本始终追加到本地文件，
     /// 已连接 APK 时同时发送到手机剪贴板
     pub clipboard_sync: AtomicBool,
@@ -69,6 +75,7 @@ pub static RT: Runtime = Runtime {
     last_mouse: AtomicI64::new(0),
     cursor_park_offscreen: AtomicBool::new(true),
     saved_cursor: AtomicI64::new(CURSOR_UNSET),
+    interact_hold_ms: AtomicU64::new(0),
     clipboard_sync: AtomicBool::new(true),
     key_mapping_enabled: AtomicBool::new(true),
     overlay_expanded: AtomicBool::new(true),

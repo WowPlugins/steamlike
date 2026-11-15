@@ -277,6 +277,15 @@ fn pump(stream: &mut TcpStream, buf: &mut Vec<u8>) -> bool {
     }
 }
 
+/// 该鼠标按钮当前是否处于长按锁存
+fn is_button_locked(button: u8) -> bool {
+    match button {
+        BTN_LEFT => RT.left_locked.load(Ordering::Relaxed),
+        BTN_RIGHT => RT.right_locked.load(Ordering::Relaxed),
+        _ => false,
+    }
+}
+
 fn process_packet(data: &[u8; PACKET_SIZE]) {
     match data[0] {
         0x01 => {
@@ -308,6 +317,21 @@ fn process_packet(data: &[u8; PACKET_SIZE]) {
         }
         0x03 => {
             let down = data[2] != 0;
+            // 锁存中的按钮必须忽略「普通点击」（Byte3=0）。
+            // 锁存本身已经把这个键按住：点击的按下是重复按下，而抬起会把游戏里的按住状态
+            // 放掉（退出 mouselook），本地锁存标志却仍是 true，之后 set_lock 变成空操作，
+            // 表现为「右键锁定不上」。典型触发：连点交互键时左摇杆走动，交互序列的
+            // 解锁窗口内又自动锁定了右键，随后序列自带的右键点击把锁定放掉。
+            if data[3] == 0
+                && (data[1] == BTN_LEFT || data[1] == BTN_RIGHT)
+                && is_button_locked(data[1])
+            {
+                if !down {
+                    // 点击仍然算「指针操作结束」，延时恢复被临时禁用的 WASD 自动锁定
+                    crate::hooks::request_resume_wasd_lock_after_click();
+                }
+                return;
+            }
             win::inject_mouse_button(data[1], down);
             // Byte3=1：APK 的锁存操作（长按/右键锁定切换/交互键末尾恢复）。
             // 事件本身带 MAGIC 标记，鼠标钩子只放行不记状态；这里主动同步锁存标志，
@@ -351,9 +375,18 @@ fn process_packet(data: &[u8; PACKET_SIZE]) {
         // 交互键与各「解除锁定」路径的归中固定落在屏幕正中央，不受落点开关影响
         0x08 => win::center_cursor(),
         // 交互键序列：记录当前光标位置，供序列末尾还原
-        0x09 => win::save_cursor(),
+        0x09 => {
+            win::save_cursor();
+            // 序列进行中抑制 WASD 自动锁定右键：序列自己负责「解锁 → 点击 → 恢复」，
+            // 中途再自动锁定会把光标挪离交互目标，并让序列末尾的右键点击丢掉锁存
+            RT.interact_hold_ms
+                .store(win::now_ms() + 1000, Ordering::Relaxed);
+        }
         // 交互键序列：把光标还原到 0x09 记录的位置
-        0x0A => win::restore_cursor(),
+        0x0A => {
+            win::restore_cursor();
+            RT.interact_hold_ms.store(0, Ordering::Relaxed);
+        }
         // 时间同步：Byte1-7 为小端 56 位 epoch 毫秒，校准 Windows 系统时间
         0x0B => {
             let mut millis: u64 = 0;

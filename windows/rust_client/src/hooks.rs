@@ -121,6 +121,11 @@ pub fn set_lock(button: u8, locked: bool) -> bool {
 
 /// WASD 按下时确保右键处于长按锁定（左键已锁定或右键已锁定则跳过）
 fn ensure_right_locked_on_move() {
+    // APK 交互键序列进行中（0x09 ~ 0x0A）：序列自己会在末尾恢复锁存。
+    // 这里再锁定会把光标挪离交互目标，并让序列末尾的右键点击把按住状态放掉
+    if win::now_ms() < RT.interact_hold_ms.load(Ordering::Relaxed) {
+        return;
+    }
     if RT.left_locked.load(Ordering::Relaxed) {
         return;
     }
