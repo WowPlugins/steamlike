@@ -6,13 +6,14 @@
 
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use windows::core::{w, PCWSTR};
-use windows::Win32::Foundation::{HWND, POINT, RECT};
+use windows::Win32::Foundation::{BOOL, HWND, LPARAM, POINT, RECT};
 use windows::Win32::Graphics::Gdi::{CreateRoundRectRgn, DeleteObject, SetWindowRgn};
+use windows::Win32::System::Threading::GetCurrentProcessId;
 use windows::Win32::UI::Input::KeyboardAndMouse::*;
 use windows::Win32::UI::WindowsAndMessaging::{
-    FindWindowW, GetCursorPos, GetSystemMetrics, GetWindowRect, SetCursorPos, SetWindowPos,
-    SetWindowTextW, HWND_TOPMOST, SM_CXSCREEN, SM_CYSCREEN, SWP_NOACTIVATE, SWP_NOMOVE,
-    SWP_NOZORDER, SWP_NOSIZE,
+    EnumWindows, FindWindowW, GetCursorPos, GetSystemMetrics, GetWindowRect,
+    GetWindowThreadProcessId, IsWindowVisible, SetCursorPos, SetWindowPos, SetWindowTextW,
+    HWND_TOPMOST, SM_CXSCREEN, SM_CYSCREEN, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOZORDER, SWP_NOSIZE,
 };
 
 use crate::runtime::{log, pack_pos, unpack_pos, CURSOR_UNSET, RT};
@@ -202,10 +203,9 @@ pub fn screen_size() -> (i32, i32) {
 /// @param new_title 新窗口标题
 /// @return 是否成功改名
 pub fn rename_own_window(old_title: &str, new_title: &str) -> bool {
-    let old_w: Vec<u16> = old_title.encode_utf16().chain(std::iter::once(0)).collect();
     let new_w: Vec<u16> = new_title.encode_utf16().chain(std::iter::once(0)).collect();
     unsafe {
-        let hwnd = FindWindowW(PCWSTR::null(), PCWSTR(old_w.as_ptr()));
+        let hwnd = own_hwnd(old_title);
         if hwnd.0 == 0 {
             return false;
         }
@@ -213,13 +213,45 @@ pub fn rename_own_window(old_title: &str, new_title: &str) -> bool {
     }
 }
 
+/// 查找本程序自己的顶层窗口句柄
+///
+/// 优先按标题精确匹配；标题对不上时（version.txt 带 BOM、连接后标题已按 APK 版本改过等）
+/// 回退到「属于本进程的可见顶层窗口」。这个回退很关键：找不到句柄会让尺寸调整和
+/// 圆形裁剪全部失效 —— 收起成圆点时窗口仍停在启动尺寸，整个大窗口会盖住游戏并吞掉点击。
+fn own_hwnd(title: &str) -> HWND {
+    /// 进程内唯一窗口：枚举时用这两个原子量传递 pid 与结果（只在界面线程调用）
+    static SEARCH_PID: AtomicU64 = AtomicU64::new(0);
+    static SEARCH_HWND: AtomicU64 = AtomicU64::new(0);
+
+    unsafe extern "system" fn find_by_pid(hwnd: HWND, _: LPARAM) -> BOOL {
+        let mut pid = 0u32;
+        let _ = GetWindowThreadProcessId(hwnd, Some(&mut pid));
+        if pid as u64 == SEARCH_PID.load(Ordering::Relaxed) && IsWindowVisible(hwnd).as_bool() {
+            SEARCH_HWND.store(hwnd.0 as u64, Ordering::Relaxed);
+            return BOOL(0); // 找到即停止枚举
+        }
+        BOOL(1)
+    }
+
+    let wide: Vec<u16> = title.encode_utf16().chain(std::iter::once(0)).collect();
+    unsafe {
+        let hwnd = FindWindowW(PCWSTR::null(), PCWSTR(wide.as_ptr()));
+        if hwnd.0 != 0 {
+            return hwnd;
+        }
+        SEARCH_PID.store(GetCurrentProcessId() as u64, Ordering::Relaxed);
+        SEARCH_HWND.store(0, Ordering::Relaxed);
+        let _ = EnumWindows(Some(find_by_pid), LPARAM(0));
+        HWND(SEARCH_HWND.load(Ordering::Relaxed) as isize)
+    }
+}
+
 /// 读取本程序窗口的实际外框尺寸（宽, 高）
 ///
 /// 找不到窗口时返回 (0, 0)，供界面判断是否需要重新设置圆角区域。
 pub fn own_window_size(title: &str) -> (i32, i32) {
-    let wide: Vec<u16> = title.encode_utf16().chain(std::iter::once(0)).collect();
     unsafe {
-        let hwnd = FindWindowW(PCWSTR::null(), PCWSTR(wide.as_ptr()));
+        let hwnd = own_hwnd(title);
         if hwnd.0 == 0 {
             return (0, 0);
         }
@@ -236,9 +268,8 @@ pub fn own_window_size(title: &str) -> (i32, i32) {
 /// eframe 的 `set_window_size` 只是请求，Winlator/Wine 下不一定生效；
 /// 这里直接调用 `SetWindowPos`，窗口尺寸变化后 winit 会收到 Resize 事件并同步给 egui。
 pub fn resize_own_window(title: &str, w: i32, h: i32) {
-    let wide: Vec<u16> = title.encode_utf16().chain(std::iter::once(0)).collect();
     unsafe {
-        let hwnd = FindWindowW(PCWSTR::null(), PCWSTR(wide.as_ptr()));
+        let hwnd = own_hwnd(title);
         if hwnd.0 == 0 {
             return;
         }
@@ -256,9 +287,8 @@ pub fn resize_own_window(title: &str, w: i32, h: i32) {
 
 /// 读取本程序窗口左上角坐标（物理像素），找不到窗口时返回 None
 pub fn own_window_pos(title: &str) -> Option<(i32, i32)> {
-    let wide: Vec<u16> = title.encode_utf16().chain(std::iter::once(0)).collect();
     unsafe {
-        let hwnd = FindWindowW(PCWSTR::null(), PCWSTR(wide.as_ptr()));
+        let hwnd = own_hwnd(title);
         if hwnd.0 == 0 {
             return None;
         }
@@ -272,9 +302,8 @@ pub fn own_window_pos(title: &str) -> Option<(i32, i32)> {
 
 /// 把本程序窗口移动到指定位置（不改尺寸、不改 z 序、不抢焦点）
 pub fn move_own_window(title: &str, x: i32, y: i32) {
-    let wide: Vec<u16> = title.encode_utf16().chain(std::iter::once(0)).collect();
     unsafe {
-        let hwnd = FindWindowW(PCWSTR::null(), PCWSTR(wide.as_ptr()));
+        let hwnd = own_hwnd(title);
         if hwnd.0 == 0 {
             return;
         }
@@ -296,9 +325,8 @@ pub fn move_own_window(title: &str, x: i32, y: i32) {
 /// 小圆点就看不见了。这里每次调用都用 `SetWindowPos(HWND_TOPMOST)` 把窗口重新提回最上层，
 /// 只改 z 序、不动位置和焦点，界面里周期性调用即可。
 pub fn set_topmost(title: &str) {
-    let wide: Vec<u16> = title.encode_utf16().chain(std::iter::once(0)).collect();
     unsafe {
-        let hwnd = FindWindowW(PCWSTR::null(), PCWSTR(wide.as_ptr()));
+        let hwnd = own_hwnd(title);
         if hwnd.0 == 0 {
             return;
         }
@@ -321,9 +349,8 @@ pub fn set_topmost(title: &str) {
 pub fn round_own_window(title: &str, radius: i32) {
     // 失败只记录一次，避免每秒重试把日志刷爆
     static FAIL_LOGGED: AtomicBool = AtomicBool::new(false);
-    let wide: Vec<u16> = title.encode_utf16().chain(std::iter::once(0)).collect();
     unsafe {
-        let hwnd = FindWindowW(PCWSTR::null(), PCWSTR(wide.as_ptr()));
+        let hwnd = own_hwnd(title);
         if hwnd.0 == 0 {
             if !FAIL_LOGGED.swap(true, Ordering::Relaxed) {
                 log("[窗口] 未找到自身窗口句柄，无法设置圆角区域");

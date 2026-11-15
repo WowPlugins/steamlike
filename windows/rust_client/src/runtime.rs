@@ -136,7 +136,10 @@ pub fn version() -> &'static str {
             .ok()
             .and_then(|exe| exe.parent().map(|dir| dir.join("version.txt")))
             .and_then(|path| std::fs::read_to_string(path).ok())
-            .map(|text| text.trim().to_string())
+            // 必须剥掉 UTF-8 BOM：带 BOM 写出的 version.txt 会让标题变成
+            // 「v﻿0.1.148」（含不可见字符），与 APK 下发的版本号不一致，
+            // 界面按标题找不到自身窗口 → 尺寸调整与圆形裁剪全部失效（圆点铺满窗口）
+            .map(|text| text.trim_start_matches('\u{feff}').trim().to_string())
             .filter(|v| !v.is_empty());
         from_file.unwrap_or_else(|| {
             option_env!("STEAMLIKE_VERSION")
