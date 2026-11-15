@@ -100,6 +100,12 @@ const KEY_CHOICES: &[(u32, &str)] = &[
     (0x7B, "F12"),
 ];
 
+/// 映射编辑界面的强调色：蓝色＝点击（短按），橙色＝长按，用边框颜色区分两组动作
+const TAP_ACCENT: egui::Color32 = egui::Color32::from_rgb(0x4C, 0x9A, 0xFF);
+const HOLD_ACCENT: egui::Color32 = egui::Color32::from_rgb(0xFF, 0xA7, 0x26);
+/// 源按键（触发键）分组用青色，与点击/长按的蓝、橙区分
+const SOURCE_ACCENT: egui::Color32 = egui::Color32::from_rgb(0x2E, 0xC4, 0xB6);
+
 /// Shift 组合下的符号（同一物理键按下 Shift 后产生的字符）
 ///
 /// 选中这些符号时界面会自动把 Shift 加进子命令，注入时即 shift+VK。
@@ -427,7 +433,12 @@ impl App {
 
     fn section(ui: &mut egui::Ui, title: &str) {
         ui.add_space(4.0);
-        ui.label(egui::RichText::new(title).strong());
+        // 左侧彩色竖条 + 加粗标题，页面分块更清晰
+        ui.horizontal(|ui| {
+            let (rect, _) = ui.allocate_exact_size(egui::vec2(3.0, 16.0), egui::Sense::hover());
+            ui.painter().rect_filled(rect, 1.5_f32, TAP_ACCENT);
+            ui.label(egui::RichText::new(title).strong());
+        });
     }
 }
 
@@ -1113,13 +1124,13 @@ impl App {
                         },
                     );
                 });
-                // 点击与长按分别一行，避免分不清哪个动作属于点击、哪个属于长按
+                // 点击与长按分别一行，用与编辑对话框相同的颜色区分
                 ui.horizontal(|ui| {
-                    ui.label("点击 →");
+                    ui.label(egui::RichText::new("点击 →").color(TAP_ACCENT));
                     Self::render_action_summary(ui, &mapping.tap_action);
                 });
                 ui.horizontal(|ui| {
-                    ui.label("长按 →");
+                    ui.label(egui::RichText::new("长按 →").color(HOLD_ACCENT));
                     Self::render_action_summary(ui, &mapping.long_press_action);
                 });
             });
@@ -1148,6 +1159,65 @@ impl App {
         } else {
             ui.label(action.describe());
         }
+    }
+
+    /// 用带颜色的边框包住一组动作编辑控件
+    ///
+    /// 点击（短按）用蓝色、长按用橙色，两组动作在对话框里一眼可分。
+    fn action_group(
+        ui: &mut egui::Ui,
+        title: &str,
+        accent: egui::Color32,
+        add_contents: impl FnOnce(&mut egui::Ui),
+    ) {
+        egui::Frame::group(ui.style())
+            .stroke(egui::Stroke::new(1.5_f32, accent))
+            .fill(accent.gamma_multiply(0.12))
+            .rounding(egui::Rounding::same(6.0_f32))
+            .inner_margin(8.0)
+            .show(ui, |ui| {
+                ui.set_width(ui.available_width());
+                ui.label(egui::RichText::new(title).strong().color(accent));
+                add_contents(ui);
+            });
+    }
+
+    /// 首页状态条：连接 / 拦截 / 映射 三个关键状态用彩色胶囊展示
+    fn render_status_strip(&self, ui: &mut egui::Ui) {
+        let green = egui::Color32::from_rgb(0x1B, 0x8A, 0x2E);
+        let orange = egui::Color32::from_rgb(0x9E, 0x5B, 0x00);
+        let muted = ui.visuals().weak_text_color();
+        ui.horizontal_wrapped(|ui| {
+            let connected = CONNECTED.load(Ordering::Relaxed);
+            Self::status_pill(
+                ui,
+                if connected { "APK 已连接" } else { "APK 未连接" },
+                if connected { green } else { orange },
+            );
+            Self::status_pill(
+                ui,
+                if self.cfg.intercept_enabled { "拦截 开" } else { "拦截 关" },
+                if self.cfg.intercept_enabled { green } else { muted },
+            );
+            Self::status_pill(
+                ui,
+                if self.cfg.key_mapping_enabled { "映射 开" } else { "映射 关" },
+                if self.cfg.key_mapping_enabled { green } else { muted },
+            );
+            Self::status_pill(ui, &format!("{} 条映射", self.cfg.key_mappings.len()), muted);
+        });
+    }
+
+    /// 状态胶囊：淡色底 + 同色细边框
+    fn status_pill(ui: &mut egui::Ui, text: &str, color: egui::Color32) {
+        egui::Frame::none()
+            .fill(color.gamma_multiply(0.18))
+            .stroke(egui::Stroke::new(1.0_f32, color))
+            .rounding(egui::Rounding::same(9.0_f32))
+            .inner_margin(egui::Margin::symmetric(8.0, 2.0))
+            .show(ui, |ui| {
+                ui.label(egui::RichText::new(text).size(12.0).color(color));
+            });
     }
 
     /// 日志 Tab 页
@@ -1467,54 +1537,36 @@ impl App {
         egui::Window::new(format!("编辑映射: {}", key_name(self.edit_source_vk)))
             .collapsible(false)
             .resizable(false)
+            .default_width(400.0)
             .vscroll(true)
             .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
             .open(&mut open)
             .show(ctx, |ui| {
-                // 源按键
-                ui.horizontal(|ui| {
-                    ui.label("源按键:");
-                    let text = key_name(self.edit_source_vk);
-                    Self::choice_dropdown(ui, "map_source_vk", &text, |ui| {
-                        let mut chosen = false;
-                        for (vk, name) in KEY_CHOICES {
-                            if ui.selectable_label(self.edit_source_vk == *vk, *name).clicked() {
-                                self.edit_source_vk = *vk;
-                                chosen = true;
+                /* ===== 源按键：触发该映射的按键，青色边框 ===== */
+                Self::action_group(ui, "源按键", SOURCE_ACCENT, |ui| {
+                    ui.horizontal(|ui| {
+                        ui.label("按键:");
+                        let text = key_name(self.edit_source_vk);
+                        Self::choice_dropdown(ui, "map_source_vk", &text, |ui| {
+                            let mut chosen = false;
+                            for (vk, name) in KEY_CHOICES {
+                                if ui.selectable_label(self.edit_source_vk == *vk, *name).clicked() {
+                                    self.edit_source_vk = *vk;
+                                    chosen = true;
+                                }
                             }
-                        }
-                        chosen
+                            chosen
+                        });
                     });
+
+                    // 源按键的修饰键：如「Ctrl+7」需 Ctrl 按住时才触发该映射
+                    Self::render_sub_commands_editor(ui, &mut self.edit_source_mods, "map_src");
                 });
 
-                // 源按键的修饰键：如「Ctrl+7」需 Ctrl 按住时才触发该映射
-                Self::render_sub_commands_editor(ui, &mut self.edit_source_mods, "map_src");
+                ui.add_space(6.0);
 
                 ui.checkbox(&mut self.edit_enabled, "启用此映射");
 
-                // 生效条件：可添加多条，按「且 / 或」组合后决定该映射是否参与匹配。
-                // 同一手柄键可以按不同状态拆成多条映射。
-                ui.label("短按生效条件（留空=始终生效）:");
-                Self::render_conditions_editor(
-                    ui,
-                    &mut self.edit_conditions,
-                    &mut self.edit_cond_mode,
-                    "map_cond",
-                );
-
-                // 长按条件：默认沿用短按条件，也可单独设置（如短按需潜行、长按始终生效）
-                ui.checkbox(
-                    &mut self.edit_long_use_own_conditions,
-                    "长按使用独立条件（默认沿用短按）",
-                );
-                if self.edit_long_use_own_conditions {
-                    Self::render_conditions_editor(
-                        ui,
-                        &mut self.edit_long_conditions,
-                        &mut self.edit_long_cond_mode,
-                        "map_long_cond",
-                    );
-                }
                 ui.label(
                     egui::RichText::new(format!(
                         "当前角色状态：{}（需在游戏插件列表启用 SLState）",
@@ -1525,63 +1577,97 @@ impl App {
 
                 ui.separator();
 
-                /* ===== 短按动作 ===== */
-                ui.label(egui::RichText::new("点击（短按）动作").strong());
-                ui.horizontal(|ui| {
-                    ui.label("动作类型:");
-                    let text = action_types[self.edit_tap_type];
-                    Self::choice_dropdown(ui, "map_tap_type", text, |ui| {
-                        let mut chosen = false;
-                        for (i, name) in action_types.iter().enumerate() {
-                            if ui.selectable_label(self.edit_tap_type == i, *name).clicked() {
-                                self.edit_tap_type = i;
-                                chosen = true;
+                /* ===== 点击（短按）：生效条件 + 动作，蓝色边框 ===== */
+                Self::action_group(ui, "点击（短按）", TAP_ACCENT, |ui| {
+                    // 生效条件：可添加多条，按「且 / 或」组合后决定该映射是否参与匹配。
+                    // 同一手柄键可以按不同状态拆成多条映射。
+                    ui.label("生效条件（留空=始终生效）:");
+                    Self::render_conditions_editor(
+                        ui,
+                        &mut self.edit_conditions,
+                        &mut self.edit_cond_mode,
+                        "map_cond",
+                    );
+
+                    ui.separator();
+
+                    ui.horizontal(|ui| {
+                        ui.label("动作类型:");
+                        let text = action_types[self.edit_tap_type];
+                        Self::choice_dropdown(ui, "map_tap_type", text, |ui| {
+                            let mut chosen = false;
+                            for (i, name) in action_types.iter().enumerate() {
+                                if ui.selectable_label(self.edit_tap_type == i, *name).clicked() {
+                                    self.edit_tap_type = i;
+                                    chosen = true;
+                                }
                             }
-                        }
-                        chosen
+                            chosen
+                        });
                     });
+
+                    // 短按动作值
+                    Self::render_action_value_editor(
+                        ui,
+                        self.edit_tap_type,
+                        &mut self.edit_tap_value,
+                        &mut self.edit_tap_subs,
+                        &mut self.edit_tap_turn_step_ms,
+                        &mut self.edit_tap_suspend_wasd,
+                        "tap",
+                    );
                 });
 
-                // 短按动作值
-                Self::render_action_value_editor(
-                    ui,
-                    self.edit_tap_type,
-                    &mut self.edit_tap_value,
-                    &mut self.edit_tap_subs,
-                    &mut self.edit_tap_turn_step_ms,
-                    &mut self.edit_tap_suspend_wasd,
-                    "tap",
-                );
+                ui.add_space(6.0);
 
-                ui.separator();
+                /* ===== 长按：生效条件 + 动作，橙色边框 ===== */
+                Self::action_group(ui, "长按（可选）", HOLD_ACCENT, |ui| {
+                    // 长按条件：默认沿用短按条件，也可单独设置（如短按需潜行、长按始终生效）
+                    ui.checkbox(
+                        &mut self.edit_long_use_own_conditions,
+                        "使用独立条件（默认沿用短按条件）",
+                    );
+                    if self.edit_long_use_own_conditions {
+                        ui.label("长按生效条件（留空=始终生效）:");
+                        Self::render_conditions_editor(
+                            ui,
+                            &mut self.edit_long_conditions,
+                            &mut self.edit_long_cond_mode,
+                            "map_long_cond",
+                        );
+                    }
 
-                /* ===== 长按动作 ===== */
-                ui.label(egui::RichText::new("长按动作（可选）").strong());
-                ui.horizontal(|ui| {
-                    ui.label("动作类型:");
-                    let text = long_press_types[self.edit_long_press_type];
-                    Self::choice_dropdown(ui, "map_lp_type", text, |ui| {
-                        let mut chosen = false;
-                        for (i, name) in long_press_types.iter().enumerate() {
-                            if ui.selectable_label(self.edit_long_press_type == i, *name).clicked() {
-                                self.edit_long_press_type = i;
-                                chosen = true;
+                    ui.separator();
+
+                    ui.horizontal(|ui| {
+                        ui.label("动作类型:");
+                        let text = long_press_types[self.edit_long_press_type];
+                        Self::choice_dropdown(ui, "map_lp_type", text, |ui| {
+                            let mut chosen = false;
+                            for (i, name) in long_press_types.iter().enumerate() {
+                                if ui
+                                    .selectable_label(self.edit_long_press_type == i, *name)
+                                    .clicked()
+                                {
+                                    self.edit_long_press_type = i;
+                                    chosen = true;
+                                }
                             }
-                        }
-                        chosen
+                            chosen
+                        });
                     });
-                });
 
-                // 长按动作值
-                Self::render_action_value_editor(
-                    ui,
-                    self.edit_long_press_type,
-                    &mut self.edit_long_press_value,
-                    &mut self.edit_long_press_subs,
-                    &mut self.edit_long_press_turn_step_ms,
-                    &mut self.edit_long_press_suspend_wasd,
-                    "lp",
-                );
+                    // 长按动作值
+                    Self::render_action_value_editor(
+                        ui,
+                        self.edit_long_press_type,
+                        &mut self.edit_long_press_value,
+                        &mut self.edit_long_press_subs,
+                        &mut self.edit_long_press_turn_step_ms,
+                        &mut self.edit_long_press_suspend_wasd,
+                        "lp",
+                    );
+                });
 
                 ui.separator();
 
@@ -2079,6 +2165,10 @@ impl App {
                     });
                 });
                 ui.separator();
+
+                // 状态总览：打开主界面就能看到连接 / 拦截 / 映射状态
+                self.render_status_strip(ui);
+                ui.add_space(4.0);
 
                 // Tab 栏
                 ui.horizontal(|ui| {
