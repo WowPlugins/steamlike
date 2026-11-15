@@ -1,4 +1,4 @@
-//! 低级键鼠钩子（WH_KEYBOARD_LL / WH_MOUSE_LL）与游戏逻辑
+﻿//! 低级键鼠钩子（WH_KEYBOARD_LL / WH_MOUSE_LL）与游戏逻辑
 //!
 //! 结构：
 //! - **钩子线程**：安装/卸载钩子并持续泵消息。低级钩子的回调只会在这个线程上被调用。
@@ -56,6 +56,8 @@ enum Cmd {
     UnlockKey(u16, Vec<u32>, bool),
     /// 仅用于记录日志：钩子回调内不能加锁，日志改由动作线程打印
     Note(&'static str),
+    /// 指向型技能期间的真实左键点击：按当前光标位置回注一次完整点击（并延时恢复锁定）
+    TargetClickConfirm,
     /// 映射按键按下（含短按和长按判定）
     MappingDown(u32),
     /// 映射按键抬起
@@ -238,6 +240,7 @@ fn resume_wasd_lock() {
         log("[WASD 挂起] 已处于锁定状态（右键锁定切换等），跳过重复锁定");
         return;
     }
+    let (bx, by) = win::current_cursor();
     win::park_cursor_offscreen();
     let (px, py) = win::current_cursor();
     // 给桌面/游戏一帧时间处理光标移动，避免 MouseDown 紧接着 SetCursorPos 造成
@@ -245,10 +248,15 @@ fn resume_wasd_lock() {
     std::thread::sleep(Duration::from_millis(30));
     if set_lock(BTN_RIGHT, true) {
         log(format!(
-            "[WASD 挂起] 恢复：光标停到屏幕外并锁定右键（实际光标 {},{})",
-            px, py
+            "[WASD 挂起] 恢复：光标停到屏幕外并锁定右键（归位前 {},{} → {},{})",
+            bx, by, px, py
         ));
     }
+    // 紧跟在真实右键抬起之后的那次注入按下会被游戏忽略（它还停在抬起的那一帧里）。
+    // 150ms 后补按一次：重复按下对游戏是幂等的（按键已按下时再按下不产生新状态）。
+    std::thread::sleep(Duration::from_millis(150));
+    win::inject_mouse_button(BTN_RIGHT, true);
+    log("[WASD 挂起] 已补按右键一次（防首次按下被游戏忽略）");
 }
 
 /// 由网络线程请求恢复 WASD 自动锁定（APK 左键点击 / 释放鼠标长按）
@@ -507,13 +515,22 @@ unsafe extern "system" fn mouse_proc(ncode: i32, wparam: WPARAM, lparam: LPARAM)
         // 锁存是互斥的（WASD 自动锁右键，长按交换键只会把锁换到另一侧），
         // 因此点任意一侧都能解除当前锁定，避免锁在左键时点右键却把点击透传给魔兽。
         WM_LBUTTONDOWN | WM_RBUTTONDOWN => {
+            let left_btn = msg == WM_LBUTTONDOWN;
+            // 新的一次按下说明上一轮「吞掉抬起」的标记已经过期（上一次点击的抬起可能被注入事件
+            // 或系统丢掉，标记会一直留着，把下一次点击的抬起吃掉）。若不清理，游戏会只收到
+            // 按下收不到抬起，指向型技能的确认点击就永远不生效
+            if left_btn {
+                SWALLOW_LEFT_UP.store(false, Ordering::Relaxed);
+            } else {
+                SWALLOW_RIGHT_UP.store(false, Ordering::Relaxed);
+            }
             let left_locked = RT.left_locked.load(Ordering::Relaxed);
             let right_locked = RT.right_locked.load(Ordering::Relaxed);
             if left_locked || right_locked {
                 // 先解锁（立即发出，让游戏尽快退出 mouselook），居中交给动作线程延时执行
                 set_lock(BTN_LEFT, false);
                 set_lock(BTN_RIGHT, false);
-                if msg == WM_LBUTTONDOWN {
+                if left_btn {
                     SWALLOW_LEFT_UP.store(true, Ordering::Relaxed);
                     queue_cmd(Cmd::Note("[锁存] 左键点击：解除鼠标锁定（本次点击不透传）"));
                 } else {
@@ -521,6 +538,14 @@ unsafe extern "system" fn mouse_proc(ncode: i32, wparam: WPARAM, lparam: LPARAM)
                     queue_cmd(Cmd::Note("[锁存] 右键点击：解除鼠标锁定（本次点击不透传）"));
                 }
                 queue_cmd(Cmd::UnlockCenter);
+                LRESULT(1)
+            } else if left_btn && RT.wasd_lock_suspend.load(Ordering::Relaxed) {
+                // 指向型技能确认点击：真实点击在 Winlator/Wine 下常常只到「按下」，
+                // 游戏拿不到一次完整点击（表现为光圈不消失、技能不放）。
+                // 这里吞掉这次真实点击，改由客户端按当前光标位置回注一对完整的按下/抬起。
+                // 右键不这样处理：指向状态下右键还用于按住拖拽转视角，吞掉会打断拖拽
+                SWALLOW_LEFT_UP.store(true, Ordering::Relaxed);
+                queue_cmd(Cmd::TargetClickConfirm);
                 LRESULT(1)
             } else {
                 CallNextHookEx(HHOOK(0), ncode, wparam, lparam)
@@ -544,9 +569,10 @@ unsafe extern "system" fn mouse_proc(ncode: i32, wparam: WPARAM, lparam: LPARAM)
             if SWALLOW_RIGHT_UP.swap(false, Ordering::Relaxed) {
                 LRESULT(1)
             } else {
-                // 右键点击完成：同样延时结束临时禁用（恢复动作会先判断是否已锁定）
+                // 右键取消指向：没有「技能落点」需要等游戏结算，立刻恢复归位 + 右键锁定
+                // （右键不延时：延时后注入的按下会被游戏忽略，视角锁不回去）
                 if RT.wasd_lock_suspend.load(Ordering::Relaxed) {
-                    queue_cmd(Cmd::ResumeWasdLockAfter(RESUME_AFTER_CLICK_MS));
+                    queue_cmd(Cmd::ResumeWasdLock);
                 }
                 CallNextHookEx(HHOOK(0), ncode, wparam, lparam)
             }
@@ -667,6 +693,18 @@ fn action_thread(rx: Receiver<Cmd>) {
                 win::center_cursor();
             }
             Cmd::Note(msg) => log(msg),
+            Cmd::TargetClickConfirm => {
+                let (x, y) = win::current_cursor();
+                // 回注一对完整的左键按下/抬起：真实点击在 Winlator/Wine 下可能只到按下，
+                // 游戏收不到完整点击就不确认指向圈。中间留一帧间隔让游戏分清按下与抬起。
+                win::inject_mouse_button(BTN_LEFT, true);
+                std::thread::sleep(Duration::from_millis(20));
+                win::inject_mouse_button(BTN_LEFT, false);
+                log(format!("[指向] 已按光标位置回注左键确认（{},{})", x, y));
+                // 等游戏结算这次点击（指向圈收起、技能落点确定）后再归位并恢复右键锁定
+                std::thread::sleep(Duration::from_millis(RESUME_AFTER_CLICK_MS));
+                resume_wasd_lock();
+            }
             Cmd::MappingDown(vk) => {
                 mapping_held.insert(vk, (Instant::now(), false));
             }
