@@ -218,6 +218,42 @@
                 android:textColor="#FFDDDDDD" />
         </LinearLayout>  <!-- 结束点击动作「只切换层」开关 -->
 
+        <!-- ===== 屏蔽回落开关（仅操作层显示） ===== -->
+        <!-- 语法：LinearLayout 线性布局；vertical 垂直排列；开启后本层按下此键不执行任何动作 -->
+        <LinearLayout
+            android:id="@+id/layout_block_fallback"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical"
+            android:paddingHorizontal="10dp"
+            android:paddingBottom="10dp">
+
+            <!-- 说明单独一行自动换行，避免把开关挤出窗口 -->
+            <TextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="屏蔽回落：开启后本层对应操作不执行，也不再回落到公共层（默认都回落）"
+                android:textSize="12sp"
+                android:textColor="#FF999999"
+                android:paddingBottom="4dp" />
+
+            <Switch
+                android:id="@+id/switch_block_tap"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="屏蔽短按回落"
+                android:textSize="14sp"
+                android:textColor="#FFDDDDDD" />
+
+            <Switch
+                android:id="@+id/switch_block_hold"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="屏蔽长按回落"
+                android:textSize="14sp"
+                android:textColor="#FFDDDDDD" />
+        </LinearLayout>  <!-- 结束「屏蔽回落」开关 -->
+
         <!-- ===== 点击动作的子命令区域 ===== -->
         <!-- 紧跟在点击动作值下方，与长按子命令明确分开 -->
         <!-- 语法：LinearLayout 线性布局；点击子命令区域容器

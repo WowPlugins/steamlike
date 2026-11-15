@@ -410,14 +410,42 @@ class SteamInput(context: Context) { // 主控制器类（语法：class 声明�
      * @return 映射 + 所在层（公共层时为 null）；未绑定返回 null
      */
     fun getEffectiveMappingWithLayer(button: ControllerButton): Pair<KeyMapping, OperationLayer?>? { // 查找映射及所属层（语法：返回可空 Pair）
-        // 1. 从激活层查找
+        // 1. 从激活层查找映射，同时收集「短按/长按屏蔽」标记
+        var tapBlocked = false // 是否屏蔽短按（任一激活层声明即生效）
+        var holdBlocked = false // 是否屏蔽长按
         for (layer in activeLayers) { // 遍历激活层（语法：for(x in y) 遍历）
-            layer.getMapping(button)?.let { return it to layer } // 找到映射立即返回映射+层
+            val mapping = layer.getMapping(button) // 本层该按键的映射
+            if (mapping != null) { // 本层有映射：映射与屏蔽都来自本层
+                tapBlocked = layer.blockedTapButtons.contains(button) // 本层是否屏蔽短按
+                holdBlocked = layer.blockedHoldButtons.contains(button) // 本层是否屏蔽长按
+                return clipBlocked(mapping, tapBlocked, holdBlocked) to layer // 返回裁剪后的映射+所属层
+            } // 结束有映射判断
+            // 本层未绑定但声明了屏蔽：记录屏蔽，继续向下找可用的另一半动作
+            if (layer.blockedTapButtons.contains(button)) tapBlocked = true // 屏蔽短按
+            if (layer.blockedHoldButtons.contains(button)) holdBlocked = true // 屏蔽长按
         } // 结束 for
         // 2. 回退到公共层
-        profile.commonLayer.getMapping(button)?.let { return it to null } // 公共层映射的层名记为 null
-        return null // 无映射
-    } // 结束 getEffectiveMappingWithLayer 函数 // 结束 getEffectiveMapping 函数
+        val common = profile.commonLayer.getMapping(button) // 公共层映射
+        if (common == null) { // 公共层也没有映射
+            // 只勾了屏蔽时也算「本键已处理」：返回空映射占位，不执行任何动作
+            return if (tapBlocked || holdBlocked) Pair(KeyMapping(MappedAction.None), null) else null
+        } // 结束公共层判断
+        return clipBlocked(common, tapBlocked, holdBlocked) to null // 公共层映射的层名记为 null
+    } // 结束 getEffectiveMappingWithLayer 函数
+
+    /**
+     * 按屏蔽标记裁剪映射：被屏蔽的分支改成「未设置」，另一分支保持原样
+     */
+    private fun clipBlocked(mapping: KeyMapping, tapBlocked: Boolean, holdBlocked: Boolean): KeyMapping { // 私有函数：裁剪被屏蔽的动作分支
+        if (!tapBlocked && !holdBlocked) return mapping // 未屏蔽，原样返回
+        return mapping.copy( // 复制并替换被屏蔽的分支（语法：data class copy）
+            action = if (tapBlocked) MappedAction.None else mapping.action, // 短按被屏蔽 → 空动作
+            subCommands = if (tapBlocked) emptyList() else mapping.subCommands, // 短按子命令一并清空
+            longPressAction = if (holdBlocked) null else mapping.longPressAction, // 长按被屏蔽 → 未设置
+            longPressSubCommands = if (holdBlocked) emptyList() else mapping.longPressSubCommands, // 长按子命令一并清空
+            longPressBlocked = holdBlocked // 标记长按被屏蔽：仍参与长按判定，但到阈值与松开都不执行动作
+        ) // 结束 copy
+    } // 结束 clipBlocked 函数
 
     // ====================================================================
     // 输入分发

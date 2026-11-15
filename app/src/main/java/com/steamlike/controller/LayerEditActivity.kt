@@ -687,7 +687,11 @@ class LayerEditActivity : AppCompatActivity() { // 定义操作层编辑 Activit
         val items = ControllerButton.values().map { button -> // 遍历所有手柄按键构建显示行（语法：map{}=转换 lambda，显式参数 button）
             val mapping = layer.buttonMappings[button] // 取该按键的映射，可能为 null
             val desc = mapping?.describe() ?: "[未设置]" // 取映射描述，无映射显示「未设置」（语法：?.=安全调用，?:=空值合并）
-            "${buttonDisplayName(button)} → $desc" // 拼接「按键名 → 映射描述」字符串（语法：字符串模板 "$var"）
+            val blockedSuffix = buildString { // 屏蔽回落的按键加后缀标记（短按/长按分别标注）
+                if (layer.blockedTapButtons.contains(button)) append("（屏蔽短按）") // 短按被屏蔽
+                if (layer.blockedHoldButtons.contains(button)) append("（屏蔽长按）") // 长按被屏蔽
+            } // 结束 buildString
+            "${buttonDisplayName(button)} → $desc$blockedSuffix" // 拼接「按键名 → 映射描述」字符串（语法：字符串模板 "$var"）
         } // 结束 map 转换
 
         // 更新当前层映射摘要（层名 + 已映射数量）
@@ -800,6 +804,14 @@ class LayerEditActivity : AppCompatActivity() { // 定义操作层编辑 Activit
         val etTurnPixels = dialogView.findViewById<EditText>(R.id.et_turn_pixels) // 获取点击动作的自定义像素输入框
         val layoutLongTurnPixels = dialogView.findViewById<LinearLayout>(R.id.layout_long_turn_pixels) // 获取「180°转身」自定义像素区域（长按动作）
         val etLongTurnPixels = dialogView.findViewById<EditText>(R.id.et_long_turn_pixels) // 获取长按动作的自定义像素输入框
+        val layoutBlockFallback = dialogView.findViewById<LinearLayout>(R.id.layout_block_fallback) // 获取「屏蔽回落」区域容器
+        val switchBlockTap = dialogView.findViewById<Switch>(R.id.switch_block_tap) // 获取「屏蔽短按回落」开关
+        val switchBlockHold = dialogView.findViewById<Switch>(R.id.switch_block_hold) // 获取「屏蔽长按回落」开关
+
+        // 屏蔽回落：仅操作层有意义（公共层本身就是兜底，没有可回落的下一层）
+        layoutBlockFallback.visibility = if (isCommonLayer) View.GONE else View.VISIBLE // 公共层隐藏该区域
+        switchBlockTap.isChecked = layer.blockedTapButtons.contains(button) // 回显短按屏蔽状态
+        switchBlockHold.isChecked = layer.blockedHoldButtons.contains(button) // 回显长按屏蔽状态
 
         // 显示正在编辑的按键名称
         tvButtonName.text = "编辑按键: ${buttonDisplayName(button)}" // 设置标题显示正在编辑的按键名（语法：字符串模板）
@@ -1103,6 +1115,18 @@ class LayerEditActivity : AppCompatActivity() { // 定义操作层编辑 Activit
 
                     Log.i(TAG, "Mapping saved: ${buttonDisplayName(button)} → ${newMapping.describe()}") // 打印日志：映射已保存（语法：字符串模板）
                 } // 结束动作构建 if-else 块
+
+                // 屏蔽回落开关（仅操作层有效）：短按/长按各自独立，关闭时默认回落
+                if (!isCommonLayer && switchBlockTap.isChecked) { // 屏蔽短按
+                    layer.blockedTapButtons.add(button) // 记入短按屏蔽集合
+                } else { // 否则
+                    layer.blockedTapButtons.remove(button) // 取消短按屏蔽（默认回落）
+                }
+                if (!isCommonLayer && switchBlockHold.isChecked) { // 屏蔽长按
+                    layer.blockedHoldButtons.add(button) // 记入长按屏蔽集合
+                } else { // 否则
+                    layer.blockedHoldButtons.remove(button) // 取消长按屏蔽（默认回落）
+                }
 
                 // 刷新列表显示
                 refreshMappingsList() // 刷新映射列表显示
@@ -1686,7 +1710,12 @@ class LayerEditActivity : AppCompatActivity() { // 定义操作层编辑 Activit
         fun copyLayer(layer: OperationLayer): OperationLayer { // 局部函数：深拷贝单个操作层（语法：函数内嵌套函数声明）
             val newMap = LinkedHashMap<ControllerButton, KeyMapping>() // 创建新的有序映射表（语法：LinkedHashMap=保持插入顺序的哈希表）
             newMap.putAll(layer.buttonMappings) // 把原层映射内容复制到新映射表
-            return OperationLayer(name = layer.name, buttonMappings = newMap) // 用新映射表创建独立的新操作层
+            return OperationLayer(
+                name = layer.name,
+                buttonMappings = newMap,
+                blockedTapButtons = layer.blockedTapButtons.toMutableSet(), // 短按屏蔽集合独立复制
+                blockedHoldButtons = layer.blockedHoldButtons.toMutableSet() // 长按屏蔽集合独立复制
+            ) // 用新映射表创建独立的新操作层
         } // 结束 copyLayer 局部函数
         return ActionSet( // 组装拷贝后的操作集（跨行参数）
             name = newName, // 新操作集名称

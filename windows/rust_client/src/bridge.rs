@@ -37,6 +37,8 @@ const PACKET_SIZE: usize = 8;
 
 /// 待发送的剪贴板文本包队列（剪贴板线程投递，网络线程取走）
 static OUTBOX: Mutex<Vec<Vec<u8>>> = Mutex::new(Vec::new());
+/// APK 转发按键（0x27）的按下状态，用于忽略长按期间连发的重复 down
+static APK_KEY_DOWN: Mutex<[bool; 256]> = Mutex::new([false; 256]);
 
 /// 通知 APK 切换安卓软键盘显示/隐藏（0x23，8 字节定长包，无载荷）
 ///
@@ -281,9 +283,20 @@ fn process_packet(data: &[u8; PACKET_SIZE]) {
             // 这里只剩控制键/映射按键等稀疏事件，4ms 延时只会增加可感知的输入延迟
         }
         0x27 => {
-            // APK 键位映射产生的按键：不带 MAGIC 标记，本地按键映射可再次命中
+            // APK 键位映射产生的按键：不带 MAGIC 标记，本地按键映射可再次命中。
+            // 长按期间 APK 可能连发同一个 down，这里做按下状态去重：重复的 down
+            // 不再注入，否则钩子会把它当成新的按键事件重复触发映射与「恢复」逻辑。
             let vk = u16::from_le_bytes([data[1], data[2]]);
-            win::inject_key_ex(vk, data[3] != 0, 0);
+            let down = data[3] != 0;
+            let mut guard = APK_KEY_DOWN.lock().unwrap();
+            if (vk as usize) < guard.len() {
+                if guard[vk as usize] == down {
+                    return;
+                }
+                guard[vk as usize] = down;
+            }
+            drop(guard);
+            win::inject_key_ex(vk, down, 0);
         }
         0x02 => {
             let dx = i16::from_le_bytes([data[1], data[2]]) as i32;

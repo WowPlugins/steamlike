@@ -223,8 +223,15 @@ fn resume_wasd_lock() {
         return;
     }
     win::park_cursor_offscreen();
+    let (px, py) = win::current_cursor();
+    // 给桌面/游戏一帧时间处理光标移动，避免 MouseDown 紧接着 SetCursorPos 造成
+    // 游戏在进入 mouselook 时把光标拉回原位（表现为「锁定了但光标没归位」）
+    std::thread::sleep(Duration::from_millis(30));
     if set_lock(BTN_RIGHT, true) {
-        log("[WASD 挂起] 恢复：光标停到屏幕外并锁定右键");
+        log(format!(
+            "[WASD 挂起] 恢复：光标停到屏幕外并锁定右键（实际光标 {},{})",
+            px, py
+        ));
     }
 }
 

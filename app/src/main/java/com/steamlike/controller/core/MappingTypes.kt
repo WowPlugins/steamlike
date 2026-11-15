@@ -309,7 +309,9 @@ data class KeyMapping( // 按键映射定义（语法：data class 数据类）
     val longPressAction: MappedAction? = null, // 长按动作（语法：可空类型 + 默认参数 = null）
     val longPressSubCommands: List<Int> = emptyList(), // 长按子命令列表（作用于长按动作）
     val layerSwitchOnly: Boolean = false, // 短按「只切换层」（语法：默认参数 = false）
-    val longPressLayerSwitchOnly: Boolean = false // 长按「只切换层」
+    val longPressLayerSwitchOnly: Boolean = false, // 长按「只切换层」
+    /** 运行时标记：长按被当前层屏蔽（长按判定照常进行，但到阈值与松开时都不执行任何动作） */
+    val longPressBlocked: Boolean = false
 ) { // 数据类主体开始
     init { // 初始化块校验（语法：init 初始化块）
         require(subCommands.size <= MAX_SUB_COMMANDS) { // 校验子命令数量不超上限（语法：require 前置条件检查）
@@ -514,7 +516,11 @@ data class KeyMapping( // 按键映射定义（语法：data class 数据类）
  */
 data class OperationLayer( // 操作层定义（语法：data class 数据类）
     val name: String, // 层名称（语法：val 只读属性）
-    val buttonMappings: MutableMap<ControllerButton, KeyMapping> = mutableMapOf() // 按键映射表（语法：MutableMap 可变 Map + 默认参数）
+    val buttonMappings: MutableMap<ControllerButton, KeyMapping> = mutableMapOf(), // 按键映射表（语法：MutableMap 可变 Map + 默认参数）
+    /** 屏蔽短按回落的按键：本层激活时按下这些键，短按不执行动作，也不再回落到公共层 */
+    val blockedTapButtons: MutableSet<ControllerButton> = mutableSetOf(),
+    /** 屏蔽长按回落的按键：本层激活时按下这些键，长按不执行动作，也不再回落到公共层 */
+    val blockedHoldButtons: MutableSet<ControllerButton> = mutableSetOf()
 ) { // 数据类主体开始
     /**
      * 查询本层是否有指定按钮的映射

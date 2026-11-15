@@ -559,6 +559,7 @@ class KeyboardMouseMapper( // 语法：class 类声明，定义键盘/鼠标映�
      * @param mapping 按键映射
      */
     private fun isLongPressEligible(mapping: KeyMapping): Boolean { // 语法：private fun 私有函数，判断是否启用长按判定
+        if (mapping.longPressBlocked) return true // 长按被本层屏蔽：仍要判定，判定成功后什么都不执行
         if (mapping.longPressAction != null) return true // 配置了长按动作 → 一律启用判定
         val shortAction = mapping.action // 取短按动作
         // 未配置长按动作时，仅「保持型短按动作」在回退开关开启下参与判定
@@ -639,7 +640,7 @@ class KeyboardMouseMapper( // 语法：class 类声明，定义键盘/鼠标映�
         if (deferredPresses.containsKey(button)) return // 已在判定中则忽略，防重复（语法：containsKey 判断）
         val pressTime = SystemClock.elapsedRealtime() // 记录按下时刻（单调时钟，不受系统时间调整影响）
         deferredPresses[button] = DeferredPress(mapping, pressTime, layerName) // 存入延迟按下上下文（含所属层）
-        if (mapping.longPressAction != null) { // 仅配置了长按动作时才需要阈值定时器
+        if (mapping.longPressAction != null || mapping.longPressBlocked) { // 配置了长按动作或长按被屏蔽时才需要阈值定时器
             val threshold = steamInput.profile.globalSettings.longPressThresholdMs.toLong() // 读取长按阈值（毫秒）
             val runnable = Runnable { onLongPressThreshold(button) } // 构造阈值到达回调（语法：Runnable{}=可运行 lambda）
             longPressTimers[button] = runnable // 记录定时任务，便于松开时取消
@@ -702,6 +703,8 @@ class KeyboardMouseMapper( // 语法：class 类声明，定义键盘/鼠标映�
                 } // 结束「只切换层」判断
                 tapAction(button, longAction, pending.mapping.longPressSubCommands) // 补发执行长按动作（带长按子命令）
             } // 结束长按类型判断
+        } else if (pending.mapping.longPressBlocked) { // 长按被本层屏蔽：什么都不做（也不回退短按）
+            Log.d(TAG, "LongPress blocked: $button held=${held}ms") // 打印屏蔽日志
         } else if (steamInput.profile.globalSettings.longPressFallbackToShort) { // 长按未配置动作：回退开关开启
             if (pending.mapping.layerSwitchOnly && isHoldableAction(pending.mapping.action)) { // 回退执行的短按动作开启「只切换层」
                 suppressLayerKeys(button, pending.layerName) // 先抬起本层切层键（点按内部的释放流程会恢复）
@@ -1333,12 +1336,17 @@ class KeyboardMouseMapper( // 语法：class 类声明，定义键盘/鼠标映�
      * 否则居中会被游戏侧的光标接管覆盖），相对顺序不变。
      */
     private fun handleMouseClickSequence() { // 语法：private fun 私有函数，执行鼠标交互键序列
-        val leftLocked = toggledMouseButtons.contains(MouseButton.LEFT) // 记录左键锁存状态
-        val rightLocked = toggledMouseButtons.contains(MouseButton.RIGHT) // 记录右键锁存状态
+        // 用合并后的锁定状态（本地锁存 + Rust 上报的远端锁存）：只看本地集合会漏掉
+        // Rust 侧锁定的右键，导致序列里那次右键点击退出 mouselook 后不再恢复锁定
+        val leftLocked = isMouseLocked(MouseButton.LEFT) // 记录左键锁定状态（含远端）
+        val rightLocked = isMouseLocked(MouseButton.RIGHT) // 记录右键锁定状态（含远端）
         injector.sendCursorSave() // 1. 记录当前光标位置（Windows 客户端保存，末尾用于还原）
         if (leftLocked || rightLocked) { // 2. 仅在锁定时才需要先解锁
             setMouseLockState(MouseButton.LEFT, false) // 临时释放左键锁存（未锁定则无操作）——立即发出
             setMouseLockState(MouseButton.RIGHT, false) // 临时释放右键锁存（未锁定则无操作）——立即发出
+            if (remoteLockedButtons.isNotEmpty()) { // 远端锁存 APK 无法直接松开
+                onRequestRemoteUnlock?.invoke() // 0x26：让客户端松开并自行延时居中
+            }
         } // 结束解锁分支
         // 解锁之后延后 [unlockCenterDelayMs] 再走「居中 → 左右键点击 → 还原位置 → 恢复锁存」，
         // 让游戏先处理完退出 mouselook；序列内部相对顺序不变

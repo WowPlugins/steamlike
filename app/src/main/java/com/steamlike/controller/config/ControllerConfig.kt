@@ -265,6 +265,8 @@ object ControllerConfig { // 单例对象：配置的 JSON 序列化/反序列�
             mappings.put(button.name, mappingToJson(mapping)) // 以按键名称为键写入映射
         } // 结束 forEach 遍历
         json.put("buttonMappings", mappings) // 写入按键映射对象
+        json.put("blockedTapButtons", JSONArray(layer.blockedTapButtons.map { it.name })) // 屏蔽短按回落的按键
+        json.put("blockedHoldButtons", JSONArray(layer.blockedHoldButtons.map { it.name })) // 屏蔽长按回落的按键
         return json // 返回 JSON 对象
     } // 结束 layerToJson 函数
 
@@ -284,9 +286,30 @@ object ControllerConfig { // 单例对象：配置的 JSON 序列化/反序列�
             } // 结束外层 if
         } // 结束 forEach 遍历
 
+        // 屏蔽回落的按键（旧配置没有这两个字段，默认空集合 = 全部回落）
+        fun parseButtonSet(key: String): MutableSet<ControllerButton> { // 局部函数：解析按键名数组
+            val set = mutableSetOf<ControllerButton>() // 结果集合
+            json.optJSONArray(key)?.let { arr -> // 读取数组，缺失时跳过
+                for (i in 0 until arr.length()) { // 遍历数组
+                    val btn = runCatching { ControllerButton.valueOf(arr.optString(i)) }.getOrNull() // 按名称解析枚举
+                    if (btn != null) set.add(btn) // 解析成功则加入
+                }
+            }
+            return set // 返回集合
+        }
+        val blockedTap = parseButtonSet("blockedTapButtons") // 屏蔽短按
+        val blockedHold = parseButtonSet("blockedHoldButtons") // 屏蔽长按
+        // 0.1.140 的旧字段：单个「屏蔽回落」同时屏蔽短按与长按
+        parseButtonSet("blockedButtons").forEach { // 迁移旧字段
+            blockedTap.add(it) // 旧字段视为短按屏蔽
+            blockedHold.add(it) // 旧字段视为长按屏蔽
+        }
+
         return OperationLayer( // 构造操作层
             name = name, // 设置名称
-            buttonMappings = mappings // 设置映射表
+            buttonMappings = mappings, // 设置映射表
+            blockedTapButtons = blockedTap, // 设置屏蔽短按的按键集合
+            blockedHoldButtons = blockedHold // 设置屏蔽长按的按键集合
         ) // 结束 OperationLayer 构造
     } // 结束 parseLayer 函数
 
