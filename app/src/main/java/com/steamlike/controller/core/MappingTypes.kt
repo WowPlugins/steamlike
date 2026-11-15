@@ -325,19 +325,18 @@ data class KeyMapping( // 按键映射定义（语法：data class 数据类）
     /**
      * 转换为人类可读的描述字符串（用于 UI 显示）
      *
-     * 示例: "Alt+3"、"Ctrl+Shift+3"、"鼠标左键"、"切换到 Layer1"
+     * 同时有短按与长按动作时按「短按: … ｜ 长按: …」分段，避免两者混在一起难以区分。
+     * 示例: "Alt+3"、"短按: Alt+3 ｜ 长按: 鼠标左键"
      */
     fun describe(): String { // 转为可读描述（语法：fun 成员函数声明）
-        // 点击动作未设置（仅配置长按）时省略短按部分，避免显示 "无 / 长按:..."
-        var text = if (action is MappedAction.None) "" else composeLabel(action, subCommands) // 拼出短按动作描述（如 "Alt+3"）
-        if (text.isNotEmpty() && layerSwitchOnly) text += "（只切换层）" // 短按开启「只切换层」时追加标记
+        // 点击动作未设置（仅配置长按）时短按部分记为「未设置」，避免显示为空白
+        var tapText = if (action is MappedAction.None) "" else composeLabel(action, subCommands) // 拼出短按动作描述（如 "Alt+3"）
+        if (tapText.isNotEmpty() && layerSwitchOnly) tapText += "（只切换层）" // 短按开启「只切换层」时追加标记
         val lp = longPressAction // 取长按动作（局部变量便于智能转换）
-        if (lp != null) { // 若配置了长按动作则追加显示
-            if (text.isNotEmpty()) text += " / " // 已有短按描述时用斜杠分隔
-            text += "长按:${composeLabel(lp, longPressSubCommands)}" // 追加长按动作描述（含长按子命令，语法：+= 字符串拼接）
-            if (longPressLayerSwitchOnly) text += "（只切换层）" // 长按开启「只切换层」时追加标记
-        } // 结束长按描述判断
-        return text.ifEmpty { "无" } // 返回完整描述（两者都为空时显示「无」）
+        if (lp == null) return tapText.ifEmpty { "无" } // 无长按动作时只显示短按描述
+        var longText = composeLabel(lp, longPressSubCommands) // 拼出长按动作描述（含长按子命令）
+        if (longPressLayerSwitchOnly) longText += "（只切换层）" // 长按开启「只切换层」时追加标记
+        return "短按: ${tapText.ifEmpty { "未设置" }} ｜ 长按: $longText" // 分段展示，短按/长按一眼区分
     } // 结束 describe 函数
 
     /**

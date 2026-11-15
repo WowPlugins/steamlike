@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>  <!-- XML 声明：版本 1.0，编码 UTF-8 -->
+<!-- 长按分组卡片背景（深色底 + 橙色描边，与短按组区分） -->
+<shape xmlns:android="http://schemas.android.com/apk/res/android">  <!-- 语法：shape 形状 drawable 根节点 -->
+    <solid android:color="#332A2A2A" />  <!-- 语法：solid 填充色；半透明深灰（比面板略亮） -->
+    <stroke android:width="1.5dp" android:color="#FFFFA726" />  <!-- 语法：stroke 描边；橙色描边标示长按分组 -->
+    <corners android:radius="12dp" />  <!-- 语法：corners 圆角；radius 圆角半径 12dp -->
+</shape>  <!-- 结束 shape -->

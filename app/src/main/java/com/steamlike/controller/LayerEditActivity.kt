@@ -804,12 +804,15 @@ class LayerEditActivity : AppCompatActivity() { // 定义操作层编辑 Activit
         val etTurnPixels = dialogView.findViewById<EditText>(R.id.et_turn_pixels) // 获取点击动作的自定义像素输入框
         val layoutLongTurnPixels = dialogView.findViewById<LinearLayout>(R.id.layout_long_turn_pixels) // 获取「180°转身」自定义像素区域（长按动作）
         val etLongTurnPixels = dialogView.findViewById<EditText>(R.id.et_long_turn_pixels) // 获取长按动作的自定义像素输入框
-        val layoutBlockFallback = dialogView.findViewById<LinearLayout>(R.id.layout_block_fallback) // 获取「屏蔽回落」区域容器
+        val layoutBlockTap = dialogView.findViewById<LinearLayout>(R.id.layout_block_tap) // 获取「屏蔽短按回落」区域（短按分组内）
+        val layoutBlockHold = dialogView.findViewById<LinearLayout>(R.id.layout_block_hold) // 获取「屏蔽长按回落」区域（长按分组内）
         val switchBlockTap = dialogView.findViewById<Switch>(R.id.switch_block_tap) // 获取「屏蔽短按回落」开关
         val switchBlockHold = dialogView.findViewById<Switch>(R.id.switch_block_hold) // 获取「屏蔽长按回落」开关
 
         // 屏蔽回落：仅操作层有意义（公共层本身就是兜底，没有可回落的下一层）
-        layoutBlockFallback.visibility = if (isCommonLayer) View.GONE else View.VISIBLE // 公共层隐藏该区域
+        val blockVisibility = if (isCommonLayer) View.GONE else View.VISIBLE // 公共层隐藏这两个区域
+        layoutBlockTap.visibility = blockVisibility // 短按组的屏蔽开关
+        layoutBlockHold.visibility = blockVisibility // 长按组的屏蔽开关
         switchBlockTap.isChecked = layer.blockedTapButtons.contains(button) // 回显短按屏蔽状态
         switchBlockHold.isChecked = layer.blockedHoldButtons.contains(button) // 回显长按屏蔽状态
 
