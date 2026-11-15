@@ -316,6 +316,12 @@ pub struct App {
     edit_conditions: Vec<crate::config::StateCondition>,
     /// 映射编辑对话框：多条条件的组合方式（与 / 或）
     edit_cond_mode: crate::config::ConditionMode,
+    /// 映射编辑对话框：长按是否使用独立生效条件（false = 沿用短按条件）
+    edit_long_use_own_conditions: bool,
+    /// 映射编辑对话框：长按生效条件列表
+    edit_long_conditions: Vec<crate::config::StateCondition>,
+    /// 映射编辑对话框：长按条件的组合方式（与 / 或）
+    edit_long_cond_mode: crate::config::ConditionMode,
     /// 是否处于完整编辑面板状态（false = 小面板/圆点）
     full_editor: bool,
     /// 上次应用的窗口尺寸（用于检测面板状态切换时调整窗口大小）
@@ -361,10 +367,10 @@ impl App {
                 "[映射] #{} {}{} → 短按 {} / 长按 {}（启用={}）",
                 i + 1,
                 combo_name(m.source_vk, &m.source_mods),
-                if m.has_condition() {
-                    format!("（{}）", m.condition_text())
-                } else {
+                if m.condition_summary().is_empty() {
                     String::new()
+                } else {
+                    format!("（{}）", m.condition_summary())
                 },
                 m.tap_action.describe(),
                 m.long_press_action.describe(),
@@ -372,7 +378,12 @@ impl App {
             ));
         }
         // 带生效条件的映射依赖内存扫描，关闭时提前提示，避免排查时误以为是映射没命中
-        if !cfg.enable_state_scan && cfg.key_mappings.iter().any(|m| m.has_condition()) {
+        if !cfg.enable_state_scan
+            && cfg
+                .key_mappings
+                .iter()
+                .any(|m| m.has_condition() || m.long_has_condition())
+        {
             runtime::log("[状态] 存在带生效条件的映射，但「角色状态读取」已关闭，这些映射不会命中");
         }
 
@@ -401,6 +412,9 @@ impl App {
             edit_enabled: true,
             edit_conditions: Vec::new(),
             edit_cond_mode: crate::config::ConditionMode::And,
+            edit_long_use_own_conditions: false,
+            edit_long_conditions: Vec::new(),
+            edit_long_cond_mode: crate::config::ConditionMode::And,
             // 启动即显示完整主界面
             full_editor: true,
             last_window_size: (0.0, 0.0),
@@ -1078,10 +1092,10 @@ impl App {
                         egui::RichText::new(format!(
                             "按键 {}{}",
                             combo_name(mapping.source_vk, &mapping.source_mods),
-                            if mapping.has_condition() {
-                                format!("（{}）", mapping.condition_text())
-                            } else {
+                            if mapping.condition_summary().is_empty() {
                                 String::new()
+                            } else {
+                                format!("（{}）", mapping.condition_summary())
                             }
                         ))
                         .strong(),
@@ -1166,6 +1180,14 @@ impl App {
             })
             .collect();
         self.edit_cond_mode = mapping.require_mode;
+
+        // 长按条件：None = 沿用短按条件
+        self.edit_long_use_own_conditions = mapping.long_require_all.is_some();
+        self.edit_long_conditions = mapping
+            .long_require_all
+            .clone()
+            .unwrap_or_default();
+        self.edit_long_cond_mode = mapping.long_require_mode.unwrap_or(mapping.require_mode);
 
         // 解析短按动作
         self.edit_tap_turn_step_ms = 8;
@@ -1365,6 +1387,14 @@ impl App {
             mapping.require_mode = self.edit_cond_mode;
             mapping.require_state = None;
             mapping.require_stealth = None;
+            // 长按独立条件：未勾选时写 None（沿用短按条件）
+            if self.edit_long_use_own_conditions {
+                mapping.long_require_all = Some(self.edit_long_conditions.clone());
+                mapping.long_require_mode = Some(self.edit_long_cond_mode);
+            } else {
+                mapping.long_require_all = None;
+                mapping.long_require_mode = None;
+            }
             mapping.tap_action = tap;
             mapping.long_press_action = lp;
 
@@ -1437,6 +1467,7 @@ impl App {
         egui::Window::new(format!("编辑映射: {}", key_name(self.edit_source_vk)))
             .collapsible(false)
             .resizable(false)
+            .vscroll(true)
             .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
             .open(&mut open)
             .show(ctx, |ui| {
@@ -1463,63 +1494,26 @@ impl App {
 
                 // 生效条件：可添加多条，按「且 / 或」组合后决定该映射是否参与匹配。
                 // 同一手柄键可以按不同状态拆成多条映射。
-                ui.label("生效条件（留空=始终生效）:");
-                let mut remove_at: Option<usize> = None;
-                for i in 0..self.edit_conditions.len() {
-                    let mut cond = self.edit_conditions[i].clone();
-                    ui.horizontal(|ui| {
-                        let state_text = crate::wowmem::state_name(&cond.state).to_string();
-                        Self::choice_dropdown(ui, &format!("map_cond_state_{}", i), &state_text, |ui| {
-                            let mut chosen = false;
-                            for (key, label) in crate::wowmem::STATE_DEFS {
-                                if ui.selectable_label(cond.state == key, label).clicked() {
-                                    cond.state = key.to_string();
-                                    chosen = true;
-                                }
-                            }
-                            chosen
-                        });
-                        let value_text = if cond.value { "= 是" } else { "= 否" };
-                        Self::choice_dropdown(ui, &format!("map_cond_value_{}", i), value_text, |ui| {
-                            let mut chosen = false;
-                            for (value, label) in [(true, "= 是"), (false, "= 否")] {
-                                if ui.selectable_label(cond.value == value, label).clicked() {
-                                    cond.value = value;
-                                    chosen = true;
-                                }
-                            }
-                            chosen
-                        });
-                        if ui.small_button("移除").clicked() {
-                            remove_at = Some(i);
-                        }
-                    });
-                    self.edit_conditions[i] = cond;
-                }
-                if let Some(i) = remove_at {
-                    self.edit_conditions.remove(i);
-                }
-                if ui.button("+ 添加条件").clicked() {
-                    self.edit_conditions.push(crate::config::StateCondition {
-                        state: "stealthed".to_string(),
-                        value: true,
-                    });
-                }
-                if self.edit_conditions.len() > 1 {
-                    ui.horizontal(|ui| {
-                        ui.label("组合方式:");
-                        for (mode, label) in [
-                            (crate::config::ConditionMode::And, "满足全部（且）"),
-                            (crate::config::ConditionMode::Or, "满足任一（或）"),
-                        ] {
-                            if ui
-                                .selectable_label(self.edit_cond_mode == mode, label)
-                                .clicked()
-                            {
-                                self.edit_cond_mode = mode;
-                            }
-                        }
-                    });
+                ui.label("短按生效条件（留空=始终生效）:");
+                Self::render_conditions_editor(
+                    ui,
+                    &mut self.edit_conditions,
+                    &mut self.edit_cond_mode,
+                    "map_cond",
+                );
+
+                // 长按条件：默认沿用短按条件，也可单独设置（如短按需潜行、长按始终生效）
+                ui.checkbox(
+                    &mut self.edit_long_use_own_conditions,
+                    "长按使用独立条件（默认沿用短按）",
+                );
+                if self.edit_long_use_own_conditions {
+                    Self::render_conditions_editor(
+                        ui,
+                        &mut self.edit_long_conditions,
+                        &mut self.edit_long_cond_mode,
+                        "map_long_cond",
+                    );
                 }
                 ui.label(
                     egui::RichText::new(format!(
@@ -1605,6 +1599,81 @@ impl App {
 
         if !open {
             self.editing_mapping = None;
+        }
+    }
+
+    /// 渲染一组生效条件编辑（状态 + 期望值 + 增删 + 与/或切换）
+    ///
+    /// 短按与长按各用一组，靠 `id_prefix` 区分下拉弹层的 id。
+    fn render_conditions_editor(
+        ui: &mut egui::Ui,
+        conditions: &mut Vec<crate::config::StateCondition>,
+        mode: &mut crate::config::ConditionMode,
+        id_prefix: &str,
+    ) {
+        let mut remove_at: Option<usize> = None;
+        for i in 0..conditions.len() {
+            let mut cond = conditions[i].clone();
+            ui.horizontal(|ui| {
+                let state_text = crate::wowmem::state_name(&cond.state).to_string();
+                Self::choice_dropdown(
+                    ui,
+                    &format!("{}_state_{}", id_prefix, i),
+                    &state_text,
+                    |ui| {
+                        let mut chosen = false;
+                        for (key, label) in crate::wowmem::STATE_DEFS {
+                            if ui.selectable_label(cond.state == key, label).clicked() {
+                                cond.state = key.to_string();
+                                chosen = true;
+                            }
+                        }
+                        chosen
+                    },
+                );
+                let value_text = if cond.value { "= 是" } else { "= 否" };
+                Self::choice_dropdown(
+                    ui,
+                    &format!("{}_value_{}", id_prefix, i),
+                    value_text,
+                    |ui| {
+                        let mut chosen = false;
+                        for (value, label) in [(true, "= 是"), (false, "= 否")] {
+                            if ui.selectable_label(cond.value == value, label).clicked() {
+                                cond.value = value;
+                                chosen = true;
+                            }
+                        }
+                        chosen
+                    },
+                );
+                if ui.small_button("移除").clicked() {
+                    remove_at = Some(i);
+                }
+            });
+            conditions[i] = cond;
+        }
+        if let Some(i) = remove_at {
+            conditions.remove(i);
+        }
+        if ui.button("+ 添加条件").clicked() {
+            conditions.push(crate::config::StateCondition {
+                state: "stealthed".to_string(),
+                value: true,
+            });
+        }
+        if conditions.len() > 1 {
+            ui.horizontal(|ui| {
+                ui.label("组合方式:");
+                for (m, label) in [
+                    (crate::config::ConditionMode::And, "满足全部（且）"),
+                    (crate::config::ConditionMode::Or, "满足任一（或）"),
+                ] {
+                    if ui.selectable_label(*mode == m, label).clicked() {
+                        *mode = m;
+                    }
+                }
+            });
         }
     }
 

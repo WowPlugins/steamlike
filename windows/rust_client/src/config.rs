@@ -287,6 +287,14 @@ pub struct KeyMapping {
     /// 保留用于读取旧配置。
     #[serde(default)]
     pub require_stealth: Option<bool>,
+    /// 长按生效条件列表
+    ///
+    /// `None` = 长按沿用短按条件（兼容旧配置）；`Some(空 vec)` = 长按无条件。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub long_require_all: Option<Vec<StateCondition>>,
+    /// 长按条件的组合方式（None = 沿用短按的 `require_mode`）
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub long_require_mode: Option<ConditionMode>,
 }
 
 /// 多条生效条件的组合方式
@@ -363,9 +371,29 @@ impl KeyMapping {
             .unwrap_or_default()
     }
 
+    /// 长按生效条件（状态 id, 期望值）
+    ///
+    /// `long_require_all` 为 None 时沿用短按条件。
+    pub fn long_conditions(&self) -> Vec<(&str, bool)> {
+        match &self.long_require_all {
+            None => self.conditions(),
+            Some(list) => list.iter().map(|c| (c.state.as_str(), c.value)).collect(),
+        }
+    }
+
     /// 是否设置了生效条件
     pub fn has_condition(&self) -> bool {
         !self.conditions().is_empty()
+    }
+
+    /// 长按是否设置了生效条件
+    pub fn long_has_condition(&self) -> bool {
+        !self.long_conditions().is_empty()
+    }
+
+    /// 长按条件的组合方式（未单独设置时沿用短按的）
+    pub fn long_condition_mode(&self) -> ConditionMode {
+        self.long_require_mode.unwrap_or(self.require_mode)
     }
 
     /// 当前角色状态是否满足本映射的生效条件
@@ -373,11 +401,19 @@ impl KeyMapping {
     /// 多条条件按 `require_mode` 组合（与 / 或）。状态未知（未装插件 /
     /// 未找到游戏进程）时该条件视为不满足，此时映射不生效，按键原样透传。
     pub fn matches_now(&self) -> bool {
-        let conditions = self.conditions();
+        Self::eval_conditions(&self.conditions(), self.require_mode)
+    }
+
+    /// 当前角色状态是否满足长按的生效条件
+    pub fn matches_long_now(&self) -> bool {
+        Self::eval_conditions(&self.long_conditions(), self.long_condition_mode())
+    }
+
+    fn eval_conditions(conditions: &[(&str, bool)], mode: ConditionMode) -> bool {
         if conditions.is_empty() {
             return true;
         }
-        match self.require_mode {
+        match mode {
             ConditionMode::And => conditions
                 .iter()
                 .all(|(id, want)| crate::wowmem::state(id) == Some(*want)),
@@ -389,11 +425,33 @@ impl KeyMapping {
 
     /// 生效条件的展示文本（如「潜行中=是 且 战斗中=否」）
     pub fn condition_text(&self) -> String {
-        let conditions = self.conditions();
+        Self::format_conditions(&self.conditions(), self.require_mode)
+    }
+
+    /// 长按条件的展示文本
+    pub fn long_condition_text(&self) -> String {
+        Self::format_conditions(&self.long_conditions(), self.long_condition_mode())
+    }
+
+    /// 列表/日志用的条件概览：长按沿用短按条件时只显示一份，独立时分别标注
+    pub fn condition_summary(&self) -> String {
+        let tap = self.condition_text();
+        if self.long_require_all.is_none() {
+            return tap;
+        }
+        let long = self.long_condition_text();
+        format!(
+            "短按 {} / 长按 {}",
+            if tap.is_empty() { "无条件" } else { &tap },
+            if long.is_empty() { "无条件" } else { &long }
+        )
+    }
+
+    fn format_conditions(conditions: &[(&str, bool)], mode: ConditionMode) -> String {
         if conditions.is_empty() {
             return String::new();
         }
-        let joiner = self.require_mode.joiner();
+        let joiner = mode.joiner();
         conditions
             .iter()
             .map(|(id, want)| {
@@ -420,6 +478,8 @@ impl Default for KeyMapping {
             require_mode: ConditionMode::And,
             require_state: None,
             require_stealth: None,
+            long_require_all: None,
+            long_require_mode: None,
         }
     }
 }

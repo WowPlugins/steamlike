@@ -28,6 +28,7 @@ use windows::Win32::System::Threading::GetCurrentThreadId;
 use windows::Win32::UI::Input::KeyboardAndMouse::GetAsyncKeyState;
 use windows::Win32::UI::WindowsAndMessaging::*;
 
+use crate::config::KeyMapping;
 use crate::runtime::{log, pack_pos, RT};
 use crate::win::{self, BTN_LEFT, BTN_RIGHT, MAGIC};
 
@@ -393,7 +394,7 @@ unsafe extern "system" fn keyboard_proc(ncode: i32, wparam: WPARAM, lparam: LPAR
                     if !m.enabled || m.trigger_vk() != vk as u32 {
                         return false;
                     }
-                    if !m.matches_now() {
+                    if !(m.matches_now() || m.matches_long_now()) {
                         return false;
                     }
                     // 按下时组合里其余键（含修饰键）必须全部按住
@@ -619,17 +620,24 @@ fn action_thread(rx: Receiver<Cmd>) {
             }
             Cmd::MappingUp(vk) => {
                 if let Some((_, fired_flag)) = mapping_held.remove(&vk) {
-                    if !fired_flag {
-                        // 未到阈值就抬起 → 执行短按映射
-                        execute_mapping(vk, false);
+                    if !fired_flag && !execute_mapping(vk, false) {
+                        // 抬起时连短按条件都不满足（按下仅因长按条件满足而被吞掉）：
+                        // 补发一次原键，避免游戏完全收不到这个按键。
+                        log(format!(
+                            "[映射] {} 短按条件不满足，原键透传",
+                            crate::ui::key_name(vk)
+                        ));
+                        win::inject_key(vk as u16, true);
+                        std::thread::sleep(Duration::from_millis(15));
+                        win::inject_key(vk as u16, false);
                     }
                 }
             }
             Cmd::MappingLongPress(vk) => {
                 if let Some((_, fired_flag)) = mapping_held.get_mut(&vk) {
                     if !*fired_flag {
-                        *fired_flag = true;
-                        execute_mapping(vk, true);
+                        // 长按条件不满足时不置位，抬起时仍按短按路径处理
+                        *fired_flag = execute_mapping(vk, true);
                     }
                 }
             }
@@ -638,39 +646,49 @@ fn action_thread(rx: Receiver<Cmd>) {
     }
 }
 
+/// 查找该按键当前生效的映射（短按/长按各按自己的条件匹配）
+fn find_mapping(source_vk: u32, is_long_press: bool) -> Option<KeyMapping> {
+    type CondFn = fn(&KeyMapping) -> bool;
+    let (has_cond, matches): (CondFn, CondFn) = if is_long_press {
+        (KeyMapping::long_has_condition, KeyMapping::matches_long_now)
+    } else {
+        (KeyMapping::has_condition, KeyMapping::matches_now)
+    };
+    let mappings = RT.key_mappings.lock().unwrap();
+    let conditional = mappings
+        .iter()
+        .find(|m| m.enabled && m.trigger_vk() == source_vk && has_cond(m) && matches(m));
+    let fallback = mappings
+        .iter()
+        .find(|m| m.enabled && m.trigger_vk() == source_vk && !has_cond(m));
+    conditional.or(fallback).cloned()
+}
+
 /// 从运行时映射列表中查找该按键的映射，若启用则执行对应动作。
-fn execute_mapping(source_vk: u32, is_long_press: bool) {
+///
+/// 返回是否找到了映射（没找到时调用方需自行决定是否补发原键）。
+fn execute_mapping(source_vk: u32, is_long_press: bool) -> bool {
     // 总开关关闭时不执行任何映射
     if !RT.key_mapping_enabled.load(Ordering::Relaxed) {
-        return;
+        return true;
     }
 
-    let mappings = RT.key_mappings.lock().unwrap();
     // 按触发键匹配（修饰键可能已经松开，因为计时在抬起时才结算）。
     // 带生效条件的映射优先：同一按键可以按不同角色状态拆成多条，
     // 没写条件的那条作为兜底，这样状态未知时仍然保留原有行为。
-    let conditional = mappings.iter().find(|m| {
-        m.enabled && m.trigger_vk() == source_vk && m.has_condition() && m.matches_now()
-    });
-    let fallback = || {
-        mappings
-            .iter()
-            .find(|m| m.enabled && m.trigger_vk() == source_vk && !m.has_condition())
+    let mapping = match find_mapping(source_vk, is_long_press) {
+        Some(m) => m,
+        None => return false,
     };
-    let mapping = match conditional.or_else(fallback) {
-        Some(m) => m.clone(),
-        None => return,
-    };
-    drop(mappings);
 
     // 统一记录一次命中的映射，便于确认按键是否被钩子拦截（有这条才说明拦截生效）
     log(format!(
         "[映射] 命中 按键 {}{} → {}",
         crate::ui::combo_name(mapping.source_vk, &mapping.source_mods),
-        if mapping.has_condition() {
-            format!("（{}）", mapping.condition_text())
-        } else {
+        if mapping.condition_summary().is_empty() {
             String::new()
+        } else {
+            format!("（{}）", mapping.condition_summary())
         },
         if is_long_press {
             mapping.long_press_action.describe()
@@ -779,6 +797,7 @@ fn execute_mapping(source_vk: u32, is_long_press: bool) {
             queue_cmd(Cmd::Turn180(*pixels, *step_ms));
         }
     }
+    true
 }
 
 /// 快速转身的分步数（像素分多小步发送，避免单次大位移被游戏丢弃）
