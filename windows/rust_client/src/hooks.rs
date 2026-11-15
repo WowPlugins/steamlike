@@ -66,6 +66,8 @@ enum Cmd {
     Turn180(i32, u32),
     /// 结束「临时禁用 WASD 自动锁定」并恢复「归位 + 右键锁定」
     ResumeWasdLock,
+    /// 延时结束「临时禁用 WASD 自动锁定」（点击后先让游戏处理完这次点击，毫秒）
+    ResumeWasdLockAfter(u64),
 }
 
 /// 「解锁 → 居中」之间插入的等待（毫秒）
@@ -75,6 +77,14 @@ enum Cmd {
 /// 居中会被游戏随后的一次光标接管覆盖（表现为「锁定状态下在游戏里不居中」）。
 /// 因此解锁立即发出，居中延后本时长执行。
 const UNLOCK_CENTER_DELAY_MS: u64 = 150;
+
+/// 点击完成后到恢复「归位 + 右键锁定」之间的等待（毫秒）
+///
+/// 指向型技能（如盗贼的扰乱）靠左键点击确认落点：游戏在帧循环里读取光标位置。
+/// 若点击抬起后立刻把光标挪到画面外并按下右键，游戏处理这次点击时读到的已经是
+/// 归位后的光标，技能会落在屏幕角落（表现为「技能进冷却但完全没有效果」）。
+/// 因此点击触发的恢复整体延后本时长，保证游戏先按玩家瞄准的位置结算这次点击。
+const RESUME_AFTER_CLICK_MS: u64 = 150;
 
 static ACTION_TX: OnceLock<Sender<Cmd>> = OnceLock::new();
 static KEY_HOOK: AtomicIsize = AtomicIsize::new(0);
@@ -239,6 +249,14 @@ fn resume_wasd_lock() {
 /// 由网络线程请求恢复 WASD 自动锁定（APK 左键点击 / 释放鼠标长按）
 pub fn request_resume_wasd_lock() {
     queue_cmd(Cmd::ResumeWasdLock);
+}
+
+/// 由网络线程请求「延时」恢复 WASD 自动锁定（APK 映射的鼠标点击/交互键）
+///
+/// 点击路径必须等游戏先按玩家瞄准的位置结算这次点击，再归位并重新锁定右键，
+/// 否则指向型技能会落在归位后的光标位置（见 [RESUME_AFTER_CLICK_MS]）。
+pub fn request_resume_wasd_lock_after_click() {
+    queue_cmd(Cmd::ResumeWasdLockAfter(RESUME_AFTER_CLICK_MS));
 }
 
 /// APK 悬浮窗「解锁鼠标」按钮触发：解除左右键的长按锁定
@@ -499,9 +517,11 @@ unsafe extern "system" fn mouse_proc(ncode: i32, wparam: WPARAM, lparam: LPARAM)
             if SWALLOW_LEFT_UP.swap(false, Ordering::Relaxed) {
                 LRESULT(1)
             } else {
-                // 左键点击完成：结束「临时禁用 WASD 自动锁定」，恢复归位 + 右键锁定
+                // 左键点击完成：延时结束「临时禁用 WASD 自动锁定」，恢复归位 + 右键锁定。
+                // 不能在这里立即归位：指向型技能要等游戏先结算这次点击的落点，
+                // 否则光标被挪到画面外，技能就落到屏幕角落（冷却了却没有任何效果）
                 if RT.wasd_lock_suspend.load(Ordering::Relaxed) {
-                    queue_cmd(Cmd::ResumeWasdLock);
+                    queue_cmd(Cmd::ResumeWasdLockAfter(RESUME_AFTER_CLICK_MS));
                 }
                 CallNextHookEx(HHOOK(0), ncode, wparam, lparam)
             }
@@ -511,9 +531,9 @@ unsafe extern "system" fn mouse_proc(ncode: i32, wparam: WPARAM, lparam: LPARAM)
             if SWALLOW_RIGHT_UP.swap(false, Ordering::Relaxed) {
                 LRESULT(1)
             } else {
-                // 右键点击完成：同样结束临时禁用（恢复动作会先判断是否已锁定）
+                // 右键点击完成：同样延时结束临时禁用（恢复动作会先判断是否已锁定）
                 if RT.wasd_lock_suspend.load(Ordering::Relaxed) {
-                    queue_cmd(Cmd::ResumeWasdLock);
+                    queue_cmd(Cmd::ResumeWasdLockAfter(RESUME_AFTER_CLICK_MS));
                 }
                 CallNextHookEx(HHOOK(0), ncode, wparam, lparam)
             }
@@ -540,6 +560,9 @@ fn action_thread(rx: Receiver<Cmd>) {
     // 映射按键长按判定状态机：vk → (按下时间, 是否已触发长按)
     let mut mapping_held: std::collections::HashMap<u32, (Instant, bool)> = std::collections::HashMap::new();
 
+    // 点击后「延时恢复 WASD 自动锁定」的到点时间（None = 没有待执行的恢复）
+    let mut resume_at: Option<Instant> = None;
+
     loop {
         // 计算下一个超时事件：长按交换键 或 任意映射按键的长按阈值
         let mut next_timeout: Option<(Instant, Cmd)> = None;
@@ -565,6 +588,14 @@ fn action_thread(rx: Receiver<Cmd>) {
                         next_timeout = Some((deadline, Cmd::MappingLongPress(vk)));
                     }
                 }
+            }
+        }
+
+        // 点击后的延时恢复：到点（或已过点）就投递一次立即恢复
+        if let Some(deadline) = resume_at {
+            let deadline = deadline.max(Instant::now());
+            if next_timeout.as_ref().map_or(true, |(t, _)| deadline < *t) {
+                next_timeout = Some((deadline, Cmd::ResumeWasdLock));
             }
         }
 
@@ -607,7 +638,15 @@ fn action_thread(rx: Receiver<Cmd>) {
             }
             Cmd::Interact => do_interact(),
             Cmd::RightLockToggle => do_right_lock_toggle(),
-            Cmd::ResumeWasdLock => resume_wasd_lock(),
+            Cmd::ResumeWasdLock => {
+                resume_at = None;
+                resume_wasd_lock();
+            }
+            Cmd::ResumeWasdLockAfter(delay_ms) => {
+                // 不在这里 sleep 阻塞动作线程（会推迟后续按键映射），只记下到点时间，
+                // 由上面的 recv_timeout 到点执行
+                resume_at = Some(Instant::now() + Duration::from_millis(delay_ms));
+            }
             Cmd::UnlockKey(vk, subs, suspend) => do_unlock_key(vk, &subs, suspend),
             Cmd::UnlockCenter => {
                 // 解锁已由钩子回调立即发出，这里等游戏处理完退出 mouselook 再把光标放到屏幕正中央
@@ -726,12 +765,13 @@ fn execute_mapping(source_vk: u32, is_long_press: bool) -> bool {
         }
         crate::config::MappedAction::MouseClick { button, sub_commands } => {
             execute_mouse_click(*button, sub_commands);
-            // 映射的鼠标点击完成：结束「临时禁用 WASD 自动锁定」（挂起时无操作）
-            queue_cmd(Cmd::ResumeWasdLock);
+            // 映射的鼠标点击完成：延时结束「临时禁用 WASD 自动锁定」（挂起时无操作），
+            // 让游戏先按瞄准位置结算这次点击
+            queue_cmd(Cmd::ResumeWasdLockAfter(RESUME_AFTER_CLICK_MS));
         }
         crate::config::MappedAction::MouseToggle { button, sub_commands } => {
             execute_mouse_toggle(*button, sub_commands);
-            queue_cmd(Cmd::ResumeWasdLock);
+            queue_cmd(Cmd::ResumeWasdLockAfter(RESUME_AFTER_CLICK_MS));
         }
         crate::config::MappedAction::ScrollUp => {
             win::inject_mouse_wheel(120);

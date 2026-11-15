@@ -194,7 +194,10 @@ fn bridge_thread() {
                 Ok(mut s) => {
                     // 手柄事件都是 8 字节小包，禁用 Nagle 降低延迟
                     let _ = s.set_nodelay(true);
-                    let _ = s.set_read_timeout(Some(Duration::from_millis(200)));
+                    // 读超时同时决定「锁存/临时禁用 WASD」状态上报的轮询间隔：
+                    // 间隔过大时 APK 还按旧状态执行「WASD 自动锁定」，会在指向型技能
+                    // 瞄准期间把光标挪走并按下右键，打断技能落点，因此收紧到 50ms
+                    let _ = s.set_read_timeout(Some(Duration::from_millis(50)));
                     // 上报 exe 自身版本，供 APK 判断客户端是否需要重新导出
                     let _ = s.write_all(&client_version_packet());
                     stream = Some(s);
@@ -224,7 +227,7 @@ fn bridge_thread() {
                 last_lock_state = Some(lock_state);
                 send_lock_state(lock_state.1, lock_state.0, lock_state.2);
             }
-            // 先把剪贴板文本队列发出去（read 有 200ms 超时，最长延迟可接受）
+            // 先把剪贴板文本队列发出去（read 有 50ms 超时，最长延迟可接受）
             let sent = flush_outbox(s);
             if !sent || !pump(s, &mut buf) {
                 stream = None;
@@ -313,8 +316,10 @@ fn process_packet(data: &[u8; PACKET_SIZE]) {
             if data[3] != 0 {
                 if down {
                     // 手动锁存（右键锁定切换/鼠标长按）：走统一恢复流程，
-                    // 已锁定/已锁存左键时它会自动跳过，避免和左键锁存抢右键
-                    crate::hooks::request_resume_wasd_lock();
+                    // 已锁定/已锁存左键时它会自动跳过，避免和左键锁存抢右键。
+                    // 与普通点击一样延时执行：这次按下本身也可能是在指向型技能里确认落点，
+                    // 立刻归位会把技能落点挪到屏幕角落
+                    crate::hooks::request_resume_wasd_lock_after_click();
                 }
                 if data[1] == BTN_LEFT {
                     RT.left_locked.store(down, Ordering::Relaxed);
@@ -322,8 +327,10 @@ fn process_packet(data: &[u8; PACKET_SIZE]) {
                     RT.right_locked.store(down, Ordering::Relaxed);
                 }
             } else if !down && (data[1] == BTN_LEFT || data[1] == BTN_RIGHT) {
-                // APK 的鼠标点击完成（非锁存）：结束「临时禁用 WASD 自动锁定」
-                crate::hooks::request_resume_wasd_lock();
+                // APK 的鼠标点击完成（非锁存）：延时结束「临时禁用 WASD 自动锁定」。
+                // 必须先让游戏按玩家瞄准的位置结算这次点击，再归位并重新锁定右键，
+                // 否则指向型技能会落在归位后的光标位置（进冷却但没效果）
+                crate::hooks::request_resume_wasd_lock_after_click();
             }
         }
         0x04 => {

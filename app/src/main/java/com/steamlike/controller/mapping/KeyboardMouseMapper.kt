@@ -141,6 +141,18 @@ class KeyboardMouseMapper( // 语法：class 类声明，定义键盘/鼠标映�
     /** 客户端「解锁+居中+按键」临时禁用 WASD 自动锁定：APK 侧同样暂停自动锁定 */
     private var remoteWasdLockSuspended = false // 语法：var 可变布尔标志
 
+    /**
+     * 交互键序列是否进行中（延时窗口 + 点击执行阶段）
+     *
+     * 序列开始时会临时解除左右键锁存、结束时再恢复。若按住期连按交互键，
+     * 第二次按下读到的锁存已经是「临时解除」后的值，结束时就会按解锁态「恢复」，
+     * 表现为连按后鼠标一直处于未锁定。因此序列必须串行：进行中再按下只记一次补点。
+     */
+    private var interactSequenceActive = false // 语法：var 可变布尔标志
+
+    /** 序列进行中又按下了交互键：当前序列点完后在同一解锁窗口里再点一次 */
+    private var interactSequencePending = false // 语法：var 可变布尔标志
+
     /** 本地锁存的设定时间（毫秒），用于判断远端「未锁存」上报是否已滞后 */
     private val toggledMouseAt = mutableMapOf<MouseButton, Long>() // 语法：val+mutableMapOf 可变映射
 
@@ -397,6 +409,8 @@ class KeyboardMouseMapper( // 语法：class 类声明，定义键盘/鼠标映�
         notifiedLockedButtons.clear() // 清空已通知过的锁存状态
         pendingLockResync = false // 取消待同步标记
         remoteWasdLockSuspended = false // 取消客户端的临时禁用标记
+        interactSequenceActive = false // 取消交互键序列进行中标记
+        interactSequencePending = false // 取消交互键补点标记
         toggledMouseAt.clear() // 清空本地锁定时间记录
         layerMouseActionButtons.clear() // 清空「层 → 操作过鼠标左右键的按钮」记录
         fineMoveButtons.clear() // 清空精细移动按住记录
@@ -1336,10 +1350,20 @@ class KeyboardMouseMapper( // 语法：class 类声明，定义键盘/鼠标映�
      * 否则居中会被游戏侧的光标接管覆盖），相对顺序不变。
      */
     private fun handleMouseClickSequence() { // 语法：private fun 私有函数，执行鼠标交互键序列
+        // 序列进行中再次按下（例如按住 LT 连按 RB）：只记一次「补点」。
+        // 此时读到的锁存已经是本序列临时解除后的值，若再跑一遍完整序列，
+        // 结束时就会按解锁态「恢复」锁存 —— 表现为连按交互键后鼠标不再锁定。
+        if (interactSequenceActive) { // 语法：if 分支，序列进行中
+            interactSequencePending = true // 记一次补点，交给当前序列在同一解锁窗口内执行
+            Log.d(TAG, "Interact key repeat: extra click queued") // 打印补点日志
+            return // 直接返回，不重新截取锁存状态
+        } // 结束进行中判断
         // 用合并后的锁定状态（本地锁存 + Rust 上报的远端锁存）：只看本地集合会漏掉
         // Rust 侧锁定的右键，导致序列里那次右键点击退出 mouselook 后不再恢复锁定
         val leftLocked = isMouseLocked(MouseButton.LEFT) // 记录左键锁定状态（含远端）
         val rightLocked = isMouseLocked(MouseButton.RIGHT) // 记录右键锁定状态（含远端）
+        interactSequenceActive = true // 标记序列进行中（结束前不再重置锁存状态）
+        interactSequencePending = false // 清掉上一轮残留的补点
         injector.sendCursorSave() // 1. 记录当前光标位置（Windows 客户端保存，末尾用于还原）
         if (leftLocked || rightLocked) { // 2. 仅在锁定时才需要先解锁
             setMouseLockState(MouseButton.LEFT, false) // 临时释放左键锁存（未锁定则无操作）——立即发出
@@ -1350,18 +1374,35 @@ class KeyboardMouseMapper( // 语法：class 类声明，定义键盘/鼠标映�
         } // 结束解锁分支
         // 解锁之后延后 [unlockCenterDelayMs] 再走「居中 → 左右键点击 → 还原位置 → 恢复锁存」，
         // 让游戏先处理完退出 mouselook；序列内部相对顺序不变
-        mainHandler.postDelayed({ // 语法：postDelayed 延迟投递，延后执行整段序列
-            injector.sendMouseCenterExact() // 居中：把鼠标光标移到屏幕正中央
-            injector.sendMouseDown(MouseButton.LEFT) // 左键点击：按下
-            injector.sendMouseUp(MouseButton.LEFT) // 左键点击：松开
-            injector.sendMouseDown(MouseButton.RIGHT) // 右键点击：按下
-            injector.sendMouseUp(MouseButton.RIGHT) // 右键点击：松开
-            injector.sendCursorRestore() // 3. 把鼠标光标移回原位置
-            setMouseLockState(MouseButton.LEFT, leftLocked) // 恢复左键原有锁存状态
-            setMouseLockState(MouseButton.RIGHT, rightLocked) // 恢复右键原有锁存状态
-            Log.d(TAG, "Interact key done: L=$leftLocked R=$rightLocked") // 打印完成日志
-        }, unlockCenterDelayMs) // 延时结束（语法：postDelayed 的第二参数）
+        mainHandler.postDelayed({ runInteractClicks(leftLocked, rightLocked) }, unlockCenterDelayMs) // 语法：postDelayed 延迟投递，延后执行整段序列
     } // 结束 handleMouseClickSequence 函数
+
+    /**
+     * 执行交互键序列的「居中 → 点击」部分
+     *
+     * 已处于解锁窗口内，直接点即可；若期间又按过交互键（[interactSequencePending]），
+     * 再补点一次后收尾。收尾时一律按序列开始时的锁存快照恢复，避免连按把锁存「恢复」成未锁定。
+     *
+     * @param leftLocked 序列开始时左键的锁存状态
+     * @param rightLocked 序列开始时右键的锁存状态
+     */
+    private fun runInteractClicks(leftLocked: Boolean, rightLocked: Boolean) { // 语法：private fun 私有函数
+        injector.sendMouseCenterExact() // 居中：把鼠标光标移到屏幕正中央
+        injector.sendMouseDown(MouseButton.LEFT) // 左键点击：按下
+        injector.sendMouseUp(MouseButton.LEFT) // 左键点击：松开
+        injector.sendMouseDown(MouseButton.RIGHT) // 右键点击：按下
+        injector.sendMouseUp(MouseButton.RIGHT) // 右键点击：松开
+        if (interactSequencePending) { // 按住期间又按过：同一解锁窗口内再点一次
+            interactSequencePending = false // 消费补点标记
+            mainHandler.postDelayed({ runInteractClicks(leftLocked, rightLocked) }, INTERACT_REPEAT_GAP_MS) // 间隔一小段后再补一次点击
+            return // 暂不恢复锁存与光标，等补点做完一起收尾
+        } // 结束补点判断
+        injector.sendCursorRestore() // 3. 把鼠标光标移回原位置
+        setMouseLockState(MouseButton.LEFT, leftLocked) // 恢复左键原有锁存状态
+        setMouseLockState(MouseButton.RIGHT, rightLocked) // 恢复右键原有锁存状态
+        interactSequenceActive = false // 序列结束，允许下一次按下重新截取锁存
+        Log.d(TAG, "Interact key done: L=$leftLocked R=$rightLocked") // 打印完成日志
+    } // 结束 runInteractClicks 函数
 
 
     /**
@@ -1586,5 +1627,8 @@ class KeyboardMouseMapper( // 语法：class 类声明，定义键盘/鼠标映�
 
         /** 定角转身的注入步数（步数越多越接近真实拖动，总耗时也越长） */
         private const val TURN_STEPS = 10 // 语法：const val 编译期常量，转身位移分步数
+
+        /** 交互键序列进行中又按下交互键时，两次点击之间的间隔（毫秒） */
+        private const val INTERACT_REPEAT_GAP_MS = 60L // 语法：const val 编译期常量（毫秒）
     } // 结束伴生对象
 } // 结束 KeyboardMouseMapper 类
