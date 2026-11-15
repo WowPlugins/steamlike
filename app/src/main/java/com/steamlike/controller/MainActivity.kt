@@ -26,7 +26,6 @@ import android.widget.EditText // 导入 EditText 输入框控件
 import android.widget.LinearLayout // 导入 LinearLayout 线性布局
 import android.widget.ScrollView // 导入 ScrollView 滚动视图
 import android.widget.Spinner // 导入 Spinner 下拉选择器控件
-import android.widget.Switch // 导入 Switch 开关控件
 import android.widget.TextView // 导入 TextView 文本控件
 import android.widget.Toast // 导入 Toast 提示
 import androidx.activity.result.contract.ActivityResultContracts // 导入 Activity Result 契约（SAF 文件选择器）
@@ -35,10 +34,7 @@ import androidx.appcompat.app.AppCompatActivity // 导入 AppCompatActivity 兼�
 import com.steamlike.controller.config.AppConfig // 导入运行时配置数据类
 import com.steamlike.controller.config.AppConfigStore // 导入运行时配置读写类
 import com.steamlike.controller.config.ConfigManager // 导入配置管理器
-import com.steamlike.controller.config.ControllerConfig // 导入控制器配置类（JSON 序列化）
 import com.steamlike.controller.core.ControllerDevice // 导入手柄设备类（读取手柄电量）
-import com.steamlike.controller.core.ControllerProfile // 导入控制器配置文件（操作集/图层）
-import com.steamlike.controller.core.GlobalSettings // 导入全局设置（右摇杆参数）
 import com.steamlike.controller.service.ControllerOverlayService // 导入悬浮窗服务
 import com.steamlike.controller.ui.UiKit // 导入 UI 工具类
 import java.io.File // 导入 File 文件类
@@ -53,24 +49,6 @@ class MainActivity : AppCompatActivity() { // 声明主界面 Activity，继承 
     private lateinit var connectionStatusText: TextView // 客户端连接状态文本控件
     /** 手柄电量显示文本（Android 14+ 可读取，无法读取时隐藏） */
     private lateinit var batteryStatusText: TextView // 手柄电量显示文本（语法：lateinit 延迟初始化变量）
-    /** 智能暂停开关 */
-    private lateinit var smartPauseSwitch: Switch // 智能暂停开关控件（语法：lateinit 延迟初始化变量）
-    /** 进入白名单应用后延迟恢复捕获的秒数输入框 */
-    private lateinit var smartResumeDelayEditText: EditText // 恢复捕获延时输入框（秒）
-    /** 捕获白名单输入框 */
-    private lateinit var whitelistEditText: EditText // 捕获白名单输入框
-    /** 使用情况访问授权入口按钮 */
-    private lateinit var usageStatsButton: Button // “使用情况访问”授权入口按钮
-    /** 使用情况访问授权状态文本 */
-    private lateinit var usageStatsStatusText: TextView // “使用情况访问”授权状态文本
-    /** 手柄捕获开关（与悬浮窗暂停/恢复双向同步） */
-    private lateinit var captureSwitch: Switch // 手柄捕获开关控件
-    /** 捕获状态显示文本 */
-    private lateinit var captureStatusText: TextView // 捕获状态显示文本
-    /** 悬浮窗"游戏"按钮拉起应用包名输入框 */
-    private lateinit var launcherEditText: EditText // 悬浮窗“游戏”按钮拉起应用包名输入框
-    /** 抑制捕获开关监听标志（程序化同步状态时避免循环触发） */
-    private var suppressCaptureListener = false // 抑制捕获开关监听标志（语法：var 可变变量）
     /** TCP监听地址输入框 */
     private lateinit var hostEditText: EditText // TCP 监听地址输入框
     /** TCP监听端口输入框 */
@@ -229,74 +207,6 @@ class MainActivity : AppCompatActivity() { // 声明主界面 Activity，继承 
         statusCard.addView(overlayButton) // 把按钮加入卡片
         container.addView(statusCard) // 把状态卡片加入内容容器
 
-        // ===== 智能暂停卡片 =====
-        val smartCard = UiKit.card(this) // 创建“智能暂停”卡片
-        smartCard.addView(UiKit.sectionTitle(this, "智能暂停（修复右滑返回失效）")) // 添加卡片标题
-        smartCard.addView(UiKit.spacer(this, 4)) // 添加 4dp 间距
-        smartCard.addView(UiKit.caption( // 添加说明文字
-            this, // 上下文参数
-            ("焦点窗口会拦截 Android 13+ 的右滑返回手势。白名单应用（如 Winlator）在前台时保持手柄捕获，\n" // 说明第一段
-                + "切到其他应用自动暂停捕获，右滑返回恢复正常。需要授权\"使用情况访问\"，\n" // 说明第二段（字符串拼接）
-                + "以上设置随配置文件一并保存/导出。"), // 说明第三段
-            0xFF999999.toInt(), 11f // 灰色文字、11sp 字号
-        )) // 结束 caption 调用
-        smartCard.addView(UiKit.spacer(this, 6)) // 添加 6dp 间距
-
-        // 智能暂停开关
-        smartPauseSwitch = UiKit.switchRow(this, "启用智能暂停", appCfg.smartPauseEnabled) { checked -> // 创建智能暂停开关行（语法：lambda 回调，参数为开关状态）
-            updateUsageStatsStatus() // 刷新授权状态显示
-            toastLog(if (checked) "智能暂停已开启（切出游戏自动暂停捕获）" else "智能暂停已关闭（手动模式）") // 弹出开关结果提示（语法：if/else 表达式）
-        } // 结束智能暂停开关回调
-        smartCard.addView(smartPauseSwitch) // 把开关加入卡片
-
-        // 进入白名单应用后延迟恢复捕获（默认 12 秒，避开 Winlator 启动游戏的敏感阶段）
-        smartCard.addView(UiKit.label(this, "进入白名单应用后延迟恢复捕获（秒，0=立即）")) // 添加延时标签
-        smartResumeDelayEditText = UiKit.input( // 创建延时输入框
-            this, // 上下文参数
-            "默认 12 秒", // 输入框提示文字
-            (appCfg.smartResumeDelayMs / 1000).toString() // 毫秒换算为秒作为初始值
-        ).apply { // apply 作用域：配置输入类型
-            inputType = android.text.InputType.TYPE_CLASS_NUMBER // 仅允许输入数字
-        } // 结束 apply 块
-        smartCard.addView(smartResumeDelayEditText) // 把延时输入框加入卡片
-        smartCard.addView(UiKit.spacer(this, 6)) // 添加 6dp 间距
-
-        // 捕获开关（与悬浮窗暂停/恢复按钮双向同步）
-        captureSwitch = UiKit.switchRow(this, "手柄捕获", appCfg.captureEnabled) { checked -> // 创建手柄捕获开关行（语法：lambda 回调）
-            if (!suppressCaptureListener) setCaptureSwitch(checked) // 非抑制状态时同步捕获开关（语法：if 判断）
-        } // 结束捕获开关回调
-        smartCard.addView(captureSwitch) // 把捕获开关加入卡片
-
-        // 捕获状态显示（实时接收服务广播同步）
-        captureStatusText = UiKit.caption(this, "", 0xFF999999.toInt(), 11f) // 初始化捕获状态文本
-        smartCard.addView(captureStatusText) // 把捕获状态文本加入卡片
-        smartCard.addView(UiKit.spacer(this, 6)) // 添加 6dp 间距
-
-        // 白名单输入框（支持多个包名，逗号分隔）
-        smartCard.addView(UiKit.label(this, "捕获白名单（支持多个包名，逗号分隔）")) // 添加白名单标签
-        whitelistEditText = UiKit.input( // 创建白名单输入框
-            this, // 上下文参数
-            "如: com.winlator, com.winlator.hub", // 输入框提示文字
-            appCfg.captureWhitelist.joinToString(",") // 用逗号拼接白名单包名作为初始值
-        ) // 结束 input 调用
-        smartCard.addView(whitelistEditText) // 把输入框加入卡片
-        smartCard.addView(UiKit.spacer(this, 6)) // 添加 6dp 间距
-
-        // 拉起应用包名（悬浮窗"游戏"按钮使用）
-        smartCard.addView(UiKit.label(this, "悬浮窗\"游戏\"按钮拉起的应用包名")) // 添加包名标签
-        launcherEditText = UiKit.input(this, "如: com.winlator", appCfg.launcherPackage) // 创建拉起应用包名输入框
-        smartCard.addView(launcherEditText) // 把输入框加入卡片
-        smartCard.addView(UiKit.spacer(this, 8)) // 添加 8dp 间距
-
-        // 使用情况访问授权入口
-        usageStatsButton = UiKit.button(this, "授权使用情况访问", { // 创建授权入口按钮（语法：lambda 点击回调）
-            startActivity(Intent(Settings.ACTION_USAGE_ACCESS_SETTINGS)) // 跳转到使用情况访问设置页
-        }) // 结束按钮回调
-        smartCard.addView(usageStatsButton) // 把按钮加入卡片
-        usageStatsStatusText = UiKit.caption(this, "", 0xFF999999.toInt(), 11f) // 初始化授权状态文本
-        smartCard.addView(usageStatsStatusText) // 把授权状态文本加入卡片
-        container.addView(smartCard) // 把智能暂停卡片加入内容容器
-
         // ===== TCP 服务器配置卡片 =====
         val serverCard = UiKit.card(this) // 创建“TCP 服务器配置”卡片
         serverCard.addView(UiKit.sectionTitle(this, "TCP 服务器配置")) // 添加卡片标题
@@ -323,14 +233,15 @@ class MainActivity : AppCompatActivity() { // 声明主界面 Activity，继承 
             val host = hostEditText.text.toString().trim() // 读取并去除首尾空白的监听地址（语法：val + 链式调用）
             val portStr = portEditText.text.toString().trim() // 读取并去除首尾空白的端口字符串
             val port = portStr.toIntOrNull() ?: 27015 // 端口转整数，失败时默认 27015（语法：?: 空值合并）
-            // 保存全部运行时配置到配置文件（随配置一并导入/导出）
+            // 保存运行时配置（只覆盖本页的地址/端口，其它字段沿用配置文件）
             saveRuntimeConfig() // 保存运行时配置
+            val cfg = AppConfigStore.load(this@MainActivity) // 读取最新配置
             val intent = Intent(this@MainActivity, ControllerOverlayService::class.java).apply { // 构建启动服务 Intent 并进入 apply 作用域
                 putExtra(ControllerOverlayService.EXTRA_HOST, host) // 携带监听地址
                 putExtra(ControllerOverlayService.EXTRA_PORT, port) // 携带监听端口
-                putExtra(ControllerOverlayService.EXTRA_SMART_PAUSE, smartPauseSwitch.isChecked) // 携带智能暂停开关状态
-                putExtra(ControllerOverlayService.EXTRA_WHITELIST, whitelistEditText.text.toString().trim()) // 携带捕获白名单
-                putExtra(ControllerOverlayService.EXTRA_LAUNCHER_PACKAGE, launcherEditText.text.toString().trim()) // 携带拉起应用包名
+                putExtra(ControllerOverlayService.EXTRA_SMART_PAUSE, cfg.smartPauseEnabled) // 携带智能暂停开关状态（来自高级设置页）
+                putExtra(ControllerOverlayService.EXTRA_WHITELIST, cfg.captureWhitelist.joinToString(",")) // 携带捕获白名单
+                putExtra(ControllerOverlayService.EXTRA_LAUNCHER_PACKAGE, cfg.launcherPackage) // 携带拉起应用包名
             } // 结束 Intent apply 块
             ContextCompat.startForegroundService(this@MainActivity, intent) // 启动前台服务
             // 连接状态由服务广播(ACTION_CLIENT_STATUS)实时更新，不在此手动改文本（避免布局高度变化导致滚动）
@@ -368,6 +279,13 @@ class MainActivity : AppCompatActivity() { // 声明主界面 Activity，继承 
         val configCard = UiKit.card(this) // 创建“配置管理”卡片
         configCard.addView(UiKit.sectionTitle(this, "配置管理")) // 添加卡片标题
         configCard.addView(UiKit.spacer(this, 4)) // 添加 4dp 间距
+
+        // 高级设置入口：智能暂停、摇杆手感、长按阈值、WASD 自动锁定、调试等不常用项集中到二级页面
+        configCard.addView(UiKit.button(this, "⚙️ 高级设置", {
+            startActivity(Intent(this@MainActivity, AdvancedSettingsActivity::class.java))
+        }, UiKit.Style.PRIMARY))
+        configCard.addView(UiKit.caption(this, "智能暂停、摇杆手感、长按阈值、WASD 自动锁定、调试", 0xFF999999.toInt(), 10f))
+        configCard.addView(UiKit.spacer(this, 10))
 
         // 配置状态
         configStatusText = UiKit.caption(this, "", 0xFFDDDDDD.toInt(), 12f) // 初始化配置状态文本
@@ -425,260 +343,6 @@ class MainActivity : AppCompatActivity() { // 声明主界面 Activity，继承 
         )) // 结束按钮创建
         container.addView(configCard) // 把配置管理卡片加入内容容器
 
-        // ===== 右摇杆优化设置卡片 =====
-        val lookCard = UiKit.card(this) // 创建“右摇杆优化设置”卡片
-        lookCard.addView(UiKit.sectionTitle(this, "右摇杆优化设置")) // 添加卡片标题
-        lookCard.addView(UiKit.spacer(this, 4)) // 添加 4dp 间距
-        lookCard.addView(UiKit.caption( // 添加设置说明文字
-            this, // 上下文参数
-            ("右摇杆控制鼠标视角时，可通过以下参数调节手感。\n" // 说明第一段
-                + "• 觉得滑动过快 → 降低「灵敏度」或提高「加速曲线指数」\n" // 说明第二段
-                + "• 觉得不够流畅/抖动 → 提高「平滑系数」(0.5~0.8 推荐)\n" // 说明第三段
-                + "• 摇杆居中时仍在漂移 → 提高「死区」(0.1~0.25)\n" // 说明第四段
-                + "• 轻推难以精确瞄准 → 降低「加速曲线指数」靠近 1.0"), // 说明第五段
-            0xFF999999.toInt(), 11f // 灰色文字、11sp 字号
-        )) // 结束 caption 调用
-        lookCard.addView(UiKit.spacer(this, 4)) // 添加 4dp 间距
-
-        // 读取当前设置值
-        val currentSettings = getCurrentProfile().globalSettings // 获取当前生效的全局设置（语法：val 只读变量）
-
-        // 死区
-        val deadzoneEdit = makeSettingsEdit( // 创建设置项：死区
-            title = "死区 (Deadzone)", // 设置项标题（语法：命名参数）
-            hint = "0.0 ~ 1.0，默认 0.15", // 输入框提示
-            desc = ("小于此值的摇杆输入会被视为零输入，消除摇杆中心漂移。\n" // 设置说明第一段
-                + "推荐: 0.10~0.25。摇杆容易漂移可调高；摇杆精准可调低。"), // 设置说明第二段
-            value = currentSettings.deadzone // 当前死区值
-        ) // 结束 makeSettingsEdit 调用
-        lookCard.addView(deadzoneEdit.first) // 把死区设置区块加入卡片（Pair 的第一个元素）
-
-        // 视角灵敏度
-        val sensitivityEdit = makeSettingsEdit( // 创建设置项：视角灵敏度
-            title = "右摇杆视角灵敏度 (Look Sensitivity)", // 设置项标题
-            hint = "0.1 ~ 5.0，默认 0.5", // 输入框提示
-            desc = ("右摇杆控制视角/鼠标移动的整体速度倍率。\n" // 设置说明第一段
-                + "数值越大移动越快。觉得滑动过快请降低此值(如 0.3)；过慢可提高(如 0.8)。"), // 设置说明第二段
-            value = currentSettings.lookSensitivity // 当前灵敏度值
-        ) // 结束 makeSettingsEdit 调用
-        lookCard.addView(sensitivityEdit.first) // 把灵敏度设置区块加入卡片
-
-        // 平滑系数
-        val smoothingEdit = makeSettingsEdit( // 创建设置项：平滑系数
-            title = "视角平滑系数 (Look Smoothing)", // 设置项标题
-            hint = "0.0 ~ 0.95，默认 0.5", // 输入框提示
-            desc = ("指数移动平均(EMA)滤波系数，降低摇杆抖动让移动更顺滑。\n" // 设置说明第一段
-                + "0=关闭平滑(最跟手但有抖动)，越大越顺滑但延迟增加。\n" // 设置说明第二段
-                + "推荐: 0.3~0.7。觉卡顿降一点，觉延迟降一点。"), // 设置说明第三段
-            value = currentSettings.lookSmoothing // 当前平滑系数值
-        ) // 结束 makeSettingsEdit 调用
-        lookCard.addView(smoothingEdit.first) // 把平滑设置区块加入卡片
-
-        // 加速曲线指数
-        val accelerationEdit = makeSettingsEdit( // 创建设置项：加速曲线指数
-            title = "视角加速曲线指数 (Look Acceleration)", // 设置项标题
-            hint = "0.5 ~ 3.0，默认 1.5", // 输入框提示
-            desc = ("非线性响应曲线。1.0=线性(轻推重推一致)；\n" // 设置说明第一段
-                + ">1.0 轻推更慢、重推更快(利于精确瞄准又保证转向速度)；\n" // 设置说明第二段
-                + "<1.0 轻推更快、重推相对变慢。\n" // 设置说明第三段
-                + "觉得轻推过快难以瞄准 → 提高此值(如 1.8~2.2)。"), // 设置说明第四段
-            value = currentSettings.lookAcceleration // 当前加速指数值
-        ) // 结束 makeSettingsEdit 调用
-        lookCard.addView(accelerationEdit.first) // 把加速设置区块加入卡片
-
-        // 光标速度倍率
-        val cursorSpeedEdit = makeSettingsEdit( // 创建设置项：光标速度倍率
-            title = "光标移动速度倍率 (Cursor Speed)", // 设置项标题
-            hint = "默认 1.0", // 输入框提示
-            desc = ("左摇杆/其他鼠标移动场景的速度倍率(右摇杆视角由灵敏度控制)。\n" // 设置说明第一段
-                + ">1.0 更快，<1.0 更慢。一般保持 1.0 即可。"), // 设置说明第二段
-            value = currentSettings.cursorSpeed // 当前光标速度值
-        ) // 结束 makeSettingsEdit 调用
-        lookCard.addView(cursorSpeedEdit.first) // 把光标速度设置区块加入卡片
-        lookCard.addView(UiKit.spacer(this, 6)) // 添加 6dp 间距
-
-        // 保存按钮
-        lookCard.addView(UiKit.button( // 添加“保存右摇杆设置”按钮
-            this, // 上下文参数
-            "保存右摇杆设置", // 按钮文字
-            onClick = { // 点击回调（语法：lambda）
-                val dz = deadzoneEdit.second.text.toString().trim().toFloatOrNull() // 读取死区输入并转 Float（语法：toFloatOrNull 安全转换）
-                val sens = sensitivityEdit.second.text.toString().trim().toFloatOrNull() // 读取灵敏度输入并转 Float
-                val sm = smoothingEdit.second.text.toString().trim().toFloatOrNull() // 读取平滑输入并转 Float
-                val ac = accelerationEdit.second.text.toString().trim().toFloatOrNull() // 读取加速输入并转 Float
-                val cs = cursorSpeedEdit.second.text.toString().trim().toFloatOrNull() // 读取光标速度输入并转 Float
-                if (dz == null || sens == null || sm == null || ac == null || cs == null) { // 任一输入无效时进入（语法：if + || 逻辑或）
-                    toastLog("请填写全部 5 个数值", long = true) // 提示填写全部数值（语法：命名参数）
-                } else if (!Settings.canDrawOverlays(this@MainActivity)) { // 未授予悬浮窗权限时进入（语法：else if 分支 + ! 取反）
-                    toastLog("请先授予悬浮窗权限并启动服务", long = true) // 提示先授权
-                } else { // 以上条件都不满足时进入
-                    ensureServiceRunning() // 确保映射服务已启动
-                    val intent = Intent(this@MainActivity, ControllerOverlayService::class.java).apply { // 构建更新设置 Intent 并进入 apply 作用域
-                        action = ControllerOverlayService.ACTION_UPDATE_SETTINGS // 设置动作：更新全局设置
-                        putExtra(ControllerOverlayService.EXTRA_DEADZONE, dz) // 携带死区值
-                        putExtra(ControllerOverlayService.EXTRA_LOOK_SENSITIVITY, sens) // 携带灵敏度值
-                        putExtra(ControllerOverlayService.EXTRA_LOOK_SMOOTHING, sm) // 携带平滑值
-                        putExtra(ControllerOverlayService.EXTRA_LOOK_ACCELERATION, ac) // 携带加速值
-                        putExtra(ControllerOverlayService.EXTRA_CURSOR_SPEED, cs) // 携带光标速度值
-                    } // 结束 Intent apply 块
-                    ContextCompat.startForegroundService(this@MainActivity, intent) // 启动前台服务执行设置更新
-                    toastLog("正在保存右摇杆设置...") // 弹出保存提示
-                } // 结束 else 分支
-            }, // 结束点击回调
-            style = UiKit.Style.PRIMARY // 按钮使用主色调样式
-        )) // 结束按钮创建
-        container.addView(lookCard) // 把右摇杆优化卡片加入内容容器
-
-        // ===== 长按映射设置卡片 =====
-        val longPressCard = UiKit.card(this) // 创建“长按映射设置”卡片
-        longPressCard.addView(UiKit.sectionTitle(this, "长按映射设置")) // 添加卡片标题
-        longPressCard.addView(UiKit.spacer(this, 4)) // 添加 4dp 间距
-        longPressCard.addView(UiKit.caption( // 添加设置说明文字
-            this, // 上下文参数
-            ("在「层与操作集设置」中为某按键配置「长按动作」后，本设置即生效。\n" // 说明第一段
-                + "• 按住时长达到阈值 → 触发长按动作；未达到 → 触发短按动作\n" // 说明第二段
-                + "• 阈值越小，越容易触发长按\n" // 说明第三段
-                + "• 开启下方开关后，未单独配置长按动作的按键，长按松开时会执行其短按动作"), // 说明第四段
-            0xFF999999.toInt(), 11f // 灰色文字、11sp 字号
-        )) // 结束 caption 调用
-        longPressCard.addView(UiKit.spacer(this, 8)) // 添加 8dp 间距
-
-        // 长按判定阈值下拉（档位与 全局设置 longPressThresholdMs 对应）
-        longPressCard.addView(UiKit.label(this, "长按判定阈值")) // 添加阈值标签
-        longPressCard.addView(UiKit.caption(this, "按住时长达到该值即视为长按（默认 500 ms）", 0xFF999999.toInt(), 10f)) // 添加阈值说明
-        longPressCard.addView(UiKit.spacer(this, 4)) // 添加 4dp 间距
-        val longPressThresholdOptions = (100..800 step 50).toList() // 阈值档位列表：100~800 ms，50 ms 一档
-        val longPressThresholdSpinner = Spinner(this).apply { // 创建阈值下拉框并配置（语法：apply{}=作用域函数）
-            adapter = ArrayAdapter(this@MainActivity, android.R.layout.simple_spinner_item, // 设置适配器
-                longPressThresholdOptions.map { "${it} ms" }).also { // 显示为「500 ms」形式（语法：map lambda）
-                it.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item) // 设置下拉展开项布局
-            } // 结束 also 块
-            setSelection(longPressThresholdOptions.indexOf(currentSettings.longPressThresholdMs).coerceAtLeast(0)) // 初始选中当前阈值档位
-        } // 结束 Spinner apply 块
-        longPressCard.addView(longPressThresholdSpinner) // 把阈值下拉框加入卡片
-        longPressCard.addView(UiKit.spacer(this, 8)) // 添加 8dp 间距
-
-        // 长按未映射时回退执行短按动作开关
-        val longPressFallbackSwitch = UiKit.switchRow( // 创建回退开关行（语法：return 返回 Switch 控件）
-            this, "长按未映射时执行短按动作", currentSettings.longPressFallbackToShort // 标题与当前状态
-        ) {} // 空回调，保存时统一读取状态
-        longPressCard.addView(longPressFallbackSwitch) // 把回退开关加入卡片
-        longPressCard.addView(UiKit.spacer(this, 6)) // 添加 6dp 间距
-
-        // 保存按钮
-        longPressCard.addView(UiKit.button( // 添加“保存长按设置”按钮
-            this, // 上下文参数
-            "保存长按设置", // 按钮文字
-            onClick = { // 点击回调（语法：lambda）
-                if (!Settings.canDrawOverlays(this@MainActivity)) { // 未授予悬浮窗权限时进入（语法：! 取反）
-                    toastLog("请先授予悬浮窗权限并启动服务", long = true) // 提示先授权
-                } else { // 已授权时进入
-                    ensureServiceRunning() // 确保映射服务已启动
-                    val intent = Intent(this@MainActivity, ControllerOverlayService::class.java).apply { // 构建更新设置 Intent 并进入 apply 作用域
-                        action = ControllerOverlayService.ACTION_UPDATE_SETTINGS // 设置动作：更新全局设置
-                        putExtra(ControllerOverlayService.EXTRA_LONG_PRESS_THRESHOLD_MS, // 携带长按阈值（语法：putExtra 写入 extra）
-                            longPressThresholdOptions[longPressThresholdSpinner.selectedItemPosition]) // 读取选中档位毫秒值
-                        putExtra(ControllerOverlayService.EXTRA_LONG_PRESS_FALLBACK, longPressFallbackSwitch.isChecked) // 携带回退开关状态
-                    } // 结束 Intent apply 块
-                    ContextCompat.startForegroundService(this@MainActivity, intent) // 启动前台服务执行设置更新
-                    toastLog("正在保存长按设置...") // 弹出保存提示
-                } // 结束 else 分支
-            }, // 结束点击回调
-            style = UiKit.Style.PRIMARY // 按钮使用主色调样式
-        )) // 结束按钮创建
-        container.addView(longPressCard) // 把长按映射卡片加入内容容器
-
-        // ===== WASD 自动锁定卡片 =====
-        val wasdLockCard = UiKit.card(this) // 创建“WASD 自动锁定”卡片
-        wasdLockCard.addView(UiKit.sectionTitle(this, "WASD 自动锁定")) // 添加卡片标题
-        wasdLockCard.addView(UiKit.spacer(this, 4)) // 添加 4dp 间距
-        wasdLockCard.addView(UiKit.caption( // 添加设置说明文字
-            this, // 上下文参数
-            ("左摇杆移动（WASD）时是否自动锁定鼠标右键：\n" // 说明第一段
-                + "• 开启：移动时自动把鼠标居中并锁定右键（视角跟随移动方向）\n" // 说明第二段
-                + "• 关闭：移动不会自动锁定右键，需按键手动锁定\n" // 说明第三段
-                + "• 居中落点：默认停放到屏幕外下方，可改为屏幕正中央"), // 说明第四段
-            0xFF999999.toInt(), 11f // 灰色文字、11sp 字号
-        )) // 结束 caption 调用
-        wasdLockCard.addView(UiKit.spacer(this, 8)) // 添加 8dp 间距
-
-        // 自动锁定开关（默认开启）
-        val wasdAutoLockSwitch = UiKit.switchRow( // 创建开关行（语法：return 返回 Switch 控件）
-            this, "WASD 移动时自动锁定鼠标右键", currentSettings.wasdAutoRightLock // 标题与当前状态
-        ) {} // 空回调，保存时统一读取状态
-        wasdLockCard.addView(wasdAutoLockSwitch) // 把开关加入卡片
-        wasdLockCard.addView(UiKit.spacer(this, 4)) // 添加 4dp 间距
-
-        // 自动锁定前鼠标居中开关（默认开启）
-        val wasdAutoCenterSwitch = UiKit.switchRow( // 创建开关行（语法：return 返回 Switch 控件）
-            this, "自动锁定前把鼠标移到屏幕正中央", currentSettings.wasdAutoCenterMouse // 标题与当前状态
-        ) {} // 空回调，保存时统一读取状态
-        wasdLockCard.addView(wasdAutoCenterSwitch) // 把开关加入卡片
-        wasdLockCard.addView(UiKit.spacer(this, 4)) // 添加 4dp 间距
-
-        // 居中落点开关（默认停放到屏幕外下方：屏幕中央正下方、屏幕下边缘之外 1/10 屏高处）
-        val cursorParkSwitch = UiKit.switchRow( // 创建开关行（语法：return 返回 Switch 控件）
-            this, "居中时停放到屏幕外下方（关闭则为屏幕正中央）", currentSettings.cursorParkOffscreen // 标题与当前状态
-        ) {} // 空回调，保存时统一读取状态
-        wasdLockCard.addView(cursorParkSwitch) // 把开关加入卡片
-        wasdLockCard.addView(UiKit.spacer(this, 6)) // 添加 6dp 间距
-
-        // 保存按钮
-        wasdLockCard.addView(UiKit.button( // 添加“保存自动锁定”按钮
-            this, // 上下文参数
-            "保存自动锁定", // 按钮文字
-            onClick = { // 点击回调（语法：lambda）
-                if (!Settings.canDrawOverlays(this@MainActivity)) { // 未授予悬浮窗权限时进入（语法：! 取反）
-                    toastLog("请先授予悬浮窗权限并启动服务", long = true) // 提示先授权
-                } else { // 已授权时进入
-                    ensureServiceRunning() // 确保映射服务已启动
-                    val intent = Intent(this@MainActivity, ControllerOverlayService::class.java).apply { // 构建更新设置 Intent 并进入 apply 作用域
-                        action = ControllerOverlayService.ACTION_UPDATE_SETTINGS // 设置动作：更新全局设置
-                        putExtra(ControllerOverlayService.EXTRA_WASD_AUTO_RIGHT_LOCK, wasdAutoLockSwitch.isChecked) // 携带 WASD 自动锁定开关状态
-                        putExtra(ControllerOverlayService.EXTRA_WASD_AUTO_CENTER_MOUSE, wasdAutoCenterSwitch.isChecked) // 携带自动锁定前鼠标居中开关状态
-                        putExtra(ControllerOverlayService.EXTRA_CURSOR_PARK_OFFSCREEN, cursorParkSwitch.isChecked) // 携带居中落点开关状态（屏幕外下方 / 屏幕正中央）
-                    } // 结束 Intent apply 块
-                    ContextCompat.startForegroundService(this@MainActivity, intent) // 启动前台服务执行设置更新
-                    toastLog("正在保存自动锁定设置...") // 弹出保存提示
-                } // 结束 else 分支
-            }, // 结束点击回调
-            style = UiKit.Style.PRIMARY // 按钮使用主色调样式
-        )) // 结束按钮创建
-        container.addView(wasdLockCard) // 把 WASD 自动锁定卡片加入内容容器
-
-        // ===== 调试卡片 =====
-        val debugCard = UiKit.card(this) // 创建“调试”卡片
-        debugCard.addView(UiKit.sectionTitle(this, "调试")) // 添加卡片标题
-        debugCard.addView(UiKit.spacer(this, 6)) // 添加 6dp 间距
-        debugCard.addView(UiKit.button( // 添加“测试手柄按键”按钮
-            this, // 上下文参数
-            "测试手柄按键（模拟器调试用）", // 按钮文字
-            onClick = { // 点击回调（语法：lambda）
-                ensureServiceRunning() // 确保映射服务已启动
-                if (LayerEditActivity.steamInputRef == null) { // 服务尚未初始化完成时进入（语法：if 判断）
-                    toastLog("服务正在初始化，请稍候...") // 弹出等待提示
-                    var waited = 0 // 已等待毫秒数（语法：var 可变变量）
-                    val tick = 100 // 每次轮询间隔毫秒数（语法：val 只读变量）
-                    val maxWait = 3000 // 最大等待毫秒数
-                    configStatusText.postDelayed(object : Runnable { // 延迟执行并传入匿名对象（语法：object : 接口匿名实现）
-                        override fun run() { // 覆写 Runnable 的 run 方法（语法：override 覆写）
-                            waited += tick // 累加等待时间
-                            if (LayerEditActivity.steamInputRef != null) { // 服务初始化完成时进入
-                                startActivity(Intent(this@MainActivity, GamepadTestActivity::class.java)) // 跳转到手柄测试界面
-                            } else if (waited < maxWait) { // 未完成且未超时时进入（语法：else if 分支）
-                                configStatusText.postDelayed(this, tick.toLong()) // 继续延迟轮询
-                            } else { // 超时则进入
-                                toastLog("服务初始化超时，请重试", long = true) // 提示超时
-                            } // 结束超时判断
-                        } // 结束 run 方法
-                    }, tick.toLong()) // 以 100ms 为周期开始轮询
-                } else { // 服务已就绪时进入
-                    startActivity(Intent(this@MainActivity, GamepadTestActivity::class.java)) // 直接跳转到手柄测试界面
-                } // 结束就绪判断
-            } // 结束点击回调
-        )) // 结束按钮创建
-        container.addView(debugCard) // 把调试卡片加入内容容器
-
         // 恢复上次退出的滚动位置（上划退出/进程重建后回到原位置）
         mainScroll.post { // 在主线程队列中执行恢复滚动（语法：lambda + post）
             mainScroll.scrollTo( // 滚动到指定位置
@@ -723,9 +387,9 @@ class MainActivity : AppCompatActivity() { // 声明主界面 Activity，继承 
         val intent = Intent(this, ControllerOverlayService::class.java).apply { // 构建服务 Intent 并进入 apply 作用域
             putExtra(ControllerOverlayService.EXTRA_HOST, cfg.serverHost) // 携带监听地址
             putExtra(ControllerOverlayService.EXTRA_PORT, cfg.serverPort) // 携带监听端口
-            putExtra(ControllerOverlayService.EXTRA_SMART_PAUSE, smartPauseSwitch.isChecked) // 携带智能暂停开关状态
-            putExtra(ControllerOverlayService.EXTRA_WHITELIST, whitelistEditText.text.toString().trim()) // 携带捕获白名单
-            putExtra(ControllerOverlayService.EXTRA_LAUNCHER_PACKAGE, launcherEditText.text.toString().trim()) // 携带拉起应用包名
+            putExtra(ControllerOverlayService.EXTRA_SMART_PAUSE, cfg.smartPauseEnabled) // 携带智能暂停开关状态（来自高级设置页）
+            putExtra(ControllerOverlayService.EXTRA_WHITELIST, cfg.captureWhitelist.joinToString(",")) // 携带捕获白名单
+            putExtra(ControllerOverlayService.EXTRA_LAUNCHER_PACKAGE, cfg.launcherPackage) // 携带拉起应用包名
         } // 结束 Intent apply 块
         ContextCompat.startForegroundService(this, intent) // 启动前台服务
     } // 结束 ensureServiceRunning 函数
@@ -791,154 +455,18 @@ class MainActivity : AppCompatActivity() { // 声明主界面 Activity，继承 
     } // 结束 updateConfigStatus 函数
 
     /**
-     * 保存全部运行时配置到配置文件（随配置一并导入/导出）
+     * 保存首页负责的运行时配置（服务器地址/端口）
      *
-     * 包含：服务器地址/端口、智能暂停开关、捕获白名单（多个）、
-     * 捕获开关、悬浮窗"游戏"按钮拉起应用包名。
+     * 其它字段（智能暂停、白名单、捕获开关、拉起包名等）在「高级设置」页维护，
+     * 这里先读取现有配置再只覆盖地址/端口，避免把高级设置页的改动覆盖回默认值。
      */
-    private fun saveRuntimeConfig() { // 保存全部运行时配置到配置文件
-        val cfg = AppConfig( // 构建运行时配置对象
-            serverHost = hostEditText.text.toString().trim().ifBlank { AppConfig.DEFAULT_HOST }, // 监听地址，为空时用默认值（语法：ifBlank 兜底）
-            serverPort = portEditText.text.toString().trim().toIntOrNull() ?: AppConfig.DEFAULT_PORT, // 端口，非法时用默认值（语法：?: 空值合并）
-            smartPauseEnabled = smartPauseSwitch.isChecked, // 智能暂停开关状态
-            smartResumeDelayMs = (smartResumeDelayEditText.text.toString().trim().toIntOrNull() ?: 12) // 读取延时时长（秒，非法时默认 12）
-                .coerceIn(0, 120) * 1000, // 限制 0~120 秒并换算为毫秒
-            captureWhitelist = AppConfig.parseWhitelist(whitelistEditText.text.toString()), // 解析白名单包名列表
-            captureEnabled = captureSwitch.isChecked, // 捕获开关状态
-            launcherPackage = launcherEditText.text.toString().trim().ifBlank { AppConfig.DEFAULT_LAUNCHER } // 拉起应用包名，为空时用默认值
+    private fun saveRuntimeConfig() { // 保存首页负责的运行时配置
+        val cfg = AppConfigStore.load(this).copy( // 先读现有配置，再仅替换地址与端口（语法：copy 复制并修改部分字段）
+            serverHost = hostEditText.text.toString().trim().ifBlank { AppConfig.DEFAULT_HOST }, // 监听地址，为空时用默认值
+            serverPort = portEditText.text.toString().trim().toIntOrNull() ?: AppConfig.DEFAULT_PORT // 端口，非法时用默认值
         ) // 结束 AppConfig 构造
         AppConfigStore.save(this, cfg) // 持久化配置到文件
     } // 结束 saveRuntimeConfig 函数
-
-    /**
-     * 捕获开关变化 → 持久化 + 通知服务（悬浮窗同步）
-     *
-     * @param enabled true=恢复捕获, false=暂停捕获
-     */
-    private fun setCaptureSwitch(enabled: Boolean) { // 捕获开关变化时同步服务与配置（语法：fun 函数 + Boolean 参数）
-        saveRuntimeConfig() // 先保存运行时配置
-        if (isServiceRunning()) { // 服务正在运行时进入（语法：if 判断）
-            val intent = Intent(this, ControllerOverlayService::class.java).apply { // 构建服务 Intent 并进入 apply 作用域
-                action = ControllerOverlayService.ACTION_SET_CAPTURE // 设置动作：切换捕获状态
-                putExtra(ControllerOverlayService.EXTRA_CAPTURE_ENABLED, enabled) // 携带捕获开关状态
-            } // 结束 Intent apply 块
-            ContextCompat.startForegroundService(this, intent) // 启动前台服务通知悬浮窗
-        } else { // 服务未运行时进入
-            toastLog("服务未运行，开关状态已保存（启动手柄映射后生效）") // 提示状态已保存稍后生效
-        } // 结束服务运行判断
-        logD("Capture switch set to $enabled") // 输出日志（语法：字符串模板）
-    } // 结束 setCaptureSwitch 函数
-
-    /**
-     * 检查 ControllerOverlayService 是否在运行
-     */
-    private fun isServiceRunning(): Boolean { // 检查悬浮窗服务是否在运行
-        val am = getSystemService(Context.ACTIVITY_SERVICE) as ActivityManager // 获取 ActivityManager（语法：as 类型转换）
-        @Suppress("DEPRECATION")
-        val services = am.getRunningServices(100) // 查询最多 100 个运行中的服务
-        return services.any { // 判断是否存在匹配服务（语法：lambda + any 集合判断）
-            it.service.className == ControllerOverlayService::class.java.name && // 服务类名匹配（语法：&& 逻辑与）
-                it.service.packageName == packageName // 服务包名匹配
-        } // 结束 any lambda
-    } // 结束 isServiceRunning 函数
-
-    /**
-     * 从配置文件同步捕获开关状态（onResume 时调用）
-     */
-    private fun syncCaptureSwitchFromPrefs() { // 从配置文件同步捕获开关状态
-        if (!::captureSwitch.isInitialized) return // 控件未初始化则直接返回（语法：:: 属性引用 + 提前 return）
-        val enabled = AppConfigStore.load(this).captureEnabled // 读取配置中的捕获开关状态
-        suppressCaptureListener = true // 置抑制标志，避免同步触发监听
-        captureSwitch.isChecked = enabled // 设置开关状态
-        suppressCaptureListener = false // 取消抑制标志
-        captureStatusText.text = if (enabled) "捕获状态: ✅ 运行中" else "捕获状态: ⏸ 已暂停（可点悬浮窗恢复）" // 更新捕获状态文本（语法：if/else 表达式）
-    } // 结束 syncCaptureSwitchFromPrefs 函数
-
-    /**
-     * 检查"使用情况访问"权限是否已授权
-     */
-    private fun hasUsageStatsPermission(): Boolean { // 检查“使用情况访问”权限是否已授权
-        val appOps = getSystemService(Context.APP_OPS_SERVICE) as AppOpsManager // 获取 AppOpsManager（语法：as 类型转换）
-        val mode = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) { // 系统版本 >= Android 10 时进入（语法：if 条件分支）
-            appOps.unsafeCheckOpNoThrow( // 使用新 API 检查（Android 10+）
-                AppOpsManager.OPSTR_GET_USAGE_STATS, Process.myUid(), packageName // 检查使用情况权限项
-            ) // 结束检查调用
-        } else { // 旧系统版本分支
-            @Suppress("DEPRECATION")
-            appOps.checkOpNoThrow( // 使用旧 API 检查
-                AppOpsManager.OPSTR_GET_USAGE_STATS, Process.myUid(), packageName // 检查使用情况权限项
-            ) // 结束检查调用
-        } // 结束版本分支
-        return mode == AppOpsManager.MODE_ALLOWED // 返回是否已允许（语法：== 比较返回布尔）
-    } // 结束 hasUsageStatsPermission 函数
-
-    /**
-     * 刷新"使用情况访问"授权状态显示
-     */
-    private fun updateUsageStatsStatus() { // 刷新“使用情况访问”授权状态显示
-        if (!::usageStatsStatusText.isInitialized) return // 控件未初始化则直接返回
-        val granted = hasUsageStatsPermission() // 判断权限是否已授权
-        usageStatsStatusText.text = if (granted) { // 已授权时（语法：if/else 表达式）
-            "使用情况访问: ✅ 已授权（智能暂停可用）" // 显示已授权文字
-        } else { // 未授权分支
-            if (smartPauseSwitch.isChecked) { // 智能暂停开启时进入（语法：if 判断）
-                "使用情况访问: ❌ 未授权 — 点击上方按钮前往系统设置开启，否则智能暂停不生效（手动模式）" // 提示需授权才能生效
-            } else { // 智能暂停关闭分支
-                "使用情况访问: ❌ 未授权（智能暂停已关闭，不影响手动模式）" // 提示不影响手动模式
-            } // 结束内层判断
-        } // 结束外层 if/else 表达式
-    } // 结束 updateUsageStatsStatus 函数
-
-    /**
-     * 获取当前生效的 ControllerProfile
-     *
-     * 数据源优先级:
-     * 1. 服务已启动: 读取运行时 [LayerEditActivity.steamInputRef] 的 profile
-     * 2. 服务未启动但配置文件存在: 从内部配置文件加载
-     * 3. 都没有: 使用代码内置默认 profile
-     */
-    private fun getCurrentProfile(): ControllerProfile { // 获取当前生效的控制器配置
-        LayerEditActivity.steamInputRef?.profile?.let { return it } // 服务已启动则返回运行时配置（语法：?. 安全调用 + let + return）
-        val configFile = File(filesDir, "steamlike_config.json") // 定位内部配置文件
-        if (configFile.exists()) { // 配置文件存在时进入（语法：if 判断）
-            return try { // 尝试读取（语法：try 异常处理 + return）
-                ControllerConfig.fromJson(configFile.readText()) // 从 JSON 文本解析配置
-            } catch (e: Exception) { // 解析异常时进入（语法：catch 捕获异常）
-                ControllerProfile.createDefault() // 返回默认配置
-            } // 结束 try-catch
-        } // 结束配置文件存在判断
-        return ControllerProfile.createDefault() // 无配置文件时返回默认配置
-    } // 结束 getCurrentProfile 函数
-
-    /**
-     * 创建一个设置项 UI 区块（标题 + 说明 + 输入框）
-     *
-     * @param title 设置项名称
-     * @param hint 输入框提示
-     * @param desc 设置项说明文本（多行）
-     * @param value 当前值（Float）
-     * @return Pair(LinearLayout 视图, EditText 输入框)
-     */
-    private fun makeSettingsEdit( // 创建设置项 UI 区块的函数
-        title: String, // 设置项标题（语法：函数参数）
-        hint: String, // 输入框提示
-        desc: String, // 设置说明文本
-        value: Float // 当前值
-    ): Pair<LinearLayout, EditText> { // 返回布局与输入框的组合（语法：Pair 返回类型）
-        val layout = LinearLayout(this).apply { // 创建设置项垂直布局并进入 apply 作用域
-            orientation = LinearLayout.VERTICAL // 垂直方向
-            setPadding(0, UiKit.dp(this@MainActivity, 10), 0, 0) // 顶部留 10dp 内边距
-        } // 结束布局 apply 块
-        layout.addView(UiKit.label(this, title)) // 添加标题标签
-        layout.addView(UiKit.caption(this, desc, 0xFF999999.toInt(), 10f)) // 添加说明文字
-        layout.addView(UiKit.spacer(this, 4)) // 添加 4dp 间距
-        val edit = UiKit.input(this, hint, value.toString()).apply { // 创建输入框并进入 apply 作用域
-            inputType = android.text.InputType.TYPE_CLASS_NUMBER or // 数字输入类型（语法：or 位或运算）
-                android.text.InputType.TYPE_NUMBER_FLAG_DECIMAL // 允许小数
-        } // 结束输入框 apply 块
-        layout.addView(edit) // 输入框加入布局
-        return Pair(layout, edit) // 返回布局与输入框对
-    } // 结束 makeSettingsEdit 函数
 
     // ====================================================================
     // Windows 客户端文件导出
@@ -1184,25 +712,6 @@ class MainActivity : AppCompatActivity() { // 声明主界面 Activity，继承 
                     ) // 结束 setTextColor 调用
                     Log.i(TAG, "Connection status: connected=$connected, msg=$statusText") // 输出连接状态日志
                 } // 结束连接状态分支
-                ControllerOverlayService.ACTION_CAPTURE_STATUS -> { // 捕获状态广播
-                    // 悬浮窗暂停/恢复 → 同步 app 内捕获开关
-                    val capturing = intent.getBooleanExtra( // 读取是否正在捕获
-                        ControllerOverlayService.EXTRA_CAPTURING, true // 默认 true
-                    ) // 结束读取
-                    if (::captureSwitch.isInitialized) { // 捕获开关已初始化时（语法：:: 属性引用 + isInitialized）
-                        suppressCaptureListener = true // 置抑制标志
-                        captureSwitch.isChecked = capturing // 同步开关状态
-                        suppressCaptureListener = false // 取消抑制标志
-                    } // 结束初始化判断
-                    if (::captureStatusText.isInitialized) { // 状态文本已初始化时
-                        captureStatusText.text = if (capturing) { // 正在捕获时（语法：if/else 表达式）
-                            "捕获状态: ✅ 运行中" // 显示运行中
-                        } else { // 暂停分支
-                            "捕获状态: ⏸ 已暂停（点悬浮窗'恢复捕获'或此开关恢复）" // 显示已暂停
-                        } // 结束捕获判断
-                    } // 结束初始化判断
-                    Log.i(TAG, "Capture status: capturing=$capturing") // 输出捕获状态日志
-                } // 结束捕获状态分支
             } // 结束 when 分支
         } // 结束 onReceive 函数
     } // 结束广播接收器对象
@@ -1222,15 +731,12 @@ class MainActivity : AppCompatActivity() { // 声明主界面 Activity，继承 
         // Android 14+ (API 34+) 要求指定 RECEIVER_EXPORTED 或 RECEIVER_NOT_EXPORTED
         // 此广播仅用于应用内部通信，使用 NOT_EXPORTED
         val filter = IntentFilter(ControllerOverlayService.ACTION_CLIENT_STATUS) // 创建连接状态广播过滤器
-        filter.addAction(ControllerOverlayService.ACTION_CAPTURE_STATUS) // 增加捕获状态动作
         ContextCompat.registerReceiver( // 注册广播接收器
             this, clientStatusReceiver, filter, ContextCompat.RECEIVER_NOT_EXPORTED // 非导出（仅应用内部）
         ) // 结束注册
         logD("onResume: registered client status receiver") // 输出注册日志
-        syncCaptureSwitchFromPrefs() // 同步捕获开关状态
         updateUI() // 刷新界面状态
         updateConfigStatus() // 刷新配置状态
-        updateUsageStatsStatus() // 刷新授权状态
 
         // Debug: 自动跳转测试页面
         // 通过 `adb shell am start -n com.steamlike.controller/.MainActivity --ez auto_open_test true` 触发

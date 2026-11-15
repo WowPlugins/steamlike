@@ -91,6 +91,14 @@
             android:parentActivityName=".MainActivity"
             android:theme="@style/Theme.AppCompat.DayNight.NoActionBar" />
 
+        <!-- 高级设置 Activity（从首页进入，承载不常用的设置项） -->
+        <activity
+            android:name=".AdvancedSettingsActivity"
+            android:label="高级设置"
+            android:exported="false"
+            android:parentActivityName=".MainActivity"
+            android:theme="@style/Theme.AppCompat.DayNight.NoActionBar" />
+
         <!-- 手柄按键测试 Activity（调试用） -->
         <!-- 语法：activity 节点
              android:name=.GamepadTestActivity：Activity 类名；android:label=手柄按键测试：标题显示名称；
