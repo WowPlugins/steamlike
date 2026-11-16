@@ -385,7 +385,8 @@ class GamepadInputView(context: Context) : View(context) {  // 语法：class �
             return true  // 消费该事件，不再转发给手柄映射器
         }  // 结束 if 块
         Log.d(TAG, "dispatchKeyEvent act=${event.action} key=${event.keyCode} " +  // 语法：字符串模板 + 字符串拼接；打印按键分发日志
-            "src=${event.source} rep=${event.repeatCount} unicode=${event.unicodeChar}")  // 日志续行：来源/重复次数/字符编码
+            "src=${event.source} rep=${event.repeatCount} unicode=${event.unicodeChar} " +  // 日志续行：来源/重复次数/字符编码
+            "dt=${event.downTime} et=${event.eventTime}")  // 日志续行：按下时刻/事件时刻（用于分辨抖动与真实连点）
         // 始终转发到映射器，由映射器根据 isCapturing 决定是否处理
         val handled = onKeyEvent?.invoke(event) ?: false  // 语法：val + ?. 安全调用 + ?: 空合并；回调为空时视为未处理
         return handled || super.dispatchKeyEvent(event)  // 语法：|| 逻辑或；已处理则不再传给父类

@@ -75,12 +75,20 @@ class SteamInput(context: Context) { // 主控制器类（语法：class 声明�
     /**
      * 按钮松手去抖窗口（毫秒）
      *
-     * 部分手柄/驱动（尤其 Winlator 转发的输入）按住某个键时会反复上报按下、松开：
-     * 悬浮窗映射页对应行的高亮反复闪烁，长按判定也被瞬时松开不断打断，
-     * 永远到不了长按阈值（表现为长按动作不触发）。
+     * 部分手柄/驱动（尤其 Winlator 转发的输入）会在一帧内上报“松开后又按下”，
+     * 悬浮窗映射页对应行高亮反复闪烁，长按判定也被这种瞬时松开打断。
      * 按下立即生效，松开延后确认；窗口内重新按下视为抖动，取消这次松开。
+     *
+     * 窗口必须远小于人手连点间隔（约 100ms），否则快速连按会被合并成长按。
      */
-    private val RELEASE_DEBOUNCE_MS = 120L // 松手确认窗口：120ms 内的重新按下不算新的一次按下
+    private val RELEASE_DEBOUNCE_MS = 30L // 松手确认窗口：仅吸收 30ms 内的瞬时抖动，不影响快速连点
+    /**
+     * D-Pad HAT 轴的松手确认窗口（毫秒）
+     *
+     * 虚拟手柄/Winlator 转发时，按住方向会以约 20Hz 交替上报 HAT=1 与 HAT=0，
+     * 单次松开状态可持续约 50ms，因此 HAT 通道需要比按键通道更长的窗口。
+     */
+    private val HAT_RELEASE_DEBOUNCE_MS = 80L // HAT 方向键的松手确认窗口
     /** 待确认的松开任务（按键 → 延后执行的松开派发） */
     private val pendingReleases = ConcurrentHashMap<ControllerButton, Runnable>() // 线程安全的待确认松开表
     /**
@@ -615,11 +623,28 @@ class SteamInput(context: Context) { // 主控制器类（语法：class 声明�
         val hatX = event.getAxisValue(MotionEvent.AXIS_HAT_X) // 读取 HAT_X 轴值
         val hatY = event.getAxisValue(MotionEvent.AXIS_HAT_Y) // 读取 HAT_Y 轴值
 
-        // 计算当前激活的方向（|hatX| 或 |hatY| > 0.5 视为按下）
-        val upPressed = hatY < -0.5f // 判断上方向是否按下
-        val downPressed = hatY > 0.5f // 判断下方向是否按下
-        val leftPressed = hatX < -0.5f // 判断左方向是否按下
-        val rightPressed = hatX > 0.5f // 判断右方向是否按下
+        // 带滞回的方向判定：>0.5 才按下，<0.3 才松开，中间区保持原状态。
+        // 避免 HAT 轴在阈值附近抖动时反复上报按下/松开
+        val upPressed = when { // 上方向判定（语法：when 表达式）
+            hatY < -0.5f -> true // 明确按下
+            hatY > -0.3f -> false // 明确松开（含中间区）
+            else -> hatState.contains(ControllerButton.DPAD_UP) // 抖动区：保持上一次状态
+        }
+        val downPressed = when { // 下方向判定
+            hatY > 0.5f -> true // 明确按下
+            hatY < 0.3f -> false // 明确松开（含中间区）
+            else -> hatState.contains(ControllerButton.DPAD_DOWN) // 抖动区：保持上一次状态
+        }
+        val leftPressed = when { // 左方向判定
+            hatX < -0.5f -> true // 明确按下
+            hatX > -0.3f -> false // 明确松开（含中间区）
+            else -> hatState.contains(ControllerButton.DPAD_LEFT) // 抖动区：保持上一次状态
+        }
+        val rightPressed = when { // 右方向判定
+            hatX > 0.5f -> true // 明确按下
+            hatX < 0.3f -> false // 明确松开（含中间区）
+            else -> hatState.contains(ControllerButton.DPAD_RIGHT) // 抖动区：保持上一次状态
+        }
 
         // 检测状态变化，避免重复触发
         listOf( // 构造方向状态列表（语法：listOf 创建列表）
@@ -630,10 +655,10 @@ class SteamInput(context: Context) { // 主控制器类（语法：class 声明�
         ).forEach { (button, pressed) -> // 遍历处理每个方向（语法：forEach lambda + 解构声明）
             if (pressed && !hatState.contains(button)) { // 新按下的方向（语法：&& 与运算 + ! 逻辑非）
                 hatState.add(button) // 记录已按方向
-                dispatchButtonEvent(button, isPressed = true) // 触发按下事件（语法：具名参数 isPressed =）
+                dispatchButtonEvent(button, isPressed = true, debounceMs = HAT_RELEASE_DEBOUNCE_MS) // 触发按下事件（HAT 通道去抖窗口）
             } else if (!pressed && hatState.contains(button)) { // 新松开的已记录方向
                 hatState.remove(button) // 移除已按方向
-                dispatchButtonEvent(button, isPressed = false) // 触发松开事件
+                dispatchButtonEvent(button, isPressed = false, debounceMs = HAT_RELEASE_DEBOUNCE_MS) // 触发松开事件（HAT 通道去抖窗口）
             } // 结束 if/else
         } // 结束 forEach
     } // 结束 handleDpadHatAxis 函数
@@ -744,8 +769,13 @@ class SteamInput(context: Context) { // 主控制器类（语法：class 声明�
      *
      * @param button 统一按钮编码
      * @param isPressed true=按下, false=松开
+     * @param debounceMs 松手确认窗口（不同输入通道可不同）
      */
-    private fun dispatchButtonEvent(button: ControllerButton, isPressed: Boolean) { // 私有函数：带去抖的按钮事件派发
+    private fun dispatchButtonEvent( // 私有函数：带去抖的按钮事件派发
+        button: ControllerButton, // 按钮编码
+        isPressed: Boolean, // 按下/松开
+        debounceMs: Long = RELEASE_DEBOUNCE_MS // 松手确认窗口，默认按按键通道
+    ) { // 函数体开始
         if (isPressed) { // 按下分支
             pendingReleases.remove(button)?.let { mainHandler.removeCallbacks(it) } // 取消尚未确认的松开
             if (heldButtons.contains(button)) return // 已处于按下（重复上报）：不重复派发
@@ -759,7 +789,7 @@ class SteamInput(context: Context) { // 主控制器类（语法：class 声明�
             handleButtonEvent(button, false) // 确认松开
         } // 结束松开任务
         pendingReleases[button] = task // 记录待确认任务
-        mainHandler.postDelayed(task, RELEASE_DEBOUNCE_MS) // 延后确认
+        mainHandler.postDelayed(task, debounceMs) // 延后确认
     } // 结束 dispatchButtonEvent 函数
 
     /**
