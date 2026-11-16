@@ -1,4 +1,4 @@
-﻿[package]
+﻿﻿[package]
 name = "inputbridge_client"
 version = "0.1.147"
 edition = "2021"

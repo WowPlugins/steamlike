@@ -71,6 +71,18 @@ class SteamInput(context: Context) { // 主控制器类（语法：class 声明�
     // 扳机轴（L2/R2）按下状态，避免重复触发
     private var l2Pressed = false // L2 扳机按下状态标记（语法：var 可变变量）
     private var r2Pressed = false // R2 扳机按下状态标记
+
+    /**
+     * 按钮松手去抖窗口（毫秒）
+     *
+     * 部分手柄/驱动（尤其 Winlator 转发的输入）按住某个键时会反复上报按下、松开：
+     * 悬浮窗映射页对应行的高亮反复闪烁，长按判定也被瞬时松开不断打断，
+     * 永远到不了长按阈值（表现为长按动作不触发）。
+     * 按下立即生效，松开延后确认；窗口内重新按下视为抖动，取消这次松开。
+     */
+    private val RELEASE_DEBOUNCE_MS = 120L // 松手确认窗口：120ms 内的重新按下不算新的一次按下
+    /** 待确认的松开任务（按键 → 延后执行的松开派发） */
+    private val pendingReleases = ConcurrentHashMap<ControllerButton, Runnable>() // 线程安全的待确认松开表
     /**
      * 按键触发的层切换记录
      *
@@ -481,7 +493,7 @@ class SteamInput(context: Context) { // 主控制器类（语法：class 声明�
         if (event.repeatCount != 0) return true // 长按重复事件直接拦截（语法：!= 不等比较）
 
         val isPressed = event.action == KeyEvent.ACTION_DOWN // 判断是按下还是释放
-        handleButtonEvent(button, isPressed) // 分发按钮事件
+        dispatchButtonEvent(button, isPressed) // 经松手去抖后分发按钮事件
         return true // 返回已处理
     } // 结束 dispatchKeyEvent 函数
 
@@ -618,10 +630,10 @@ class SteamInput(context: Context) { // 主控制器类（语法：class 声明�
         ).forEach { (button, pressed) -> // 遍历处理每个方向（语法：forEach lambda + 解构声明）
             if (pressed && !hatState.contains(button)) { // 新按下的方向（语法：&& 与运算 + ! 逻辑非）
                 hatState.add(button) // 记录已按方向
-                handleButtonEvent(button, isPressed = true) // 触发按下事件（语法：具名参数 isPressed =）
+                dispatchButtonEvent(button, isPressed = true) // 触发按下事件（语法：具名参数 isPressed =）
             } else if (!pressed && hatState.contains(button)) { // 新松开的已记录方向
                 hatState.remove(button) // 移除已按方向
-                handleButtonEvent(button, isPressed = false) // 触发松开事件
+                dispatchButtonEvent(button, isPressed = false) // 触发松开事件
             } // 结束 if/else
         } // 结束 forEach
     } // 结束 handleDpadHatAxis 函数
@@ -719,6 +731,36 @@ class SteamInput(context: Context) { // 主控制器类（语法：class 声明�
         } // 结束采样遍历
         return samples // 返回采样序列
     } // 结束 collectTriggerSamples 函数
+
+    /**
+     * 派发按钮事件（带松手去抖）
+     *
+     * 所有按键通道（KeyEvent / D-Pad HAT 轴）统一走这里：
+     * - 按下：立即生效；若此前有未确认的松开，取消它（视为同一次按住）
+     * - 松开：延后 [RELEASE_DEBOUNCE_MS] 确认，窗口内重新按下则忽略这次松开
+     *
+     * 这样可吸收手柄按住时反复上报的按下/松开抖动，避免悬浮窗高亮闪烁，
+     * 也避免长按判定被瞬时松开打断而无法触发长按动作。
+     *
+     * @param button 统一按钮编码
+     * @param isPressed true=按下, false=松开
+     */
+    private fun dispatchButtonEvent(button: ControllerButton, isPressed: Boolean) { // 私有函数：带去抖的按钮事件派发
+        if (isPressed) { // 按下分支
+            pendingReleases.remove(button)?.let { mainHandler.removeCallbacks(it) } // 取消尚未确认的松开
+            if (heldButtons.contains(button)) return // 已处于按下（重复上报）：不重复派发
+            handleButtonEvent(button, true) // 立即派发按下
+            return // 结束
+        } // 结束按下分支
+        if (!heldButtons.contains(button)) return // 本来就没按下：忽略重复的松开
+        if (pendingReleases.containsKey(button)) return // 已在等待确认：不重复排队
+        val task = Runnable { // 构造延后执行的松开任务
+            pendingReleases.remove(button) // 移除待确认记录
+            handleButtonEvent(button, false) // 确认松开
+        } // 结束松开任务
+        pendingReleases[button] = task // 记录待确认任务
+        mainHandler.postDelayed(task, RELEASE_DEBOUNCE_MS) // 延后确认
+    } // 结束 dispatchButtonEvent 函数
 
     /**
      * 处理按钮事件
