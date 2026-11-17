@@ -557,6 +557,32 @@ data class GlobalSettings( // 全局设置（语法：data class 数据类）
 ) // 结束 GlobalSettings 数据类
 
 /**
+ * 两键同按切层规则
+ *
+ * 同时按住 [first] 与 [second] 两个手柄按键时，激活 [layerName] 对应的操作层；
+ * 松开其中任意一个按键即停用该层（回到公共层）。
+ *
+ * [keyCode] 为 null 表示「只切换层」；非 null 时同时注入该键盘按键（切层+按键），
+ * 停用层时一并松开。
+ *
+ * ## 触发窗口
+ * 后按下的按键在 [SteamInput] 中会被短暂延迟（组合窗口），
+ * 窗口内另一个键按下即判定为组合、不再执行各自的单键映射；
+ * 窗口内没有等到另一个键则按单键映射正常执行。
+ *
+ * @param first 第一个按键
+ * @param second 第二个按键（不能与 [first] 相同）
+ * @param layerName 目标层名称
+ * @param keyCode 同时按下的键盘键码（null=只切层）
+ */
+data class ComboLayerSwitch( // 两键同按切层规则（语法：data class 数据类）
+    val first: ControllerButton, // 第一个按键
+    val second: ControllerButton, // 第二个按键
+    val layerName: String, // 目标层名称
+    val keyCode: Int? = null // 同时按下的键盘键码（null=只切层）
+) // 结束 ComboLayerSwitch 数据类
+
+/**
  * 操作集（Action Set）
  *
  * 一组完整的操作层配置，位于「操作层」之上。切换操作集时，其下的公共层与所有
@@ -571,11 +597,13 @@ data class GlobalSettings( // 全局设置（语法：data class 数据类）
  * @param name 操作集名称（可自定义，默认「默认」）
  * @param commonLayer 本操作集的公共层（始终激活）
  * @param layers 本操作集的操作层列表（最多 [ControllerProfile.MAX_LAYERS] 个）
+ * @param comboSwitches 两键同按切层规则列表
  */
 data class ActionSet( // 操作集定义（语法：data class 数据类）
     val name: String, // 操作集名称
     val commonLayer: OperationLayer, // 本操作集的公共层
-    val layers: List<OperationLayer> // 本操作集的操作层列表
+    val layers: List<OperationLayer>, // 本操作集的操作层列表
+    val comboSwitches: MutableList<ComboLayerSwitch> = mutableListOf() // 两键同按切层规则（语法：默认参数 = mutableListOf()）
 ) { // 数据类主体开始
     /**
      * 本操作集所有层（公共层 + 操作层），用于 UI 显示

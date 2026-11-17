@@ -1,6 +1,7 @@
 package com.steamlike.controller.config // 包声明：config 配置模块，负责配置的 JSON 序列化
 
 import com.steamlike.controller.core.ActionSet // 导入操作集数据类
+import com.steamlike.controller.core.ComboLayerSwitch // 导入两键同按切层规则数据类
 import com.steamlike.controller.core.ControllerButton // 导入手柄按键枚举
 import com.steamlike.controller.core.ControllerProfile // 导入控制器配置数据类
 import com.steamlike.controller.core.GlobalSettings // 导入全局设置数据类
@@ -214,6 +215,16 @@ object ControllerConfig { // 单例对象：配置的 JSON 序列化/反序列�
         val layersArray = JSONArray() // 创建操作层 JSON 数组
         set.layers.forEach { layer -> layersArray.put(layerToJson(layer)) } // 遍历操作层并序列化加入数组
         json.put("layers", layersArray) // 写入操作层数组
+        val comboArray = JSONArray() // 创建组合键切层规则 JSON 数组
+        set.comboSwitches.forEach { combo -> // 遍历两键同按切层规则
+            val obj = JSONObject() // 创建单条规则对象
+            obj.put("first", combo.first.name) // 写入第一个按键名
+            obj.put("second", combo.second.name) // 写入第二个按键名
+            obj.put("layer", combo.layerName) // 写入目标层名
+            combo.keyCode?.let { obj.put("key", it) } // 写入同时按下的键盘键码（只切层时不写）
+            comboArray.put(obj) // 加入数组
+        } // 结束遍历
+        json.put("comboSwitches", comboArray) // 写入组合键切层规则数组
         return json // 返回 JSON 对象
     } // 结束 actionSetToJson 函数
 
@@ -224,7 +235,17 @@ object ControllerConfig { // 单例对象：配置的 JSON 序列化/反序列�
         val layers = (0 until layersArray.length()).map { i -> // 遍历索引逐个解析操作层
             parseLayer(layersArray.getJSONObject(i)) // 解析第 i 个操作层
         } // 结束 map 转换
-        return ActionSet(name = name, commonLayer = commonLayer, layers = layers) // 构造操作集
+        val comboArray = json.optJSONArray("comboSwitches") ?: JSONArray() // 读取组合键切层规则数组（缺失=空）
+        val combos = (0 until comboArray.length()).mapNotNull { i -> // 遍历规则并跳过非法项
+            val obj = comboArray.optJSONObject(i) ?: return@mapNotNull null // 取规则对象，非法则跳过
+            val first = runCatching { ControllerButton.valueOf(obj.optString("first")) }.getOrNull() ?: return@mapNotNull null // 解析第一个按键
+            val second = runCatching { ControllerButton.valueOf(obj.optString("second")) }.getOrNull() ?: return@mapNotNull null // 解析第二个按键
+            val layerName = obj.optString("layer") // 读取目标层名
+            if (layerName.isEmpty()) return@mapNotNull null // 层名为空则跳过
+            val key = if (obj.has("key")) obj.optInt("key") else null // 读取同时按下的按键（缺失=只切层）
+            ComboLayerSwitch(first, second, layerName, key) // 构造规则
+        }.toMutableList() // 转可变列表
+        return ActionSet(name = name, commonLayer = commonLayer, layers = layers, comboSwitches = combos) // 构造操作集
     } // 结束 parseActionSet 函数
 
     private fun globalSettingsToJson(settings: GlobalSettings): JSONObject { // 序列化全局设置为 JSON 对象

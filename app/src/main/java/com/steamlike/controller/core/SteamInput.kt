@@ -89,6 +89,14 @@ class SteamInput(context: Context) { // 主控制器类（语法：class 声明�
      * 单次松开状态可持续约 50ms，因此 HAT 通道需要比按键通道更长的窗口。
      */
     private val HAT_RELEASE_DEBOUNCE_MS = 80L // HAT 方向键的松手确认窗口
+    /** 两键同按（组合键）的等待窗口（毫秒） */
+    private val COMBO_WINDOW_MS = 120L // 第二个键在此窗口内按下即判定为组合，不执行各自的单键映射
+    /** 等待组合窗口的单键按下任务（按键 → 延后执行单键动作） */
+    private val comboPending = ConcurrentHashMap<ControllerButton, Runnable>() // 线程安全的待定组合表
+    /** 组合已触发的按键 → 对应规则（两个按键都记录，松开任一即解除） */
+    private val comboActive = mutableMapOf<ControllerButton, ComboLayerSwitch>() // 组合触发记录
+    /** 组合规则实际注入「切层+按键」的按键（松开时按它释放注入的键） */
+    private val comboInjectedButtons = mutableMapOf<ComboLayerSwitch, ControllerButton>() // 组合注入按键记录
     /** 待确认的松开任务（按键 → 延后执行的松开派发） */
     private val pendingReleases = ConcurrentHashMap<ControllerButton, Runnable>() // 线程安全的待确认松开表
     /**
@@ -391,6 +399,7 @@ class SteamInput(context: Context) { // 主控制器类（语法：class 声明�
             return // 提前返回
         } // 结束 if
         deactivateAllLayers() // 停用所有操作层
+        clearComboState() // 清理组合键等待/触发状态（切换操作集后规则整体替换）
         profile = profile.copy(activeActionSetName = name) // 更新当前操作集名（语法：copy() 数据类复制 + 具名参数）
         Log.i(TAG, "Action set switched: $name") // 打印切换日志
         onActionSetChanged?.invoke(name) // 触发操作集变化回调
@@ -779,33 +788,119 @@ class SteamInput(context: Context) { // 主控制器类（语法：class 声明�
         if (isPressed) { // 按下分支
             pendingReleases.remove(button)?.let { mainHandler.removeCallbacks(it) } // 取消尚未确认的松开
             if (heldButtons.contains(button)) return // 已处于按下（重复上报）：不重复派发
-            handleButtonEvent(button, true) // 立即派发按下
+            handleButtonEvent(button, true) // 派发按下（内部先判定两键同按组合）
             return // 结束
         } // 结束按下分支
         if (!heldButtons.contains(button)) return // 本来就没按下：忽略重复的松开
         if (pendingReleases.containsKey(button)) return // 已在等待确认：不重复排队
         val task = Runnable { // 构造延后执行的松开任务
             pendingReleases.remove(button) // 移除待确认记录
-            handleButtonEvent(button, false) // 确认松开
+            handleButtonEvent(button, false) // 确认松开（内部先处理组合键状态）
         } // 结束松开任务
         pendingReleases[button] = task // 记录待确认任务
         mainHandler.postDelayed(task, debounceMs) // 延后确认
     } // 结束 dispatchButtonEvent 函数
 
     /**
-     * 处理按钮事件
+     * 按下处理：先判定「两键同按」组合，未成组合时按普通单键映射处理
      *
-     * 核心逻辑:
-     * 1. 更新 heldButtons 集合
-     * 2. 松开时：若该按键此前触发过 SwitchLayer 层切换，则停用对应层并返回
-     * 3. 查找按钮的有效映射（激活层 → 公共层回退）
-     * 4. 如果映射是 SwitchLayer，按下时激活目标层并记录（松开时停用）
-     * 5. 否则触发 onButtonMapped 回调
+     * 参与组合规则的按键会延迟 [COMBO_WINDOW_MS] 再执行单键动作：
+     * 窗口内另一个按键按下 → 取消两者的单键动作，执行组合切层；
+     * 窗口内没有等到 → 按单键映射正常执行（仅增加很短的延迟）。
+     *
+     * @return true=本函数已接管该事件；false=继续走普通单键流程
+     */
+    private fun handleButtonPress(button: ControllerButton): Boolean { // 私有函数：按下判定组合键
+        val rules = profile.activeActionSet.comboSwitches // 取当前操作集的组合规则
+        // 1. 组合判定：另一个按键正处于等待窗口内
+        val rule = rules.firstOrNull { r -> // 查找与当前按键构成组合、且伙伴在等待中的规则
+            (r.first == button && comboPending.containsKey(r.second)) || // 当前键为规则第一个键
+                (r.second == button && comboPending.containsKey(r.first)) // 当前键为规则第二个键
+        } // 结束查找
+        if (rule != null) { // 组合成立
+            val partner = if (rule.first == button) rule.second else rule.first // 取伙伴按键
+            comboPending.remove(partner)?.let { mainHandler.removeCallbacks(it) } // 取消伙伴键的单键动作
+            heldButtons.add(button) // 记录当前键按下
+            onButtonStateChanged?.invoke(button, true) // 通知 UI 高亮
+            comboActive[rule.first] = rule // 记录组合已触发（两个键都记录）
+            comboActive[rule.second] = rule // 记录组合已触发
+            if (isCapturing) profile.findLayer(rule.layerName)?.let { activateLayer(it) } // 激活目标层（暂停时不处理）
+            if (rule.keyCode != null) { // 切层+按键：注入同时按下的键盘键
+                comboInjectedButtons[rule] = button // 记录注入归属，松开时按同一按键释放
+                onButtonMapped?.invoke(button, true, KeyMapping(MappedAction.SwitchLayerAndKey(rule.layerName, rule.keyCode)), null) // 交由 mapper 注入按键
+            } // 结束按键注入判断
+            Log.i(TAG, "Combo switch: ${rule.first}+${rule.second} → ${rule.layerName}") // 打印组合触发日志
+            return true // 组合已处理，结束
+        } // 结束组合成立分支
+        // 2. 参与组合规则但未成组合：延迟窗口后执行单键动作
+        if (rules.any { it.first == button || it.second == button }) { // 该按键出现在任一组合规则中
+            heldButtons.add(button) // 先记录按下（松开判定依赖它）
+            onButtonStateChanged?.invoke(button, true) // 通知 UI 高亮
+            val task = Runnable { // 构造窗口到期后的单键按下任务
+                comboPending.remove(button) // 移除待定记录
+                if (!heldButtons.contains(button)) return@Runnable // 已松开则不再执行
+                processButtonEvent(button, true) // 执行普通单键按下流程（跳过组合判定）
+            } // 结束单键按下任务
+            comboPending[button] = task // 记录待定任务
+            mainHandler.postDelayed(task, COMBO_WINDOW_MS) // 延迟组合窗口
+            return true // 事件已被延迟接管
+        } // 结束参与组合判断
+        // 3. 普通按键：交给普通单键流程
+        return false // 未参与组合，继续走普通流程
+    } // 结束 handleButtonPress 函数
+
+    /**
+     * 松开处理：组合键释放（停用层/释放按键）、窗口内未成组合的补发单键动作、普通松开
+     *
+     * @return true=本函数已接管该事件；false=继续走普通单键流程
+     */
+    private fun handleButtonRelease(button: ControllerButton): Boolean { // 私有函数：松开处理组合键
+        val combo = comboActive.remove(button) // 该键是否属于已触发的组合
+        if (combo != null) { // 组合释放：任一键松开即解除
+            comboActive.remove(combo.first) // 清理第一个键的记录
+            comboActive.remove(combo.second) // 清理第二个键的记录
+            heldButtons.remove(button) // 移除按下状态
+            onButtonStateChanged?.invoke(button, false) // 通知 UI 取消高亮
+            if (isCapturing) profile.findLayer(combo.layerName)?.let { deactivateLayer(it) } // 停用组合激活的层
+            val injectedBy = comboInjectedButtons.remove(combo) // 取出注入归属按键
+            if (injectedBy != null) { // 切层+按键：释放同时按下的键盘键
+                onButtonMapped?.invoke(injectedBy, false, KeyMapping(MappedAction.SwitchLayerAndKey(combo.layerName, combo.keyCode ?: 0)), null) // 交由 mapper 释放按键
+            } // 结束按键释放判断
+            return true // 组合释放已处理
+        } // 结束组合释放分支
+        val pending = comboPending.remove(button) // 仍处于组合等待窗口内
+        if (pending != null) { // 窗口内未等到另一个键
+            mainHandler.removeCallbacks(pending) // 取消延迟任务
+            processButtonEvent(button, true) // 补发单键按下
+            processButtonEvent(button, false) // 立即松开 → 形成短按
+            return true // 补发已处理
+        } // 结束窗口补发分支
+        return false // 未参与组合，继续走普通松开流程
+    } // 结束 handleButtonRelease 函数
+
+    /**
+     * 处理按钮事件（统一入口）
+     *
+     * 所有输入通道（KeyEvent / D-Pad HAT / 扳机轴）最终都经过这里：
+     * 先由 [handleButtonPress] / [handleButtonRelease] 判定两键同按组合，
+     * 未参与组合的按键再走 [processButtonEvent] 的普通单键流程。
      *
      * @param button 统一按钮编码
      * @param isPressed true=按下, false=释放
      */
-    fun handleButtonEvent(button: ControllerButton, isPressed: Boolean) { // 处理按钮事件
+    fun handleButtonEvent(button: ControllerButton, isPressed: Boolean) { // 处理按钮事件入口
+        val handled = if (isPressed) handleButtonPress(button) else handleButtonRelease(button) // 先做组合键判定
+        if (handled) return // 组合相关事件已处理
+        processButtonEvent(button, isPressed) // 普通单键流程
+    } // 结束 handleButtonEvent 函数
+
+    /**
+     * 普通单键事件处理（不含组合键判定）
+     *
+     * @param button 统一按钮编码
+     * @param isPressed true=按下, false=释放
+     */
+    private fun processButtonEvent(button: ControllerButton, isPressed: Boolean) { // 处理普通按钮事件
         // 更新 heldButtons
         if (isPressed) heldButtons.add(button) else heldButtons.remove(button) // 按下则添加、释放则移除（语法：单行 if/else）
         // 通知 UI 实时反馈（悬浮窗映射页 / 层编辑页按钮高亮）
@@ -839,6 +934,15 @@ class SteamInput(context: Context) { // 主控制器类（语法：class 声明�
             if (!isPressed) onButtonReleased?.invoke(button) // 仅松开时通知外部释放已注入状态
             return // 提前返回
         } // 结束无映射判断
+
+        // 配置了长按动作的切层映射：按下时不立即切层，交给长按判定
+        // （按住未达阈值执行短按、达到阈值才执行长按；松开时由 mapper 停用长按激活的层）
+        if (mapping.longPressAction != null && // 存在长按动作（语法：&& 逻辑与）
+            (mapping.action is MappedAction.SwitchLayer || mapping.action is MappedAction.SwitchLayerAndKey) // 短按为切层类动作
+        ) { // 结束条件
+            onButtonMapped?.invoke(button, isPressed, mapping, mappingLayerName) // 按下/松开都交给 mapper 的长按判定
+            return // 提前返回，不由 SteamInput 立即切层
+        } // 结束长按切层拦截
 
         // 处理 SwitchLayer 动作（通过按键映射切换层）
         when (val action = mapping.action) { // 按动作类型分发（语法：when 分支表达式 + val 局部捕获）
@@ -877,7 +981,7 @@ class SteamInput(context: Context) { // 主控制器类（语法：class 声明�
                 onButtonMapped?.invoke(button, isPressed, mapping, mappingLayerName) // 触发映射回调，交由外部注入
             } // 结束 else 分支
         } // 结束 when
-    } // 结束 handleButtonEvent 函数
+    } // 结束 processButtonEvent 函数
 
     /**
      * 获取当前按住的按钮集合
@@ -917,8 +1021,19 @@ class SteamInput(context: Context) { // 主控制器类（语法：class 声明�
      */
     fun destroy() { // 销毁控制器
         inputManager.unregisterInputDeviceListener(inputDeviceListener) // 注销设备监听器
+        clearComboState() // 清理组合键状态，取消未执行的延迟任务
         deactivateAllLayers() // 停用所有操作层
     } // 结束 destroy 函数
+
+    /**
+     * 清理组合键状态：取消所有等待窗口中的单键任务，清空触发记录
+     */
+    private fun clearComboState() { // 私有函数：清理组合键状态
+        comboPending.values.forEach { mainHandler.removeCallbacks(it) } // 取消所有待定的单键任务
+        comboPending.clear() // 清空待定记录
+        comboActive.clear() // 清空组合触发记录
+        comboInjectedButtons.clear() // 清空组合注入记录
+    } // 结束 clearComboState 函数
 
     companion object { // 伴生对象（语法：companion object 静态成员容器）
         private const val TAG = "SteamLikeInput" // 日志标签常量（语法：const val 编译期常量）

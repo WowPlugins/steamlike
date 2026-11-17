@@ -281,6 +281,20 @@
                 android:background="@drawable/bg_button" />
         </LinearLayout>  <!-- 结束层信息行 -->
 
+        <!-- ===== 两键同按切层（组合切层）入口 ===== -->
+        <!-- 语法：Button 按钮控件；点击后弹出组合切层规则编辑对话框
+             id=@+id/btn_combo_switch：组合切层按钮 id；layout_width=match_parent：与父容器同宽；
+             text=组合切层（两键同按）：按钮文字；background=@drawable/bg_button：普通按钮样式 -->
+        <Button
+            android:id="@+id/btn_combo_switch"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginBottom="8dp"
+            android:text="组合切层（两键同按）"
+            android:textColor="#FFFFFFFF"
+            android:background="@drawable/bg_button" />
+
+
         <!-- ===== 按键映射列表标题 ===== -->
         <!-- 语法：TextView 文本控件；映射列表标题
              layout_width=match_parent：与父容器同宽；layout_height=wrap_content：高度自适应；

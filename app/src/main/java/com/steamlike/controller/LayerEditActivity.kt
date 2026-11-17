@@ -21,6 +21,7 @@ import android.widget.Button // 导入 Button（按钮控件）
 import android.widget.EditText // 导入 EditText（文本输入框控件）
 import android.widget.LinearLayout // 导入 LinearLayout（线性布局容器）
 import android.widget.ListView // 导入 ListView（列表视图控件）
+import android.widget.ScrollView // 导入 ScrollView（可滚动容器，对话框内容过长时使用）
 import android.widget.Spinner // 导入 Spinner（下拉选择控件）
 import android.widget.Switch // 导入 Switch（开关控件，「只切换层」用）
 import android.widget.TextView // 导入 TextView（文本显示控件）
@@ -32,6 +33,7 @@ import com.steamlike.controller.config.AppConfigStore // 导入本应用配置�
 import com.steamlike.controller.config.ConfigManager // 导入配置管理器（含配置文件名常量）
 import com.steamlike.controller.config.ControllerConfig // 导入控制器配置序列化类（JSON 读写）
 import com.steamlike.controller.core.ActionSet // 导入操作集数据类
+import com.steamlike.controller.core.ComboLayerSwitch // 导入两键同按切层规则数据类
 import com.steamlike.controller.core.ControllerButton // 导入手柄按键枚举
 import com.steamlike.controller.core.ControllerInputMapper // 导入按键码映射器（KeyCode→手柄按键）
 import com.steamlike.controller.core.ControllerType // 导入手柄类型枚举
@@ -311,6 +313,9 @@ class LayerEditActivity : AppCompatActivity() { // 定义操作层编辑 Activit
     /** 编辑触发按键按钮 */
     private lateinit var editTriggerButton: Button // 延迟初始化属性：「编辑切入按键」按钮
 
+    /** 组合切层（两键同按）按钮 */
+    private lateinit var comboSwitchButton: Button // 延迟初始化属性：「组合切层」按钮
+
     /** 保存配置按钮 */
     private lateinit var saveButton: Button // 延迟初始化属性：「保存配置」按钮
 
@@ -414,6 +419,7 @@ class LayerEditActivity : AppCompatActivity() { // 定义操作层编辑 Activit
         mappingSummaryText = findViewById(R.id.text_mapping_summary) // 初始化映射摘要文本控件
         editLayerNameButton = findViewById(R.id.btn_edit_layer_name) // 初始化「编辑层名称」按钮
         editTriggerButton = findViewById(R.id.btn_edit_trigger) // 初始化「编辑切入按键」按钮
+        comboSwitchButton = findViewById(R.id.btn_combo_switch) // 初始化「组合切层」按钮
         saveButton = findViewById(R.id.btn_save) // 初始化「保存配置」按钮
 
         // 设置操作集选择 Spinner 与操作集管理按钮
@@ -429,6 +435,7 @@ class LayerEditActivity : AppCompatActivity() { // 定义操作层编辑 Activit
         // 设置按钮点击事件
         editLayerNameButton.setOnClickListener { showLayerNameEditDialog() } // 点击「编辑层名称」弹出改名对话框
         editTriggerButton.setOnClickListener { showTriggerButtonEditDialog() } // 点击「切入按键」弹出切入键编辑对话框
+        comboSwitchButton.setOnClickListener { showComboSwitchEditDialog() } // 点击「组合切层」弹出两键同按规则编辑对话框
         saveButton.setOnClickListener { saveProfile(showToast = true) } // 点击「保存」保存配置并显示提示（命名参数 showToast=true）
 
         // 设置按键映射列表点击事件（点击某个按键进入编辑对话框）
@@ -786,6 +793,8 @@ class LayerEditActivity : AppCompatActivity() { // 定义操作层编辑 Activit
         val spinnerLongPressValue = dialogView.findViewById<Spinner>(R.id.spinner_long_press_value) // 获取长按动作值下拉框
         val layoutExtraKey = dialogView.findViewById<LinearLayout>(R.id.layout_extra_key) // 获取「同时按下的按键」区域容器
         val spinnerExtraKey = dialogView.findViewById<Spinner>(R.id.spinner_extra_key) // 获取「同时按下的按键」下拉框
+        val layoutLongExtraKey = dialogView.findViewById<LinearLayout>(R.id.layout_long_extra_key) // 获取长按动作「同时按下的按键」区域容器
+        val spinnerLongExtraKey = dialogView.findViewById<Spinner>(R.id.spinner_long_extra_key) // 获取长按动作「同时按下的按键」下拉框
         val layoutTapOnlyLayer = dialogView.findViewById<LinearLayout>(R.id.layout_tap_only_layer) // 获取点击动作「只切换层」区域
         val switchTapOnlyLayer = dialogView.findViewById<Switch>(R.id.switch_tap_only_layer) // 获取点击动作「只切换层」开关
         val layoutLongOnlyLayer = dialogView.findViewById<LinearLayout>(R.id.layout_long_only_layer) // 获取长按动作「只切换层」区域
@@ -839,8 +848,8 @@ class LayerEditActivity : AppCompatActivity() { // 定义操作层编辑 Activit
         setupActionValueSpinner(spinnerActionValue, tvActionLabel, initialActionType, "点击 · ") // 按初始类型初始化点击动作值下拉框的选项
 
         // ===== 长按动作类型 Spinner =====
-        // 长按可选类型：排除「切换操作层」「切层+按键」（层切换按键保持原有「按住即切层」语义）
-        val longPressTypeIndices = listOf(0, 1, 2, 3, 5, 6, 7, 8, 9, 11, 12, 13, 14, 15, 16, 17, 18, 19) // 长按可选动作类型索引列表；含精细移动(15)、快速移动(17)、转身(18)、右键锁定切换(19)
+        // 长按可选类型：支持切层类动作（长按达到阈值后才切层，松开回公共层）
+        val longPressTypeIndices = listOf(0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19) // 长按可选动作类型索引列表（含切换操作层(4)、切层+按键(10)）
         spinnerLongPressType.adapter = ArrayAdapter(this, android.R.layout.simple_spinner_item, // 设置长按类型下拉框适配器
             longPressTypeIndices.map { actionTypes[it] }).also { // 用可选项索引映射出显示名（语法：map lambda）
             it.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item) // 设置下拉展开项的布局资源
@@ -854,6 +863,10 @@ class LayerEditActivity : AppCompatActivity() { // 定义操作层编辑 Activit
         spinnerExtraKey.adapter = ArrayAdapter(this, android.R.layout.simple_spinner_item, keyboardKeyOptions.map { it.first }).also {
             it.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item) // 设置下拉展开项的布局资源
         } // 结束 also 块
+        spinnerLongExtraKey.adapter = ArrayAdapter(this, android.R.layout.simple_spinner_item, keyboardKeyOptions.map { it.first }).also {
+            it.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item) // 设置长按附加按键下拉展开项的布局资源
+        } // 结束 also 块
+        layoutLongExtraKey.visibility = if (initialLongPressType == 10) View.VISIBLE else View.GONE // 长按为切层+按键时才显示附加按键区
 
         // 设置初始动作类型选择
         spinnerActionType.setSelection(initialActionType) // 设置动作类型下拉框的初始选中项
@@ -862,7 +875,7 @@ class LayerEditActivity : AppCompatActivity() { // 定义操作层编辑 Activit
         // 仅用于打开对话框时的初始定位（让下拉框显示当前映射的按键，如映射的是"4"却显示"A"）。
         // 注意：不能用于动作类型切换后的 onItemSelected 回调，否则会按旧映射类型把选中位置
         // 设置到新列表的非法索引（如键盘长列表的 74 → 数字小键盘仅 11 项）导致越界崩溃。
-        fun restoreValueSelectionFor(action: MappedAction?, valueSpinner: Spinner) { // 局部函数：根据已有动作恢复动作值下拉框选中项（语法：fun 局部函数）
+        fun restoreValueSelectionFor(action: MappedAction?, valueSpinner: Spinner, extraKeySpinner: Spinner) { // 局部函数：根据已有动作恢复动作值下拉框选中项（语法：fun 局部函数）
             when (action) { // 根据已有映射动作设置动作值选中（语法：when(值)=分支）
                 is MappedAction.KeyboardKey -> { // 若为键盘按键动作
                     val pos = keyboardKeyOptions.indexOfFirst { it.second == action.keyCode } // 查找与已存 KeyCode 匹配的选项下标（语法：indexOfFirst=按条件查找 lambda，it=隐式参数）
@@ -884,7 +897,7 @@ class LayerEditActivity : AppCompatActivity() { // 定义操作层编辑 Activit
                     val pos = layerNames.indexOfFirst { it == action.layerName } // 查找与目标层名匹配的选项下标
                     if (pos >= 0) valueSpinner.setSelection(pos) // 找到则设置目标层选中项
                     val keyPos = keyboardKeyOptions.indexOfFirst { it.second == action.keyCode } // 查找与同时按键 KeyCode 匹配的选项下标
-                    if (keyPos >= 0) spinnerExtraKey.setSelection(keyPos) // 找到则设置额外按键选中项
+                    if (keyPos >= 0) extraKeySpinner.setSelection(keyPos) // 找到则设置额外按键选中项
                 } // 结束切层+按键分支
                 is MappedAction.NumpadKey -> { // 若为数字小键盘动作
                     val pos = numpadKeyOptions.indexOfFirst { it.second == action.keyCode } // 查找与小键盘键码匹配的选项下标
@@ -899,9 +912,9 @@ class LayerEditActivity : AppCompatActivity() { // 定义操作层编辑 Activit
         } // 结束 restoreValueSelectionFor 局部函数
 
         // 包装：恢复短按动作值选中项（语法：局部函数调用参数化版本）
-        fun restoreActionValueSelection() = restoreValueSelectionFor(existingMapping?.action, spinnerActionValue) // 恢复短按动作值选中项
+        fun restoreActionValueSelection() = restoreValueSelectionFor(existingMapping?.action, spinnerActionValue, spinnerExtraKey) // 恢复短按动作值选中项
         // 包装：恢复长按动作值选中项
-        fun restoreLongPressValueSelection() = restoreValueSelectionFor(existingMapping?.longPressAction, spinnerLongPressValue) // 恢复长按动作值选中项
+        fun restoreLongPressValueSelection() = restoreValueSelectionFor(existingMapping?.longPressAction, spinnerLongPressValue, spinnerLongExtraKey) // 恢复长按动作值选中项
 
         // ===== 定义「动作类型是否匹配已有映射」局部函数 =====
         // 仅在"当前动作类型与已有映射类型一致"时恢复动作值选中项：
@@ -949,9 +962,9 @@ class LayerEditActivity : AppCompatActivity() { // 定义操作层编辑 Activit
         // 长按子命令作用于长按动作（见 KeyMapping.longPressSubCommands），与短按子命令互不影响
         val longPressSubCommandSpinners = mutableListOf<Spinner>() // 创建长按子命令下拉框列表，用于动态跟踪所有长按子命令行
 
-        // 长按子命令区可见性判定：与短按一致，仅键盘按键(1)/鼠标点击(2)/鼠标长按(3)/数字小键盘(11) 显示
+        // 长按子命令区可见性判定：与短按一致，键盘按键(1)/鼠标点击(2)/鼠标长按(3)/切层+按键(10)/数字小键盘(11) 显示
         fun longPressSubVisible(actionType: Int): Boolean = // 局部函数：按长按动作类型判断长按子命令区是否显示
-            actionType == 1 || actionType == 2 || actionType == 3 || actionType == 11 // 上述类型显示，其余隐藏
+            actionType == 1 || actionType == 2 || actionType == 3 || actionType == 10 || actionType == 11 // 上述类型显示，其余隐藏
 
         // 预填充已有长按子命令
         existingMapping?.longPressSubCommands?.forEach { keyCode -> // 遍历已有映射的长按子命令列表（语法：?.=安全调用，forEach=遍历 lambda）
@@ -985,9 +998,9 @@ class LayerEditActivity : AppCompatActivity() { // 定义操作层编辑 Activit
         // 键盘按键(1)/鼠标点击(2)/切层+按键(10)/数字小键盘(11)
         fun onlyLayerVisible(actionType: Int): Boolean = // 局部函数：判断点击动作类型是否支持「只切换层」
             !isCommonLayer && (actionType == 1 || actionType == 2 || actionType == 10 || actionType == 11) // 语法：&& 逻辑与、|| 逻辑或
-        // 长按可选类型不含「切层+按键」(10)，故只判断键盘/鼠标点击/数字小键盘
+        // 长按可选类型已含「切层+按键」(10)：键盘/鼠标点击/切层+按键/数字小键盘
         fun longOnlyLayerVisible(actionType: Int): Boolean = // 局部函数：判断长按动作类型是否支持「只切换层」
-            !isCommonLayer && (actionType == 1 || actionType == 2 || actionType == 11) // 语法：&& 逻辑与、|| 逻辑或
+            !isCommonLayer && (actionType == 1 || actionType == 2 || actionType == 10 || actionType == 11) // 语法：&& 逻辑与、|| 逻辑或
         layoutTapOnlyLayer.visibility = if (onlyLayerVisible(initialActionType)) View.VISIBLE else View.GONE // 点击开关区域显隐
         // 新建映射默认开启「只切换层」；已有映射按保存值显示（旧配置无该字段时解析为 false）
         switchTapOnlyLayer.isChecked = existingMapping?.layerSwitchOnly ?: true // 预填点击「只切换层」（默认打开）
@@ -1050,8 +1063,9 @@ class LayerEditActivity : AppCompatActivity() { // 定义操作层编辑 Activit
             override fun onItemSelected(parent: AdapterView<*>?, view: View?, position: Int, id: Long) { // 覆写：长按类型切换时回调
                 val actionType = longPressTypeIndices[position] // 位置还原为动作类型索引（语法：列表下标访问）
                 setupActionValueSpinner(spinnerLongPressValue, tvLongPressLabel, actionType, "长按 · ") // 按新类型重建长按动作值选项
-                // 长按子命令区可见性：仅键盘/鼠标点击/鼠标长按/数字小键盘类型显示（其余类型子命令无效）
+                // 长按子命令区可见性：仅键盘/鼠标点击/鼠标长按/切层+按键/数字小键盘类型显示（其余类型子命令无效）
                 layoutLongPressSubCommands.visibility = if (longPressSubVisible(actionType)) View.VISIBLE else View.GONE // 按新长按类型设置可见性
+                layoutLongExtraKey.visibility = if (actionType == 10) View.VISIBLE else View.GONE // 长按为切层+按键时才显示附加按键区
                 layoutLongOnlyLayer.visibility = if (longOnlyLayerVisible(actionType)) View.VISIBLE else View.GONE // 长按「只切换层」开关显隐
                 layoutLongTurnStep.visibility = if (actionType == 18) View.VISIBLE else View.GONE // 「180°转身」才显示每步间隔输入框
                 layoutLongTurnPixels.visibility = if (actionType == 18) View.VISIBLE else View.GONE // 「180°转身」才显示自定义像素输入框
@@ -1088,7 +1102,7 @@ class LayerEditActivity : AppCompatActivity() { // 定义操作层编辑 Activit
                 // 长按动作先计算：点击选「未设置」时也允许只配置长按
                 val longPressType = longPressTypeIndices[spinnerLongPressType.selectedItemPosition] // 长按动作类型索引
                 val longPressAction = if (longPressType == 0) null // 未设置 → 不启用长按判定（语法：if 表达式）
-                    else buildAction(longPressType - 1, spinnerLongPressValue.selectedItemPosition, 0, etLongTurnStep.text.toString().toIntOrNull() ?: 8, etLongTurnPixels.text.toString().trim().toIntOrNull()) // 否则构建长按动作（含转身间隔与自定义像素）
+                    else buildAction(longPressType - 1, spinnerLongPressValue.selectedItemPosition, spinnerLongExtraKey.selectedItemPosition, etLongTurnStep.text.toString().toIntOrNull() ?: 8, etLongTurnPixels.text.toString().trim().toIntOrNull()) // 否则构建长按动作（含附加按键、转身间隔与自定义像素）
                 if (actionType == 0 && longPressAction == null) { // 点击与长按都未设置
                     // 取消该按键的映射（回退到公共层/无动作）
                     layer.buttonMappings.remove(button) // 从映射表移除该按键的映射
@@ -1308,6 +1322,150 @@ class LayerEditActivity : AppCompatActivity() { // 定义操作层编辑 Activit
     } // 结束 doSetLayerSwitchInKey 函数
 
     // ====================================================================
+    // 组合切层（两键同按）
+    // ====================================================================
+
+    /**
+     * 显示「组合切层」规则管理对话框
+     *
+     * 管理当前操作集的 [ComboLayerSwitch]：同时按住两个手柄按键时切换到目标层，
+     * 松开任一按键回到公共层；规则也可同时注入一个键盘按键（切层+按键）。
+     * 点击已有规则可删除。
+     */
+    private fun showComboSwitchEditDialog() { // 私有函数：组合切层规则管理
+        val actionSet = currentActionSet ?: return // 取当前操作集，为空则退出
+        val d = resources.displayMetrics.density // 屏幕密度（dp→px 换算用）
+
+        val container = LinearLayout(this).apply { // 对话框内容容器
+            orientation = LinearLayout.VERTICAL // 垂直排列
+            setPadding((16 * d).toInt(), (12 * d).toInt(), (16 * d).toInt(), (4 * d).toInt()) // 内边距
+        } // 结束 apply
+
+        fun render() { // 局部函数：重建规则列表显示
+            container.removeAllViews() // 清空旧内容
+            container.addView(TextView(this).apply { // 说明文字
+                text = "同时按住两个按键时切换操作层，松开任一按键回到公共层。点击规则可删除。"
+                textSize = 12f
+                setTextColor(0xFF999999.toInt())
+                setPadding(0, 0, 0, (12 * d).toInt())
+            }) // 结束说明文字
+            if (actionSet.comboSwitches.isEmpty()) { // 暂无规则
+                container.addView(TextView(this).apply {
+                    text = "（暂无组合键规则）"
+                    textSize = 14f
+                    setTextColor(0xFFDDDDDD.toInt())
+                }) // 结束空提示
+            } // 结束空判断
+            actionSet.comboSwitches.toList().forEach { rule -> // 遍历规则（toList 避免遍历时修改）
+                val target = if (rule.keyCode != null) // 目标描述（切层+按键 / 只切层）
+                    "${rule.layerName} + ${KeyMapping.keyCodeToName(rule.keyCode)}" else rule.layerName
+                container.addView(TextView(this).apply { // 单条规则文本（点击删除）
+                    text = "${buttonDisplayName(rule.first)} + ${buttonDisplayName(rule.second)} → $target"
+                    textSize = 15f
+                    setTextColor(0xFFFFFFFF.toInt())
+                    setPadding(0, (12 * d).toInt(), 0, (12 * d).toInt())
+                    setOnClickListener { // 点击弹出删除确认
+                        AlertDialog.Builder(this@LayerEditActivity)
+                            .setTitle("删除规则")
+                            .setMessage("删除「${buttonDisplayName(rule.first)} + ${buttonDisplayName(rule.second)} → $target」？")
+                            .setPositiveButton("删除") { _, _ ->
+                                actionSet.comboSwitches.remove(rule) // 移除规则
+                                saveProfile(showToast = true) // 保存配置
+                                render() // 刷新列表
+                            }
+                            .setNegativeButton("取消", null)
+                            .show()
+                    } // 结束点击监听
+                }) // 结束规则文本
+            } // 结束遍历
+            container.addView(Button(this).apply { // 「添加规则」按钮
+                text = "添加组合键规则"
+                isAllCaps = false
+                setOnClickListener { showAddComboSwitchDialog(actionSet) { render() } } // 打开添加对话框，保存后刷新
+            }) // 结束添加按钮
+        } // 结束 render 函数
+
+        render() // 首次渲染
+        val scroll = ScrollView(this).apply { addView(container) } // 内容放入滚动容器，避免规则过多超出屏幕
+        AlertDialog.Builder(this)
+            .setTitle("组合切层（${actionSet.name}）")
+            .setView(scroll)
+            .setNegativeButton("关闭", null)
+            .show()
+    } // 结束 showComboSwitchEditDialog 函数
+
+    /**
+     * 显示「添加组合键规则」对话框
+     *
+     * @param actionSet 目标操作集
+     * @param onSaved 保存成功后的回调（刷新列表）
+     */
+    private fun showAddComboSwitchDialog(actionSet: ActionSet, onSaved: () -> Unit) { // 私有函数：添加组合键规则
+        val layerOptions = actionSet.layers.map { it.name } // 可切换的目标层列表
+        if (layerOptions.isEmpty()) { // 没有操作层则无法切换
+            Toast.makeText(this, "当前操作集没有可切换的操作层", Toast.LENGTH_SHORT).show()
+            return
+        } // 结束空层判断
+        val d = resources.displayMetrics.density // 屏幕密度
+
+        val container = LinearLayout(this).apply { // 对话框内容容器
+            orientation = LinearLayout.VERTICAL
+            setPadding((16 * d).toInt(), (12 * d).toInt(), (16 * d).toInt(), 0)
+        } // 结束 apply
+
+        fun addSpinnerRow(title: String, options: List<String>): Spinner { // 局部函数：加一行「标签 + 下拉框」
+            container.addView(TextView(this).apply { // 行标签
+                text = title
+                textSize = 14f
+                setTextColor(0xFFDDDDDD.toInt())
+                setPadding(0, (8 * d).toInt(), 0, 0)
+            }) // 结束行标签
+            val spinner = Spinner(this).apply { // 下拉框
+                adapter = ArrayAdapter(this@LayerEditActivity, android.R.layout.simple_spinner_item, options).also {
+                    it.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item)
+                }
+            } // 结束下拉框
+            container.addView(spinner) // 加入容器
+            return spinner
+        } // 结束 addSpinnerRow 函数
+
+        val buttonNames = ControllerButton.values().map { buttonDisplayName(it) } // 手柄按键显示名列表
+        val firstSpinner = addSpinnerRow("按键 1:", buttonNames) // 第一个按键
+        val secondSpinner = addSpinnerRow("按键 2:", buttonNames) // 第二个按键
+        if (buttonNames.size > 1) secondSpinner.setSelection(1) // 默认第二个键不同于第一个
+        val layerSpinner = addSpinnerRow("目标层:", layerOptions) // 目标层
+        val keyOptions = listOf("无（只切层）") + keyboardKeyOptions.map { it.first } // 同时按下的按键选项
+        val keySpinner = addSpinnerRow("同时按下的按键:", keyOptions) // 逗号按键
+
+        AlertDialog.Builder(this)
+            .setTitle("添加组合键规则")
+            .setView(container)
+            .setPositiveButton("保存") { _, _ ->
+                val first = ControllerButton.values()[firstSpinner.selectedItemPosition] // 第一个按键
+                val second = ControllerButton.values()[secondSpinner.selectedItemPosition] // 第二个按键
+                if (first == second) { // 两键相同无意义
+                    Toast.makeText(this, "两个按键不能相同", Toast.LENGTH_SHORT).show()
+                    return@setPositiveButton
+                } // 结束相同判断
+                val duplicated = actionSet.comboSwitches.any { r -> // 检查重复规则（不区分先后顺序）
+                    (r.first == first && r.second == second) || (r.first == second && r.second == first)
+                } // 结束重复检查
+                if (duplicated) { // 已存在同一组合
+                    Toast.makeText(this, "该组合按键已存在", Toast.LENGTH_SHORT).show()
+                    return@setPositiveButton
+                } // 结束重复判断
+                val layerName = layerOptions[layerSpinner.selectedItemPosition] // 目标层名
+                val keyCode = if (keySpinner.selectedItemPosition <= 0) null // 0=只切层
+                    else keyboardKeyOptions[keySpinner.selectedItemPosition - 1].second // 同时按下的键盘键码
+                actionSet.comboSwitches.add(ComboLayerSwitch(first, second, layerName, keyCode)) // 加入规则
+                saveProfile(showToast = true) // 保存配置
+                onSaved() // 刷新规则列表
+            } // 结束保存回调
+            .setNegativeButton("取消", null)
+            .show()
+    } // 结束 showAddComboSwitchDialog 函数
+
+    // ====================================================================
     // 保存方法
     // ====================================================================
 
@@ -1345,7 +1503,18 @@ class LayerEditActivity : AppCompatActivity() { // 定义操作层编辑 Activit
             newCommon = actionSet.commonLayer // 公共层不变
             newLayers = actionSet.layers.map { if (it === oldLayer) newLayer else it } // 替换列表中的旧层为新层（语法：map=转换 lambda，===引用相等）
         } // 结束层重建 if-else 块
-        val newActionSet = ActionSet(name = actionSet.name, commonLayer = newCommon, layers = newLayers) // 用新层列表重建操作集对象
+        // 层名变化时：同步更新组合键规则中指向旧层名的目标层
+        val updatedCombos = if (oldName != name) // 层名确实变化时重建规则列表
+            actionSet.comboSwitches.map { rule -> // 逐条处理（语法：map=转换 lambda）
+                if (rule.layerName == oldName) rule.copy(layerName = name) else rule // 目标为旧层名则改为新层名
+            }.toMutableList() // 复制为可变列表
+        else actionSet.comboSwitches // 层名未变则沿用原列表
+        val newActionSet = ActionSet( // 用新层列表重建操作集对象（跨行参数）
+            name = actionSet.name, // 操作集名称不变
+            commonLayer = newCommon, // 公共层（可能已重命名）
+            layers = newLayers, // 操作层列表（可能已替换）
+            comboSwitches = updatedCombos // 组合键规则（目标层名已同步）
+        ) // 结束 ActionSet 构造
 
         // 层名变化时: 同步更新当前操作集所有层中引用旧层名的 SwitchLayer 映射
         // 否则重命名后 SwitchLayer(oldName) 会找不到目标层，导致层切换失效
@@ -1723,7 +1892,8 @@ class LayerEditActivity : AppCompatActivity() { // 定义操作层编辑 Activit
         return ActionSet( // 组装拷贝后的操作集（跨行参数）
             name = newName, // 新操作集名称
             commonLayer = copyLayer(actionSet.commonLayer), // 深拷贝公共层
-            layers = actionSet.layers.map { copyLayer(it) } // 深拷贝所有操作层（语法：map=转换 lambda）
+            layers = actionSet.layers.map { copyLayer(it) }, // 深拷贝所有操作层（语法：map=转换 lambda）
+            comboSwitches = actionSet.comboSwitches.toMutableList() // 组合键规则独立复制一份（规则对象本身不可变）
         ) // 结束 ActionSet 构造调用
     } // 结束 copyActionSet 函数
 

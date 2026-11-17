@@ -384,8 +384,32 @@
                 android:paddingHorizontal="10dp"
                 android:paddingBottom="10dp" />
 
+            <!-- ===== 长按动作的「同时按下的按键」（仅长按=切层+按键显示） ===== -->
+            <LinearLayout
+                android:id="@+id/layout_long_extra_key"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical"
+                android:paddingHorizontal="10dp"
+                android:paddingBottom="10dp">
+
+                <TextView
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:text="长按动作 · 切层时同时按下的按键:"
+                    android:textSize="14sp"
+                    android:textColor="#FFDDDDDD" />
+
+                <Spinner
+                    android:id="@+id/spinner_long_extra_key"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:paddingHorizontal="10dp"
+                    android:paddingBottom="10dp" />
+            </LinearLayout>  <!-- 结束长按动作附加按键区域 -->
+
             <!-- ===== 长按动作「只切换层」开关 ===== -->
-            <!-- 仅长按为键盘按键/鼠标点击/数字小键盘类型显示（代码中控制显隐） -->
+            <!-- 仅长按为键盘按键/鼠标点击/数字小键盘/切层+按键类型显示（代码中控制显隐） -->
             <LinearLayout
                 android:id="@+id/layout_long_only_layer"
                 android:layout_width="match_parent"
