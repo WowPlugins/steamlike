@@ -668,8 +668,11 @@ data class ControllerProfile( // 控制器完整配置（语法：data class 数
     fun findActionSet(name: String): ActionSet? = actionSets.firstOrNull { it.name == name } // 按名称查找操作集
 
     companion object { // 伴生对象（语法：companion object 静态成员容器）
+        /** 新建操作集时默认创建的操作层数量 */
+        const val DEFAULT_LAYER_COUNT = 10 // 默认操作层数量（用户可在此基础之上继续添加）
+
         /** 操作层最大数量 */
-        const val MAX_LAYERS = 10 // 操作层数量上限（语法：const val 编译期常量）
+        const val MAX_LAYERS = 50 // 操作层数量上限（用户可自由添加/删除层，最多 50 层）
 
         /** 默认操作集名称 */
         const val DEFAULT_ACTION_SET_NAME = "默认" // 默认操作集名称
@@ -729,8 +732,8 @@ data class ControllerProfile( // 控制器完整配置（语法：data class 数
             // 摇杆映射不在 buttonMappings 中，而是通过 ControllerStick 单独处理
 
             // 操作层：无默认按键映射，层切换由 Common 层的 SwitchLayer 映射完成
-            val layers = (1..MAX_LAYERS).map { i -> // 创建 1 到 10 的操作层（语法：(1..n) 区间 + map lambda）
-                OperationLayer(name = "Layer$i") // 每层命名为 Layer1..Layer10（语法：字符串模板 $i）
+            val layers = (1..DEFAULT_LAYER_COUNT).map { i -> // 创建 1 到默认数量的操作层（语法：(1..n) 区间 + map lambda）
+                OperationLayer(name = "Layer$i") // 每层命名为 Layer1..LayerN（语法：字符串模板 $i）
             } // 结束 map
 
             return ControllerProfile( // 构造并返回默认配置（语法：具名参数构造）

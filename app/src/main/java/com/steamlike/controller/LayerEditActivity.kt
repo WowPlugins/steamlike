@@ -13,6 +13,7 @@ import android.view.LayoutInflater // 导入 LayoutInflater（将 XML 布局实�
 import android.view.MenuItem // 导入 MenuItem（菜单项接口）
 import android.view.MotionEvent // 导入 MotionEvent（触摸/模拟量事件类）
 import android.view.View // 导入 View（视图基类）
+import android.graphics.Color // 导入 Color（用于删除确认对话框的醒目红色标题与按钮）
 import android.view.WindowManager // 导入 WindowManager（窗口管理，含布局参数常量）
 import android.view.inputmethod.InputMethodManager // 导入 InputMethodManager（输入法管理器，控制软键盘）
 import android.widget.AdapterView // 导入 AdapterView（适配器视图基类，如 ListView/Spinner）
@@ -316,6 +317,12 @@ class LayerEditActivity : AppCompatActivity() { // 定义操作层编辑 Activit
     /** 组合切层（两键同按）按钮 */
     private lateinit var comboSwitchButton: Button // 延迟初始化属性：「组合切层」按钮
 
+    /** 添加操作层按钮 */
+    private lateinit var addLayerButton: Button // 延迟初始化属性：「添加层」按钮
+
+    /** 删除当前操作层按钮 */
+    private lateinit var deleteLayerButton: Button // 延迟初始化属性：「删除层」按钮
+
     /** 保存配置按钮 */
     private lateinit var saveButton: Button // 延迟初始化属性：「保存配置」按钮
 
@@ -420,6 +427,8 @@ class LayerEditActivity : AppCompatActivity() { // 定义操作层编辑 Activit
         editLayerNameButton = findViewById(R.id.btn_edit_layer_name) // 初始化「编辑层名称」按钮
         editTriggerButton = findViewById(R.id.btn_edit_trigger) // 初始化「编辑切入按键」按钮
         comboSwitchButton = findViewById(R.id.btn_combo_switch) // 初始化「组合切层」按钮
+        addLayerButton = findViewById(R.id.btn_layer_add) // 初始化「添加层」按钮
+        deleteLayerButton = findViewById(R.id.btn_layer_delete) // 初始化「删除层」按钮
         saveButton = findViewById(R.id.btn_save) // 初始化「保存配置」按钮
 
         // 设置操作集选择 Spinner 与操作集管理按钮
@@ -436,6 +445,8 @@ class LayerEditActivity : AppCompatActivity() { // 定义操作层编辑 Activit
         editLayerNameButton.setOnClickListener { showLayerNameEditDialog() } // 点击「编辑层名称」弹出改名对话框
         editTriggerButton.setOnClickListener { showTriggerButtonEditDialog() } // 点击「切入按键」弹出切入键编辑对话框
         comboSwitchButton.setOnClickListener { showComboSwitchEditDialog() } // 点击「组合切层」弹出两键同按规则编辑对话框
+        addLayerButton.setOnClickListener { addLayer() } // 点击「添加层」新增一个空操作层
+        deleteLayerButton.setOnClickListener { confirmDeleteLayer() } // 点击「删除层」弹出醒目的二次确认
         saveButton.setOnClickListener { saveProfile(showToast = true) } // 点击「保存」保存配置并显示提示（命名参数 showToast=true）
 
         // 设置按键映射列表点击事件（点击某个按键进入编辑对话框）
@@ -1571,6 +1582,143 @@ class LayerEditActivity : AppCompatActivity() { // 定义操作层编辑 Activit
     } // 结束 applyLayerNameChange 函数
 
     /**
+     * 用新操作集替换当前操作集（同步本地 profile 引用）
+     *
+     * @param newActionSet 新的操作集对象
+     */
+    private fun replaceCurrentActionSet(newActionSet: ActionSet) { // 私有函数：替换当前操作集
+        val oldActionSet = currentActionSet // 记录旧操作集引用
+        profile = profile.copy( // 用 copy 重建配置档案（跨行参数）
+            actionSets = profile.actionSets.map { if (it === oldActionSet) newActionSet else it } // 替换列表中的旧操作集
+        ) // 结束 copy 调用
+        currentActionSet = newActionSet // 当前操作集指向新对象
+    } // 结束 replaceCurrentActionSet 函数
+
+    /**
+     * 添加一个新的空操作层
+     *
+     * 层名自动取第一个未被占用的 "LayerN"，添加后自动选中该层。
+     * 新层没有任何按键映射，也不含切入键，需要在公共层手动配置切入按键
+     * （或使用组合切层规则）才能进入。
+     */
+    private fun addLayer() { // 私有函数：添加操作层
+        val actionSet = currentActionSet ?: return // 取当前操作集，为空则退出
+        if (actionSet.layers.size >= ControllerProfile.MAX_LAYERS) { // 已达层数上限
+            Toast.makeText(this, "操作层数量已达上限（${ControllerProfile.MAX_LAYERS} 层）", Toast.LENGTH_SHORT).show()
+            return // 结束
+        } // 结束上限判断
+        val usedNames = actionSet.layers.map { it.name }.toMutableSet() // 收集已占用的层名
+        var index = 1 // 从 Layer1 开始寻找空位
+        while (usedNames.contains("Layer$index")) index++ // 跳过已存在的层名
+        val newName = "Layer$index" // 新层名称
+        val newLayer = OperationLayer(name = newName) // 创建空操作层
+        val newActionSet = ActionSet( // 重建操作集（跨行参数）
+            name = actionSet.name, // 操作集名称不变
+            commonLayer = actionSet.commonLayer, // 公共层不变
+            layers = actionSet.layers + newLayer, // 追加新层
+            comboSwitches = actionSet.comboSwitches // 组合键规则不变
+        ) // 结束 ActionSet 构造
+        replaceCurrentActionSet(newActionSet) // 替换当前操作集
+        saveProfile(showToast = false) // 静默保存配置
+        currentLayer = newActionSet.findLayer(newName) // 当前层指向新层
+        refreshLayerSpinner(newName) // 刷新层下拉框并选中新层
+        refreshMappingsList() // 刷新映射列表
+        updateLayerInfoButtons() // 更新层信息按钮显示
+        Toast.makeText(this, "已添加操作层「$newName」，请在公共层为它配置切入按键", Toast.LENGTH_LONG).show()
+        Log.i(TAG, "Layer added: $newName") // 打印日志：层已添加
+    } // 结束 addLayer 函数
+
+    /**
+     * 删除当前操作层（醒目的二次确认）
+     *
+     * 删除时会同步清除：该层的全部按键映射、所有指向该层的切入按键、
+     * 所有以该层为目标的组合切层规则。
+     */
+    private fun confirmDeleteLayer() { // 私有函数：删除操作层确认
+        val actionSet = currentActionSet ?: return // 取当前操作集，为空则退出
+        val layer = currentLayer ?: return // 取当前层，为空则退出
+        if (layer === actionSet.commonLayer) { // 公共层不可删除
+            Toast.makeText(this, "公共层不能删除", Toast.LENGTH_SHORT).show()
+            return // 结束
+        } // 结束公共层判断
+        val name = layer.name // 被删除的层名
+        val mappingCount = layer.buttonMappings.size // 该层映射数量
+        val switchRefCount = actionSet.allLayers.sumOf { l -> // 统计所有层（含公共层）中指向该层的切入映射数量
+            l.buttonMappings.values.count { m -> // 逐条判断（语法：count=计数 lambda）
+                (m.action is MappedAction.SwitchLayer && m.action.layerName == name) || // 切换层动作指向该层
+                    (m.action is MappedAction.SwitchLayerAndKey && m.action.layerName == name) // 切层+按键动作指向该层
+            } // 结束 count
+        } // 结束 sumOf
+        val comboRefCount = actionSet.comboSwitches.count { it.layerName == name } // 统计指向该层的组合切层规则
+
+        // 醒目的红色标题（用户要求删除时必须醒目）
+        val titleView = TextView(this).apply {
+            text = "删除操作层：$name"
+            setTextColor(Color.parseColor("#FFFF5252")) // 醒目红色
+            textSize = 20f // 大字号
+            setPadding((16 * resources.displayMetrics.density).toInt(), (14 * resources.displayMetrics.density).toInt(),
+                (16 * resources.displayMetrics.density).toInt(), (4 * resources.displayMetrics.density).toInt())
+        } // 结束标题构造
+        val dialog = AlertDialog.Builder(this)
+            .setCustomTitle(titleView) // 使用自定义红色标题
+            .setMessage(
+                "即将删除操作层「$name」。\n\n" + // 提示目标层
+                    "同时会清除：\n" + // 说明清理范围
+                    "· 该层的全部按键映射（$mappingCount 条）\n" + // 映射数量
+                    "· 指向该层的切入按键（$switchRefCount 处）\n" + // 切入引用数量
+                    "· 指向该层的组合切层规则（$comboRefCount 条）\n\n" + // 组合规则数量
+                    "此操作不可撤销，确定删除吗？" // 最终确认
+            ) // 结束消息设置
+            .setPositiveButton("确认删除", null) // 占位，稍后自定义点击以便不自动关闭
+            .setNegativeButton("取消", null) // 取消按钮
+            .create() // 创建对话框
+        dialog.show() // 先显示
+        dialog.getButton(AlertDialog.BUTTON_POSITIVE).setTextColor(Color.parseColor("#FFFF5252")) // 确认按钮也标红
+        dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener { // 自定义确认点击
+            performDeleteLayer(actionSet, layer) // 执行删除
+            dialog.dismiss() // 关闭对话框
+        } // 结束确认点击
+    } // 结束 confirmDeleteLayer 函数
+
+    /**
+     * 执行操作层删除，并清理所有相关引用
+     *
+     * @param actionSet 当前操作集
+     * @param layer 要删除的操作层
+     */
+    private fun performDeleteLayer(actionSet: ActionSet, layer: OperationLayer) { // 私有函数：执行删除层
+        val name = layer.name // 被删除的层名
+        val remaining = actionSet.layers.filter { it !== layer } // 剩余操作层列表
+
+        fun purgeRefs(target: OperationLayer) { // 局部函数：清除单层中指向被删层的切入映射
+            val toRemove = target.buttonMappings.filterValues { m -> // 找出需要移除的映射
+                (m.action is MappedAction.SwitchLayer && m.action.layerName == name) || // 切换层指向该层
+                    (m.action is MappedAction.SwitchLayerAndKey && m.action.layerName == name) // 切层+按键指向该层
+            }.keys // 取需要移除的按键集合
+            toRemove.forEach { target.buttonMappings.remove(it) } // 逐条移除
+        } // 结束 purgeRefs 函数
+
+        purgeRefs(actionSet.commonLayer) // 清除公共层中的切入映射
+        remaining.forEach { purgeRefs(it) } // 清除其它操作层中的切入映射
+        val newActionSet = ActionSet( // 重建操作集（跨行参数）
+            name = actionSet.name, // 操作集名称不变
+            commonLayer = actionSet.commonLayer, // 公共层不变
+            layers = remaining, // 剩余操作层
+            comboSwitches = actionSet.comboSwitches.filterNot { it.layerName == name }.toMutableList() // 移除指向该层的组合规则
+        ) // 结束 ActionSet 构造
+        replaceCurrentActionSet(newActionSet) // 替换当前操作集
+        saveProfile(showToast = false) // 静默保存配置
+        // 删除的是当前层时回到公共层，否则保持当前层
+        val targetName = if (currentLayer === layer) newActionSet.commonLayer.name else currentLayer?.name ?: newActionSet.commonLayer.name
+        currentLayer = newActionSet.findLayer(targetName) // 更新当前层引用
+        refreshLayerSpinner(targetName) // 刷新层下拉框
+        refreshMappingsList() // 刷新映射列表
+        updateLayerInfoButtons() // 更新层信息按钮显示
+        Toast.makeText(this, "已删除操作层「$name」", Toast.LENGTH_SHORT).show()
+        Log.i(TAG, "Layer deleted: $name") // 打印日志：层已删除
+    } // 结束 performDeleteLayer 函数
+
+    /**
      * 保存当前配置到文件（服务运行时同步到 SteamInput）
      *
      * - 写回 `steamlike_config.json`（含运行时配置 settings）
@@ -1863,8 +2011,8 @@ class LayerEditActivity : AppCompatActivity() { // 定义操作层编辑 Activit
      */
     private fun createEmptyActionSet(name: String): ActionSet { // 私有函数：创建全新的默认操作集并返回
         val common = OperationLayer(name = "Common") // 创建公共层，名称为 "Common"
-        // 创建 1..MAX_LAYERS 个空操作层，名称为 Layer1..LayerN（语法：map=转换 lambda，字符串模板）
-        val layers = (1..ControllerProfile.MAX_LAYERS).map { OperationLayer(name = "Layer$it") }
+        // 创建 1..DEFAULT_LAYER_COUNT 个空操作层，名称为 Layer1..LayerN（语法：map=转换 lambda，字符串模板）
+        val layers = (1..ControllerProfile.DEFAULT_LAYER_COUNT).map { OperationLayer(name = "Layer$it") }
         return ActionSet(name = name, commonLayer = common, layers = layers) // 组装并返回新操作集（含公共层 + 操作层）
     } // 结束 createEmptyActionSet 函数
 

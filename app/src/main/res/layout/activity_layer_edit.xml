@@ -236,6 +236,18 @@
                 android:layout_height="wrap_content"
                 android:layout_weight="1"
                 android:paddingHorizontal="10dp" />
+
+            <!-- 添加操作层按钮：在层选择行末尾，点击新增一个空层 -->
+            <!-- 语法：Button 按钮控件；layout_width=wrap_content：宽度自适应文字；
+                 layout_marginStart=8dp：与左侧下拉框保持间距；id=@+id/btn_layer_add：添加层按钮 id -->
+            <Button
+                android:id="@+id/btn_layer_add"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginStart="8dp"
+                android:text="＋添加层"
+                android:textColor="#FFFFFFFF"
+                android:background="@drawable/bg_button" />
         </LinearLayout>  <!-- 结束操作层选择行 -->
 
         <!-- ===== 层信息行（名称 + 切入按键） ===== -->
@@ -278,6 +290,17 @@
                 android:layout_marginStart="4dp"
                 android:text="切入按键"
                 android:textColor="#FFFFFFFF"
+                android:background="@drawable/bg_button" />
+
+            <!-- 删除当前操作层：公共层不可删除，点击后弹出醒目的红色二次确认 -->
+            <Button
+                android:id="@+id/btn_layer_delete"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:layout_marginStart="4dp"
+                android:text="删除层"
+                android:textColor="#FFFF5252"
                 android:background="@drawable/bg_button" />
         </LinearLayout>  <!-- 结束层信息行 -->
 
