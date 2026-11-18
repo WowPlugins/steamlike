@@ -85,6 +85,8 @@ class LayerEditActivity : AppCompatActivity() { // 定义操作层编辑 Activit
 
     companion object { // 伴生对象块开始：存放静态成员/类级常量与方法（语法：companion object=伴生对象，相当于 Java 静态成员）
         private const val TAG = "LayerEditActivity" // 私有常量：日志标签（语法：const val=编译期常量）
+        /** 按键独立长按阈值的默认值（毫秒） */
+        private const val DEFAULT_LONG_PRESS_THRESHOLD_MS = 300 // 默认长按阈值
 
         /**
          * SteamInput 实例引用
@@ -800,6 +802,7 @@ class LayerEditActivity : AppCompatActivity() { // 定义操作层编辑 Activit
         val tvActionLabel = dialogView.findViewById<TextView>(R.id.tv_action_label) // 获取动作值标签文本控件
         val spinnerActionValue = dialogView.findViewById<Spinner>(R.id.spinner_action_value) // 获取动作值下拉框
         val spinnerLongPressType = dialogView.findViewById<Spinner>(R.id.spinner_long_press_type) // 获取长按动作类型下拉框
+        val spinnerLongPressThreshold = dialogView.findViewById<Spinner>(R.id.spinner_long_press_threshold) // 获取长按判定阈值下拉框
         val tvLongPressLabel = dialogView.findViewById<TextView>(R.id.tv_long_press_label) // 获取长按动作值标签文本控件
         val spinnerLongPressValue = dialogView.findViewById<Spinner>(R.id.spinner_long_press_value) // 获取长按动作值下拉框
         val layoutExtraKey = dialogView.findViewById<LinearLayout>(R.id.layout_extra_key) // 获取「同时按下的按键」区域容器
@@ -869,6 +872,60 @@ class LayerEditActivity : AppCompatActivity() { // 定义操作层编辑 Activit
         val initialLongPressPos = longPressTypeIndices.indexOf(initialLongPressType).coerceAtLeast(0) // 在长按选项列表中的位置
         setupActionValueSpinner(spinnerLongPressValue, tvLongPressLabel, initialLongPressType, "长按 · ") // 初始化长按动作值下拉框选项
         spinnerLongPressType.setSelection(initialLongPressPos) // 设置长按动作类型下拉框的初始选中项
+
+        // ===== 长按判定阈值（每个按键独立，默认 300ms） =====
+        // 预设 100~800ms（步长 50）之外再提供「自定义」项，可手动输入毫秒值
+        val thresholdPresets = (100..800 step 50).toList() // 预设档位（100/150/…/800）
+        val existingThreshold = existingMapping?.longPressThresholdMs ?: DEFAULT_LONG_PRESS_THRESHOLD_MS // 已有阈值（无则默认 300）
+        var customThreshold: Int? = existingThreshold.takeIf { it !in thresholdPresets } // 已有值不在预设档位时记为自定义
+        val thresholdLabels = thresholdPresets.map { "${it}ms" }.toMutableList() // 预设档位显示文字
+        thresholdLabels.add(customThreshold?.let { "自定义: ${it}ms" } ?: "自定义…") // 末尾追加自定义项
+        val thresholdAdapter = ArrayAdapter(this, android.R.layout.simple_spinner_item, thresholdLabels).also {
+            it.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item) // 设置下拉展开项的布局资源
+        } // 结束 also 块
+        spinnerLongPressThreshold.adapter = thresholdAdapter // 绑定阈值下拉框适配器
+        spinnerLongPressThreshold.setSelection( // 回显已有阈值
+            if (customThreshold != null) thresholdPresets.size else thresholdPresets.indexOf(existingThreshold)
+        ) // 结束回显
+        var thresholdListenerReady = false // 初始化期间忽略选中回调，避免打开对话框就弹自定义输入框
+        spinnerLongPressThreshold.onItemSelectedListener = object : AdapterView.OnItemSelectedListener { // 阈值下拉框选择监听
+            override fun onItemSelected(parent: AdapterView<*>?, view: View?, position: Int, id: Long) { // 覆写：选项切换回调
+                if (!thresholdListenerReady) return // 初始回显触发的回调：忽略
+                if (position != thresholdPresets.size) return // 选中预设档位：无需处理
+                // 选中「自定义」：弹输入框，确定后把值写到末项显示并记录
+                val input = EditText(this@LayerEditActivity).apply { // 创建数值输入框（语法：apply 作用域函数）
+                    inputType = android.text.InputType.TYPE_CLASS_NUMBER // 仅数字键盘
+                    hint = "50 ~ 2000" // 输入范围提示
+                    setText((customThreshold ?: DEFAULT_LONG_PRESS_THRESHOLD_MS).toString()) // 预填当前值
+                } // 结束输入框创建
+                AlertDialog.Builder(this@LayerEditActivity) // 构建输入对话框
+                    .setTitle("自定义长按阈值(ms)") // 对话框标题
+                    .setView(input) // 设置输入框
+                    .setPositiveButton("确定") { _, _ -> // 确定按钮回调
+                        val value = input.text.toString().trim().toIntOrNull() // 读取输入并转整数
+                        if (value == null || value !in 50..2000) { // 非法输入
+                            Toast.makeText(this@LayerEditActivity, "请输入 50~2000 之间的毫秒数", Toast.LENGTH_SHORT).show() // 提示范围
+                            return@setPositiveButton // 不修改，保持原值
+                        } // 结束非法输入判断
+                        val presetIndex = thresholdPresets.indexOf(value) // 该值是否正好是预设档位
+                        if (presetIndex >= 0) { // 正好是预设档位：直接选中该档
+                            customThreshold = null // 清除自定义值
+                            thresholdLabels[thresholdLabels.size - 1] = "自定义…" // 恢复自定义项文字
+                            thresholdAdapter.notifyDataSetChanged() // 刷新下拉框
+                            spinnerLongPressThreshold.setSelection(presetIndex) // 选中匹配的预设档
+                        } else { // 非预设档位：作为自定义值
+                            customThreshold = value // 记录自定义值
+                            thresholdLabels[thresholdLabels.size - 1] = "自定义: ${value}ms" // 更新自定义项文字
+                            thresholdAdapter.notifyDataSetChanged() // 刷新下拉框
+                        } // 结束预设判断
+                    } // 结束确定回调
+                    .setNegativeButton("取消", null) // 取消不改值
+                    .show() // 显示对话框
+            } // 结束 onItemSelected 回调
+
+            override fun onNothingSelected(parent: AdapterView<*>?) {} // 覆写：无选项选中时回调，空实现
+        } // 结束阈值下拉框监听匿名对象
+        spinnerLongPressThreshold.post { thresholdListenerReady = true } // 等初始回显完成后再响应手动切换
 
         // 设置「同时按下的按键」下拉框的适配器（固定为键盘按键列表，仅切层+按键类型使用）
         spinnerExtraKey.adapter = ArrayAdapter(this, android.R.layout.simple_spinner_item, keyboardKeyOptions.map { it.first }).also {
@@ -1136,7 +1193,12 @@ class LayerEditActivity : AppCompatActivity() { // 定义操作层编辑 Activit
                     // 「只切换层」仅在对应动作类型支持时生效（隐藏状态下不保存开关值，避免切回类型后误开启）
                     val tapOnlyLayer = onlyLayerVisible(actionType) && switchTapOnlyLayer.isChecked // 点击动作「只切换层」
                     val longOnlyLayer = longOnlyLayerVisible(longPressType) && switchLongOnlyLayer.isChecked // 长按动作「只切换层」
-                    val newMapping = KeyMapping(action, subCommands, longPressAction, longPressSubCommands, tapOnlyLayer, longOnlyLayer) // 构建新的按键映射对象
+                    // 长按阈值：选中预设档直接用；选中「自定义」用输入值（未输入时回默认 300ms）
+                    val thresholdPos = spinnerLongPressThreshold.selectedItemPosition // 阈值下拉框选中位置
+                    val thresholdValue = if (thresholdPos in thresholdPresets.indices) thresholdPresets[thresholdPos]
+                        else customThreshold ?: DEFAULT_LONG_PRESS_THRESHOLD_MS // 自定义项取值
+                    val newMapping = KeyMapping(action, subCommands, longPressAction, longPressSubCommands, tapOnlyLayer, longOnlyLayer, // 构建新的按键映射对象
+                        longPressThresholdMs = thresholdValue.takeIf { longPressAction != null }) // 仅配置了长按动作时保存独立阈值
 
                     // 写入当前操作层的 buttonMappings（MutableMap，可直接修改）
                     layer.buttonMappings[button] = newMapping // 将新映射写入当前层的映射表

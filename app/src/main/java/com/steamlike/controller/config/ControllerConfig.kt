@@ -346,6 +346,7 @@ object ControllerConfig { // 单例对象：配置的 JSON 序列化/反序列�
         json.put("longPressSubCommands", longSubArray) // 写入长按子命令数组（作用于长按动作）
         if (mapping.layerSwitchOnly) json.put("layerSwitchOnly", true) // 短按「只切换层」开启时才写入（默认关闭，省体积）
         if (mapping.longPressLayerSwitchOnly) json.put("longPressLayerSwitchOnly", true) // 长按「只切换层」开启时才写入
+        mapping.longPressThresholdMs?.let { json.put("longPressThresholdMs", it) } // 独立长按阈值（未设置则沿用全局）
         return json // 返回 JSON 对象
     } // 结束 mappingToJson 函数
 
@@ -366,7 +367,8 @@ object ControllerConfig { // 单例对象：配置的 JSON 序列化/反序列�
         return KeyMapping( // 构造按键映射（含长按动作与其子命令）
             action, subCommands, longPressAction, longPressSubCommands, // 原有字段
             json.optBoolean("layerSwitchOnly", false), // 短按「只切换层」（缺失=关闭，兼容旧配置）
-            json.optBoolean("longPressLayerSwitchOnly", false) // 长按「只切换层」（缺失=关闭）
+            json.optBoolean("longPressLayerSwitchOnly", false), // 长按「只切换层」（缺失=关闭）
+            longPressThresholdMs = json.optInt("longPressThresholdMs", 0).takeIf { it > 0 } // 独立长按阈值（缺失/非法=沿用全局）
         ) // 结束 KeyMapping 构造
     } // 结束 parseMapping 函数
 

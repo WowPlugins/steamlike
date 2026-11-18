@@ -685,12 +685,13 @@ class KeyboardMouseMapper( // 语法：class 类声明，定义键盘/鼠标映�
         val pressTime = SystemClock.elapsedRealtime() // 记录按下时刻（单调时钟，不受系统时间调整影响）
         deferredPresses[button] = DeferredPress(mapping, pressTime, layerName) // 存入延迟按下上下文（含所属层）
         if (mapping.longPressAction != null || mapping.longPressBlocked) { // 配置了长按动作或长按被屏蔽时才需要阈值定时器
-            val threshold = steamInput.profile.globalSettings.longPressThresholdMs.toLong() // 读取长按阈值（毫秒）
+            val threshold = mapping.longPressThresholdMs?.toLong() // 优先使用该按键的独立阈值
+                ?: steamInput.profile.globalSettings.longPressThresholdMs.toLong() // 未配置时沿用全局阈值
             val runnable = Runnable { onLongPressThreshold(button) } // 构造阈值到达回调（语法：Runnable{}=可运行 lambda）
             longPressTimers[button] = runnable // 记录定时任务，便于松开时取消
             mainHandler.postDelayed(runnable, threshold) // 延迟阈值毫秒后触发（语法：postDelayed 延迟投递）
         } // 结束长按动作判断
-        Log.d(TAG, "LongPress begin: $button (threshold=${steamInput.profile.globalSettings.longPressThresholdMs}ms)") // 打印开始判定日志
+        Log.d(TAG, "LongPress begin: $button (threshold=${mapping.longPressThresholdMs ?: steamInput.profile.globalSettings.longPressThresholdMs}ms)") // 打印开始判定日志
     } // 结束 beginDeferredPress 函数
 
     /**
@@ -739,7 +740,8 @@ class KeyboardMouseMapper( // 语法：class 类声明，定义键盘/鼠标映�
         val pending = deferredPresses.remove(button) ?: return false // 取出并移除延迟按下上下文，无则返回 false
         longPressTimers.remove(button)?.let { mainHandler.removeCallbacks(it) } // 取消未触发的阈值定时器（语法：?.let 安全调用）
         val held = SystemClock.elapsedRealtime() - pending.pressTimeMs // 计算按住时长（毫秒）
-        val threshold = steamInput.profile.globalSettings.longPressThresholdMs.toLong() // 读取长按阈值
+        val threshold = pending.mapping.longPressThresholdMs?.toLong() // 优先使用该按键的独立阈值
+            ?: steamInput.profile.globalSettings.longPressThresholdMs.toLong() // 未配置时沿用全局阈值
         val longAction = pending.mapping.longPressAction // 取长按动作
         if (held < threshold) { // 短按：按住时长未达阈值
             if (pending.mapping.layerSwitchOnly && isOnlyLayerApplicable(pending.mapping.action)) { // 短按动作开启「只切换层」

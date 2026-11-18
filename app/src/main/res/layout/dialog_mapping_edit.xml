@@ -344,6 +344,32 @@
                 android:textColor="#FF999999"
                 android:paddingBottom="10dp" />
 
+            <!-- ===== 长按判定阈值（每个按键独立设置） ===== -->
+            <!-- 语法：LinearLayout 水平容器；左侧标签 + 右侧 Spinner 下拉框
+                 id=@+id/spinner_long_press_threshold：长按阈值选择器 id；
+                 预设 100~800ms（步长 50），另有「自定义」项可手动输入 -->
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="horizontal"
+                android:gravity="center_vertical"
+                android:paddingHorizontal="10dp"
+                android:paddingBottom="10dp">
+
+                <TextView
+                    android:layout_width="0dp"
+                    android:layout_weight="1"
+                    android:layout_height="wrap_content"
+                    android:text="长按判定阈值:"
+                    android:textSize="14sp"
+                    android:textColor="#FFDDDDDD" />
+
+                <Spinner
+                    android:id="@+id/spinner_long_press_threshold"
+                    android:layout_width="130dp"
+                    android:layout_height="wrap_content" />
+            </LinearLayout>
+
             <!-- 语法：TextView 文本控件；「长按动作类型:」标签
                  textSize=14sp：字号；textColor=#FFDDDDDD：浅灰 -->
             <TextView

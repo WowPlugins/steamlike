@@ -311,7 +311,9 @@ data class KeyMapping( // 按键映射定义（语法：data class 数据类）
     val layerSwitchOnly: Boolean = false, // 短按「只切换层」（语法：默认参数 = false）
     val longPressLayerSwitchOnly: Boolean = false, // 长按「只切换层」
     /** 运行时标记：长按被当前层屏蔽（长按判定照常进行，但到阈值与松开时都不执行任何动作） */
-    val longPressBlocked: Boolean = false
+    val longPressBlocked: Boolean = false,
+    /** 该按键独立的长按判定阈值（毫秒）；null=沿用全局 [GlobalSettings.longPressThresholdMs] */
+    val longPressThresholdMs: Int? = null
 ) { // 数据类主体开始
     init { // 初始化块校验（语法：init 初始化块）
         require(subCommands.size <= MAX_SUB_COMMANDS) { // 校验子命令数量不超上限（语法：require 前置条件检查）
@@ -335,6 +337,7 @@ data class KeyMapping( // 按键映射定义（语法：data class 数据类）
         val lp = longPressAction // 取长按动作（局部变量便于智能转换）
         if (lp == null) return tapText.ifEmpty { "无" } // 无长按动作时只显示短按描述
         var longText = composeLabel(lp, longPressSubCommands) // 拼出长按动作描述（含长按子命令）
+        longPressThresholdMs?.let { longText += "(${it}ms)" } // 独立阈值时在长按动作后标注
         if (longPressLayerSwitchOnly) longText += "（只切换层）" // 长按开启「只切换层」时追加标记
         return "短按: ${tapText.ifEmpty { "未设置" }} ｜ 长按: $longText" // 分段展示，短按/长按一眼区分
     } // 结束 describe 函数
