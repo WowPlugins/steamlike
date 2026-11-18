@@ -166,6 +166,14 @@ class KeyboardMouseMapper( // 语法：class 类声明，定义键盘/鼠标映�
     private val layerMouseActionButtons = mutableMapOf<OperationLayer, MutableSet<ControllerButton>>() // 层 → 该层内操作过鼠标左右键的手柄按钮
 
     /**
+     * 在激活期间触发过「鼠标长按/锁定」类动作的操作层集合
+     *
+     * 只有这类层停用时才需要释放鼠标锁存：层内普通的鼠标点击
+     * （如 L2 层的方向键映射为左/右键点击）不能解除用户原本就有的右键锁定。
+     */
+    private val layerMouseLatchLayers = mutableSetOf<OperationLayer>() // 层内触发过鼠标锁存动作的层集合
+
+    /**
      * 当前按住「精细移动」映射的手柄按钮集合
      *
      * 集合非空即处于精细移动模式：右摇杆位移按 [FINE_MOVE_FACTOR] 缩小。
@@ -417,6 +425,7 @@ class KeyboardMouseMapper( // 语法：class 类声明，定义键盘/鼠标映�
         interactSequencePending = false // 取消交互键补点标记
         toggledMouseAt.clear() // 清空本地锁定时间记录
         layerMouseActionButtons.clear() // 清空「层 → 操作过鼠标左右键的按钮」记录
+        layerMouseLatchLayers.clear() // 清空「层内触发过鼠标锁存动作」记录
         fineMoveButtons.clear() // 清空精细移动按住记录
         fineMoveActive = false // 关闭精细移动标志
         fastMoveButtons.clear() // 清空快速移动按住记录
@@ -548,9 +557,9 @@ class KeyboardMouseMapper( // 语法：class 类声明，定义键盘/鼠标映�
             is MappedAction.NumpadKey -> handleKeyboardKey(button, true, action.keyCode, mapping.subCommands) // 数字小键盘动作：按键盘键注入（VK 映射到小键盘键）
             is MappedAction.MouseClick -> handleMouseClick(button, true, action.button) // 鼠标点击动作：按下鼠标按钮
             is MappedAction.MouseToggle -> handleMouseToggle(button, action.button) // 鼠标长按切换动作（仅在按下时到达此处）
-            is MappedAction.MouseSwapToggle -> handleMouseSwapToggle() // 鼠标长按交换动作：在左右键长按间交换
+            is MappedAction.MouseSwapToggle -> handleMouseSwapToggle(button) // 鼠标长按交换动作：在左右键长按间交换
             is MappedAction.MouseReleaseAll -> handleMouseReleaseAll() // 释放鼠标所有长按动作：解除全部长按锁存
-            is MappedAction.MouseRightLockToggle -> handleRightLockToggle() // 右键锁定切换动作：按当前状态锁定/解锁视角
+            is MappedAction.MouseRightLockToggle -> handleRightLockToggle(button) // 右键锁定切换动作：按当前状态锁定/解锁视角
             is MappedAction.MouseClickSequence -> handleMouseClickSequence() // 交互键动作：临时释放锁存→左键点击→右键点击→恢复锁存
             is MappedAction.MouseFineMove -> enterFineMove(button) // 精细移动动作：按住期间缩小右摇杆鼠标位移
             is MappedAction.MouseFastMove -> enterFastMove(button) // 快速移动动作：按住期间放大右摇杆鼠标位移
@@ -632,9 +641,9 @@ class KeyboardMouseMapper( // 语法：class 类声明，定义键盘/鼠标映�
     private fun injectInstantAction(button: ControllerButton, action: MappedAction) { // 语法：private fun 私有函数，触发瞬时动作（带按钮，用于记录层内鼠标动作）
         when (action) { // 按动作类型分发（语法：when 分支）
             is MappedAction.MouseToggle -> handleMouseToggle(button, action.button) // 鼠标长按锁存：切换锁存状态
-            is MappedAction.MouseSwapToggle -> handleMouseSwapToggle() // 鼠标长按交换：交换左右键锁存
+            is MappedAction.MouseSwapToggle -> handleMouseSwapToggle(button) // 鼠标长按交换：交换左右键锁存
             is MappedAction.MouseReleaseAll -> handleMouseReleaseAll() // 释放鼠标所有长按：解除全部锁存
-            is MappedAction.MouseRightLockToggle -> handleRightLockToggle() // 右键锁定切换：按当前状态锁定/解锁视角
+            is MappedAction.MouseRightLockToggle -> handleRightLockToggle(button) // 右键锁定切换：按当前状态锁定/解锁视角
             is MappedAction.MouseClickSequence -> handleMouseClickSequence() // 交互键：临时释放锁存后左右键依次点击
             is MappedAction.Turn180 -> turnByPixels(action.pixels, action.stepMs) // 定角转身：一次注入整段水平位移（长按/短按都走这里）
             is MappedAction.MouseScrollUp -> handleMouseScroll(SCROLL_DELTA) // 滚轮上滚：发送一次上滚
@@ -694,7 +703,15 @@ class KeyboardMouseMapper( // 语法：class 类声明，定义键盘/鼠标映�
         longPressTimers.remove(button) // 定时器已触发，移除记录
         val pending = deferredPresses[button] ?: return // 取出延迟按下上下文，已松开则返回（语法：?: 空值合并）
         val longAction = pending.mapping.longPressAction ?: return // 无长按动作（回退模式）则不注入
-        if (isHoldableAction(longAction)) { // 保持型动作
+        if (longAction is MappedAction.KeyboardKey || longAction is MappedAction.NumpadKey) { // 键盘/小键盘长按动作
+            // 阈值到达立即「点按」（按下+释放），不等手柄松开：
+            // 只注入按下时，游戏侧要等按键抬起才确认，表现为「松手才触发长按动作」。
+            if (pending.mapping.longPressLayerSwitchOnly && isOnlyLayerApplicable(longAction)) { // 长按动作开启「只切换层」
+                suppressLayerKeys(button, pending.layerName) // 先抬起本层切层键（点按内部的释放流程会恢复）
+            } // 结束「只切换层」判断
+            tapAction(button, longAction, pending.mapping.longPressSubCommands, pending.mapping.longPressLayerSwitchOnly) // 执行一次点按
+            longInstantFired.add(button) // 记为已触发，手柄松开时不再重复执行
+        } else if (isHoldableAction(longAction)) { // 其余保持型动作（切层/切层+按键/鼠标点击）
             if (pending.mapping.longPressLayerSwitchOnly && isOnlyLayerApplicable(longAction)) { // 长按动作开启「只切换层」
                 suppressLayerKeys(button, pending.layerName) // 先抬起本层切层键，使长按输出不叠加其按键（松开时在释放流程中恢复）
             } // 结束「只切换层」判断
@@ -981,7 +998,7 @@ class KeyboardMouseMapper( // 语法：class 类声明，定义键盘/鼠标映�
      * @param mouseButton 鼠标按钮
      */
     private fun handleMouseToggle(button: ControllerButton, mouseButton: MouseButton) { // 语法：private fun 私有函数，处理鼠标长按切换映射
-        markMouseActionLayer(button, mouseButton) // 记录当前激活层内长按过鼠标左右键（用于层停用时决定是否释放）
+        markMouseLatchLayer(button) // 记录当前激活层内触发过鼠标锁存动作（用于层停用时决定是否释放）
         val locked = toggledMouseButtons.contains(mouseButton) // 当前是否已锁存（语法：contains 集合包含判断）
         setMouseLockState(mouseButton, !locked) // 反转锁存状态——解除锁定必须在居中之前立即发出
         // 解除锁定时在解锁之后再居中：解锁报文立即发出（让游戏尽快退出 mouselook），
@@ -1003,7 +1020,8 @@ class KeyboardMouseMapper( // 语法：class 类声明，定义键盘/鼠标映�
      * 与「鼠标长按」共用全局锁存标志 [toggledMouseButtons]，交换后仍可由
      * 各自的长按映射键解锁（见 [handleMouseToggle]）。
      */
-    private fun handleMouseSwapToggle() { // 语法：private fun 私有函数，交换左右键的长按锁存状态
+    private fun handleMouseSwapToggle(button: ControllerButton) { // 语法：private fun 私有函数，交换左右键的长按锁存状态
+        markMouseLatchLayer(button) // 记录该层内触发过鼠标锁存类动作（层停用时才需要释放锁存）
         when { // 语法：when 无参数分支表达式，按条件匹配
             toggledMouseButtons.contains(MouseButton.RIGHT) -> { // 右键长按中 → 换成长按左键
                 setMouseLockState(MouseButton.RIGHT, false) // 释放右键（内部发送 F12 解锁）
@@ -1059,7 +1077,8 @@ class KeyboardMouseMapper( // 语法：class 类声明，定义键盘/鼠标映�
      * 各自独立解除：本地有锁存就发真实 MouseUp，远端有锁存就发 0x26 让客户端松开，
      * 不能只解其中一份，否则合并视图会一直停留在「锁定」。
      */
-    private fun handleRightLockToggle() { // 语法：private fun 私有函数，右键锁定切换
+    private fun handleRightLockToggle(button: ControllerButton) { // 语法：private fun 私有函数，右键锁定切换
+        markMouseLatchLayer(button) // 记录该层内触发过鼠标锁存类动作（层停用时才需要释放锁存）
         if (isMouseLocked(MouseButton.LEFT)) { // 左键锁存中：什么也不做
             Log.d(TAG, "RightLockToggle: left button locked, ignored") // 打印忽略日志
             return // 直接返回
@@ -1187,9 +1206,10 @@ class KeyboardMouseMapper( // 语法：class 类声明，定义键盘/鼠标映�
         toggledMouseButtons.contains(button) || remoteLockedButtons.contains(button) // 合并两套锁存
 
     /**
-     * 记录当前激活的操作层「触发过鼠标左右键动作」的手柄按钮
+     * 记录当前激活的操作层「按下过鼠标点击」的手柄按钮
      *
-     * 仅在鼠标按钮为左键/右键时记录，供 [releaseMouseStateOnLayerDeactivated] 判断与释放。
+     * 仅在鼠标按钮为左键/右键时记录，供 [releaseMouseStateOnLayerDeactivated]
+     * 在层停用时补发 MouseUp。
      *
      * @param button 手柄按钮
      * @param mouseButton 鼠标按钮
@@ -1202,40 +1222,54 @@ class KeyboardMouseMapper( // 语法：class 类声明，定义键盘/鼠标映�
     } // 结束 markMouseActionLayer 函数
 
     /**
+     * 记录当前激活的操作层「触发过鼠标长按/锁定类动作」
+     *
+     * 层停用时只对这类层释放鼠标锁存；仅点击鼠标的层不会解散用户原有的锁定。
+     *
+     * @param button 触发锁存动作的手柄按钮
+     */
+    private fun markMouseLatchLayer(button: ControllerButton) { // 语法：private fun 私有函数
+        steamInput.getActiveLayers().forEach { layer -> layerMouseLatchLayers.add(layer) } // 记录所有当前激活层
+    } // 结束 markMouseLatchLayer 函数
+
+    /**
      * 操作层停用时按条件释放鼠标左右键状态
      *
-     * 只有当该层在激活期间确实点击或长按过鼠标左键/右键时才释放：
      * - 该层内按下过鼠标点击的按钮 → 立即补发 MouseUp（不必等手柄键松开，
      *   因为该手柄键松开时可能已查不到该层映射，导致鼠标一直卡在按下态）；
-     * - 该层内操作过鼠标长按 → 释放所有左右键长按锁存（先解锁、后居中）；
-     * - 只是按下切层键、未操作过鼠标左右键 → 不释放，保留用户原有的鼠标状态。
+     * - 该层内触发过鼠标长按/锁定类动作 → 释放所有左右键长按锁存（先解锁、后居中）；
+     * - 只是在层内点了普通鼠标键（如方向键映射左/右键点击）→ 只补发 MouseUp，
+     *   **不解除**用户原有的右键锁定；
+     * - 只是按下切层键、未操作过鼠标 → 不释放，保留用户原有的鼠标状态。
      *
      * @param layer 被停用的操作层；null 表示一次性停用全部层（切换操作集/销毁）
      */
     private fun releaseMouseStateOnLayerDeactivated(layer: OperationLayer?) { // 语法：private fun 私有函数，按条件释放鼠标状态
-        val buttons = if (layer == null) { // 语法：if 表达式，区分单层停用与全部停用
-            if (layerMouseActionButtons.isEmpty()) emptySet() // 无任何层记录
-            else { // 有层记录
-                val all = layerMouseActionButtons.values.flatten().toSet() // 汇总所有按钮
-                layerMouseActionButtons.clear() // 清空记录
-                all // 返回汇总结果
-            } // 结束记录判断
+        val clickButtons: Set<ControllerButton> // 该层内按下过鼠标点击的按钮（需要补发松开）
+        val latched: Boolean // 该层内是否触发过鼠标长按/锁定类动作
+        if (layer == null) { // 语法：if 表达式，区分单层停用与全部停用
+            clickButtons = layerMouseActionButtons.values.flatten().toSet() // 汇总所有按钮
+            layerMouseActionButtons.clear() // 清空记录
+            latched = layerMouseLatchLayers.isNotEmpty() // 任一锁存记录即需释放
+            layerMouseLatchLayers.clear() // 清空锁存记录
         } else { // 单层停用
-            layerMouseActionButtons.remove(layer) ?: emptySet() // 取出该层按钮记录（无则空集合）
+            clickButtons = layerMouseActionButtons.remove(layer) ?: emptySet() // 取出该层按钮记录（无则空集合）
+            latched = layerMouseLatchLayers.remove(layer) // 该层是否触发过锁存动作
         } // 结束 if 表达式
-        if (buttons.isEmpty()) { // 该层未操作过鼠标左右键
-            Log.d(TAG, "Layer deactivated: no mouse click in layer, skip release") // 打印跳过日志
+        if (clickButtons.isEmpty() && !latched) { // 该层未操作过鼠标左右键、也未触发锁存
+            Log.d(TAG, "Layer deactivated: no mouse action in layer, skip release") // 打印跳过日志
             return // 直接返回，不释放鼠标状态
         } // 结束未触发判断
         // 1. 立即补发该层内鼠标点击的松开事件（避免卡在按下态）
-        buttons.forEach { button -> // 遍历该层内操作过鼠标的按钮
+        clickButtons.forEach { button -> // 遍历该层内操作过鼠标的按钮
             pressedMouseButtons.remove(button)?.let { mouseButton -> // 取出并移除按下记录
                 injector.sendMouseUp(mouseButton) // 补发鼠标松开
                 Log.i(TAG, "Layer deactivated: force MouseUp $mouseButton ($button)") // 打印强制松开日志
             } // 结束按下记录判断
         } // 结束遍历
-        // 2. 释放该层内长按锁存的左右键（先解锁、后居中）
-        if (toggledMouseButtons.isNotEmpty()) handleMouseReleaseAll() // 有长按锁存才释放
+        // 2. 仅当该层内确实触发过鼠标长按/锁定类动作时才释放锁存
+        //    （层内普通点击，如 L2 层的方向键点击左/右键，不能解除用户原有的右键锁定）
+        if (latched && toggledMouseButtons.isNotEmpty()) handleMouseReleaseAll() // 有长按锁存才释放
     } // 结束 releaseMouseStateOnLayerDeactivated 函数
 
     /**
