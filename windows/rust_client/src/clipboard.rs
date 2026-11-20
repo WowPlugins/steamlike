@@ -10,10 +10,11 @@
 //! 并且同一内容只会处理一次，天然去重。
 
 use std::io::Write;
-use std::sync::atomic::{AtomicU32, Ordering};
+use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
+use std::sync::Mutex;
 use std::time::Duration;
 
-use windows::Win32::System::SystemInformation::GetLocalTime;
+use windows::Win32::System::SystemInformation::{GetLocalTime, GetTickCount64};
 use winapi::um::winbase::{GlobalAlloc, GlobalFree, GlobalLock, GlobalUnlock, GMEM_MOVEABLE};
 use winapi::um::winuser::{
     CloseClipboard, EmptyClipboard, GetClipboardData, GetClipboardSequenceNumber, OpenClipboard,
@@ -26,6 +27,25 @@ use crate::runtime::{self, RT};
 
 /// 本程序自己写入剪贴板后的序列号（轮询线程跳过，避免把注入的中文当成游戏复制内容回传手机）
 static OWN_SEQ: AtomicU32 = AtomicU32::new(0);
+
+/// 本程序自己写入剪贴板的文本内容
+///
+/// Winlator 的共享剪贴板会周期性回环，序列号不断变化而内容还是刚才注入的中文，
+/// 只靠 [OWN_SEQ] 挡不住（回环产生的新序列号不等于写入瞬间的序列号）。
+/// 因此额外按内容识别：轮询读到的文本与这里记录的一致时直接跳过，
+/// 避免把软键盘输入的中文当成「游戏里复制」发回手机、触发系统的剪贴板提示。
+static OWN_TEXT: Mutex<Option<String>> = Mutex::new(None);
+
+/// 自己写入剪贴板后的抑制截止时刻（毫秒）
+///
+/// Winlator 的共享剪贴板会在写入后几秒内回写/改写剪贴板，期间产生的控制字符等
+/// 垃圾内容不能当成「游戏复制」发回手机；这段时间内的剪贴板变化一律跳过。
+static SUPPRESS_UNTIL: AtomicU64 = AtomicU64::new(0);
+
+/// 当前系统运行毫秒数（单调递增，用于抑制时间窗）
+fn now_ms() -> u64 {
+    unsafe { GetTickCount64() }
+}
 
 /// 把文本写入 Windows 剪贴板（用于 APK 软键盘输入中文后粘贴进游戏）
 pub fn write_text(text: &str) -> bool {
@@ -58,6 +78,10 @@ pub fn write_text(text: &str) -> bool {
         CloseClipboard();
         // 记下写入后的序列号，让轮询线程跳过这次变化
         OWN_SEQ.store(GetClipboardSequenceNumber(), Ordering::SeqCst);
+        // 同时记下内容：Winlator 回环会改序列号但内容不变，需要按内容再挡一次
+        *OWN_TEXT.lock().unwrap() = Some(text.trim().to_string());
+        // 写入后的一小段时间内屏蔽剪贴板同步，挡住 Winlator 回写产生的垃圾内容
+        SUPPRESS_UNTIL.store(now_ms() + 8000, Ordering::Relaxed);
         true
     }
 }
@@ -96,6 +120,12 @@ fn thread_main() {
             last_seq = seq;
             continue;
         }
+        // 刚写入剪贴板后的抑制期：Winlator 共享剪贴板的回写会在这段时间改写内容，
+        // 这些变化都不是用户在游戏里复制的文本
+        if now_ms() < SUPPRESS_UNTIL.load(Ordering::Relaxed) {
+            last_seq = seq;
+            continue;
+        }
         // 开关关闭时记录序列号但不处理，保证重新开启后不会补发关闭期间的内容
         if !RT.clipboard_sync.load(Ordering::Relaxed) {
             last_seq = seq;
@@ -107,6 +137,17 @@ fn thread_main() {
         last_seq = seq;
         let trimmed = text.trim();
         if trimmed.is_empty() {
+            continue;
+        }
+        // 剪贴板回环产生的控制字符（如 0x02）和转码失败的问号串不是用户复制的内容，
+        // 同步回手机只会触发系统的剪贴板提示，直接跳过
+        if !is_syncable(trimmed) {
+            continue;
+        }
+        // 自己刚写入的文本（软键盘中文粘贴用）：Winlator 共享剪贴板回环会改变序列号、
+        // 内容却还是这段中文，按内容跳过，避免把它当成游戏复制内容发回手机
+        if OWN_TEXT.lock().unwrap().as_deref() == Some(trimmed) {
+            last_text = Some(trimmed.to_string());
             continue;
         }
         // 内容与上次已同步的文本相同 → 视为序列号抖动或回环（手机写回剪贴板后被 Winlator 同步回来），直接跳过
@@ -129,6 +170,14 @@ fn thread_main() {
             }
         ));
     }
+}
+
+/// 文本是否值得同步到手机
+///
+/// Winlator 的剪贴板回环会把控制字符（如 0x02）和转码失败的问号串塞进剪贴板，
+/// 这些不是用户复制的内容，同步回手机只会触发系统的剪贴板提示。
+fn is_syncable(text: &str) -> bool {
+    text.chars().any(|c| !c.is_control() && c != '?' && c != '\u{FFFD}')
 }
 
 /// 读取剪贴板的 Unicode 文本；剪贴板中没有文本时返回 None

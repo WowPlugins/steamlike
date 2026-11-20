@@ -104,14 +104,123 @@ fn send(inputs: &[INPUT]) {
     }
 }
 
-/// 通过剪贴板把文本粘贴进游戏
+/// 判断窗口是否是 WoW 主窗口（类名 `GxWindowClass`）
+fn is_game_window(hwnd: HWND) -> bool {
+    if hwnd.0 == 0 {
+        return false;
+    }
+    let mut buf = [0u16; 64];
+    let n = unsafe { GetClassNameW(hwnd, &mut buf) };
+    n > 0 && String::from_utf16_lossy(&buf[..n as usize]) == "GxWindowClass"
+}
+
+/// 取游戏窗口：前台窗口优先，其次按类名全局查找，最后按游戏进程 PID 兜底
 ///
-/// WoW 3.3.5 的中文界面按本地代码页处理输入，用 `KEYEVENTF_UNICODE` 直接注入汉字
-/// 会显示成乱码；改为「写入剪贴板 + Ctrl+V」，与 Winlator 自带键盘打字的效果一致。
+/// Winlator 的 Wine 里窗口类名不一定保留 `GxWindowClass`，所以类名找不到时
+/// 用内存扫描模块已连接的游戏进程 PID 枚举可见窗口（含虚拟桌面的子窗口）。
+fn game_window() -> Option<HWND> {
+    unsafe {
+        let foreground = GetForegroundWindow();
+        if is_game_window(foreground) {
+            return Some(foreground);
+        }
+        let found = FindWindowW(w!("GxWindowClass"), PCWSTR::null());
+        if found.0 != 0 {
+            return Some(found);
+        }
+        let pid = crate::wowmem::game_pid();
+        if pid == 0 {
+            return None;
+        }
+        SEARCH_PID.store(pid as u64, Ordering::Relaxed);
+        SEARCH_HWND.store(0, Ordering::Relaxed);
+        let _ = EnumWindows(Some(find_visible_by_pid), LPARAM(0));
+        if SEARCH_HWND.load(Ordering::Relaxed) == 0 {
+            // 虚拟桌面模式下游戏窗口是 desktop 窗口的子窗口，再枚举一层
+            let _ = EnumWindows(Some(find_child_by_pid), LPARAM(0));
+        }
+        let hwnd = HWND(SEARCH_HWND.load(Ordering::Relaxed) as isize);
+        if hwnd.0 == 0 {
+            return None;
+        }
+        log_window_once(hwnd);
+        Some(hwnd)
+    }
+}
+
+/// 按 PID 匹配可见窗口时传递 pid 与结果
+static SEARCH_PID: AtomicU64 = AtomicU64::new(0);
+static SEARCH_HWND: AtomicU64 = AtomicU64::new(0);
+
+unsafe extern "system" fn find_visible_by_pid(hwnd: HWND, _: LPARAM) -> BOOL {
+    let mut pid = 0u32;
+    let _ = GetWindowThreadProcessId(hwnd, Some(&mut pid));
+    if pid as u64 == SEARCH_PID.load(Ordering::Relaxed) && IsWindowVisible(hwnd).as_bool() {
+        SEARCH_HWND.store(hwnd.0 as u64, Ordering::Relaxed);
+        return BOOL(0); // 找到即停止枚举
+    }
+    BOOL(1)
+}
+
+unsafe extern "system" fn find_child_by_pid(hwnd: HWND, _: LPARAM) -> BOOL {
+    let _ = EnumChildWindows(hwnd, Some(find_visible_by_pid), LPARAM(0));
+    if SEARCH_HWND.load(Ordering::Relaxed) != 0 {
+        BOOL(0)
+    } else {
+        BOOL(1)
+    }
+}
+
+/// 首次按 PID 找到窗口时记录类名与标题，便于确认投递目标
+fn log_window_once(hwnd: HWND) {
+    static LOGGED: AtomicBool = AtomicBool::new(false);
+    if LOGGED.swap(true, Ordering::Relaxed) {
+        return;
+    }
+    let mut class = [0u16; 64];
+    let n = unsafe { GetClassNameW(hwnd, &mut class) }.max(0) as usize;
+    let mut title = [0u16; 128];
+    let t = unsafe { GetWindowTextW(hwnd, &mut title) }.max(0) as usize;
+    log(format!(
+        "[键盘] 输入目标窗口：类名={} 标题={}",
+        String::from_utf16_lossy(&class[..n]),
+        String::from_utf16_lossy(&title[..t])
+    ));
+}
+
+/// 直接向游戏窗口投递 `WM_CHAR`，把 Unicode 文本送进聊天框
+///
+/// 真实的中文输入法也是通过 `WM_CHAR` 把字符交给 WoW 的，这条路径完全不碰剪贴板：
+/// 既不会让 Winlator 的共享剪贴板把内容同步回手机、触发系统剪贴板提示，
+/// 也不受 Wine 剪贴板粘贴时序的影响。
+///
+/// 返回 false 表示没找到游戏窗口（未启动游戏），由调用方决定是否回退。
+fn type_text(text: &str) -> bool {
+    let Some(hwnd) = game_window() else {
+        return false;
+    };
+    for unit in text.encode_utf16() {
+        // lParam 低 16 位是重复计数，填 1 更接近真实键盘消息
+        if unsafe { PostMessageW(hwnd, WM_CHAR, WPARAM(unit as usize), LPARAM(1)) }.is_err() {
+            return false;
+        }
+    }
+    true
+}
+
+/// 把文本输入游戏
+///
+/// 优先直接投递 `WM_CHAR`；只有找不到游戏窗口时才回退到「写剪贴板 + Ctrl+V」。
+/// 回退路径会让 Winlator 把剪贴板内容同步回手机，尽量少走。
 pub fn paste_text(text: &str) {
     if text.is_empty() {
         return;
     }
+    if type_text(text) {
+        log(format!("[键盘] 已直接输入文本 {} 字节", text.len()));
+        return;
+    }
+    log("[键盘] 未找到游戏窗口，改用剪贴板粘贴");
     if !crate::clipboard::write_text(text) {
         return;
     }

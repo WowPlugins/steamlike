@@ -260,8 +260,8 @@ fn pump(stream: &mut TcpStream, buf: &mut Vec<u8>) -> bool {
                     buf.drain(..PACKET_SIZE + len);
                     let text = String::from_utf8_lossy(&body).to_string();
                     if !text.is_empty() {
+                        // 具体走了 WM_CHAR 还是剪贴板粘贴，由 win::paste_text 内部记录
                         win::paste_text(&text);
-                        runtime::log(format!("[键盘] 已粘贴文本 {} 字节", text.len()));
                     }
                     continue;
                 }

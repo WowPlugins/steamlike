@@ -300,6 +300,8 @@ class ControllerOverlayService : Service() {  // class=类声明；继承 Servic
     /** 展开面板中的手机电量文本视图 */
     private var phoneBatteryText: TextView? = null  // ?=可空类型；手机电量文本视图
     private val mainHandler = android.os.Handler(android.os.Looper.getMainLooper())  // val=只读变量；主线程消息处理器，用于跨线程回主线程更新 UI
+    /** 上次写入系统剪贴板的文本（仅主线程读写）：后台应用读取剪贴板会被系统拒绝，只能用本地记录去重 */
+    private var lastSyncedClipboardText: String? = null
 
     /**
      * 手柄电量定时刷新任务
@@ -549,11 +551,13 @@ class ControllerOverlayService : Service() {  // class=类声明；继承 Servic
                 bridgeServer?.onClipboardText = { text ->  // ?.=安全调用；收到 Windows 客户端的剪贴板文本
                     if (text.isNotEmpty()) {  // 空文本忽略（客户端不会主动发空文本，这里仅防御）
                         mainHandler.post {  // 回到主线程写入系统剪贴板
-                            val clipboard = getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager  // 获取系统剪贴板服务
-                            // 内容已相同则不再重写，避免 Winlator 回环同步时反复触发系统的剪贴板/选区提示
-                            val current = clipboard.primaryClip?.getItemAt(0)?.text?.toString()  // 读取当前剪贴板文本（无权限时可能为 null）
-                            if (current != text) {  // 仅内容不同才写入
+                            // 内容与上次写入相同则不再重写，避免 Winlator 回环同步时反复触发系统的剪贴板提示。
+                            // 不能读系统剪贴板做比较：应用不在前台时读取会被系统拒绝（返回 null），
+                            // 去重会永远失效，于是每次同步都写一遍、每次都弹提示
+                            if (text != lastSyncedClipboardText) {  // 仅内容不同才写入
+                                val clipboard = getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager  // 获取系统剪贴板服务
                                 clipboard.setPrimaryClip(ClipData.newPlainText("WoW 剪贴板", text))  // 把文本写入 Android 剪贴板
+                                lastSyncedClipboardText = text  // 记录本次写入的文本用于去重
                             }  // 结束内容比较
                         }  // 结束 post lambda
                         Log.i(TAG, "已同步 Windows 剪贴板文本：${text.length} 字符")  // 打印同步日志（不打印正文，避免日志过长）
