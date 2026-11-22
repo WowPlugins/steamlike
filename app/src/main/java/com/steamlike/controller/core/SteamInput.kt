@@ -684,6 +684,10 @@ class SteamInput(context: Context) { // 主控制器类（语法：class 声明�
      * [ControllerButton.RIGHT_TRIGGER_CLICK] 按下事件，低于阈值触发释放。
      * 使用 [l2Pressed]/[r2Pressed] 状态避免重复触发。
      *
+     * 与 KeyEvent 通道一样经 [dispatchButtonEvent] 派发：扳机轴在阈值附近抖动、
+     * 或与按到底的 KEYCODE_BUTTON_L2/R2 键事件同时上报时，松手去抖可吸收
+     * 30ms 内的重复按下/松开，避免一次点击触发两次映射动作（如两次 Tab）。
+     *
      * ## 快速扳机（霍尔扳机 0↔255 直跳）适配
      * 手柄 App 设为"快速扳机"后，扳机轴只在 0 和满值间跳变，没有中间值；
      * Android 会把高频的多次轴采样合并进同一个 [MotionEvent]（含历史采样）。
@@ -709,10 +713,10 @@ class SteamInput(context: Context) { // 主控制器类（语法：class 声明�
         l2Values.forEach { value -> // 遍历 L2 采样序列
             if (value >= TRIGGER_CLICK_THRESHOLD && !l2Pressed) { // L2 超过阈值且未按下则触发按下
                 l2Pressed = true // 标记 L2 已按下
-                handleButtonEvent(ControllerButton.LEFT_TRIGGER_CLICK, isPressed = true) // 触发左扳机点击按下
+                dispatchButtonEvent(ControllerButton.LEFT_TRIGGER_CLICK, isPressed = true) // 触发左扳机点击按下
             } else if (value < TRIGGER_CLICK_THRESHOLD && l2Pressed) { // L2 低于阈值且已按下则触发释放
                 l2Pressed = false // 标记 L2 已释放
-                handleButtonEvent(ControllerButton.LEFT_TRIGGER_CLICK, isPressed = false) // 触发左扳机点击释放
+                dispatchButtonEvent(ControllerButton.LEFT_TRIGGER_CLICK, isPressed = false) // 触发左扳机点击释放
             } // 结束 L2 采样判断
         } // 结束 L2 采样遍历
 
@@ -720,10 +724,10 @@ class SteamInput(context: Context) { // 主控制器类（语法：class 声明�
         r2Values.forEach { value -> // 遍历 R2 采样序列
             if (value >= TRIGGER_CLICK_THRESHOLD && !r2Pressed) { // R2 超过阈值且未按下则触发按下
                 r2Pressed = true // 标记 R2 已按下
-                handleButtonEvent(ControllerButton.RIGHT_TRIGGER_CLICK, isPressed = true) // 触发右扳机点击按下
+                dispatchButtonEvent(ControllerButton.RIGHT_TRIGGER_CLICK, isPressed = true) // 触发右扳机点击按下
             } else if (value < TRIGGER_CLICK_THRESHOLD && r2Pressed) { // R2 低于阈值且已按下则触发释放
                 r2Pressed = false // 标记 R2 已释放
-                handleButtonEvent(ControllerButton.RIGHT_TRIGGER_CLICK, isPressed = false) // 触发右扳机点击释放
+                dispatchButtonEvent(ControllerButton.RIGHT_TRIGGER_CLICK, isPressed = false) // 触发右扳机点击释放
             } // 结束 R2 采样判断
         } // 结束 R2 采样遍历
     } // 结束 handleTriggerAxis 函数
@@ -769,7 +773,7 @@ class SteamInput(context: Context) { // 主控制器类（语法：class 声明�
     /**
      * 派发按钮事件（带松手去抖）
      *
-     * 所有按键通道（KeyEvent / D-Pad HAT 轴）统一走这里：
+     * 所有按键通道（KeyEvent / D-Pad HAT 轴 / 扳机轴）统一走这里：
      * - 按下：立即生效；若此前有未确认的松开，取消它（视为同一次按住）
      * - 松开：延后 [RELEASE_DEBOUNCE_MS] 确认，窗口内重新按下则忽略这次松开
      *
