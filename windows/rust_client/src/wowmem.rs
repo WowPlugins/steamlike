@@ -329,6 +329,34 @@ fn probe_alive(h: HANDLE) -> bool {
     }
 }
 
+/// 查找游戏进程 PID（找不到返回 0）
+///
+/// 供窗口枚举兜底使用：Winlator 虚拟桌面里游戏窗口不一定属于前台进程，
+/// 需要按 PID 匹配可见窗口才能把文本投递进去。
+pub fn game_pid() -> u32 {
+    let expected = TARGET.lock().unwrap().clone();
+    unsafe {
+        let Ok(snapshot) = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0) else {
+            return 0;
+        };
+        let mut entry = PROCESSENTRY32W::default();
+        entry.dwSize = size_of::<PROCESSENTRY32W>() as u32;
+        let mut ok = Process32FirstW(snapshot, &mut entry).is_ok();
+        while ok {
+            let name = String::from_utf16_lossy(&entry.szExeFile)
+                .trim_end_matches('\0')
+                .to_ascii_lowercase();
+            if name == "wow.exe" || expected.as_deref() == Some(name.as_str()) {
+                let _ = CloseHandle(snapshot);
+                return entry.th32ProcessID;
+            }
+            ok = Process32NextW(snapshot, &mut entry).is_ok();
+        }
+        let _ = CloseHandle(snapshot);
+        0
+    }
+}
+
 /// 打开游戏进程（默认按 `wow.exe` 匹配，同时接受配置里指定的文件名）
 fn open_wow(expected: Option<&str>) -> Option<HANDLE> {
     unsafe {

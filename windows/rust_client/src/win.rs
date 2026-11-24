@@ -6,14 +6,15 @@
 
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use windows::core::{w, PCWSTR};
-use windows::Win32::Foundation::{BOOL, HWND, LPARAM, POINT, RECT};
+use windows::Win32::Foundation::{BOOL, HWND, LPARAM, POINT, RECT, WPARAM};
 use windows::Win32::Graphics::Gdi::{CreateRoundRectRgn, DeleteObject, SetWindowRgn};
 use windows::Win32::System::Threading::GetCurrentProcessId;
 use windows::Win32::UI::Input::KeyboardAndMouse::*;
 use windows::Win32::UI::WindowsAndMessaging::{
-    EnumWindows, FindWindowW, GetCursorPos, GetSystemMetrics, GetWindowRect, GetWindowThreadProcessId,
-    IsWindowVisible, SetCursorPos, SetWindowPos, SetWindowTextW, HWND_TOPMOST, SM_CXSCREEN,
-    SM_CYSCREEN, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOZORDER, SWP_NOSIZE,
+    EnumChildWindows, EnumWindows, FindWindowW, GetClassNameW, GetCursorPos, GetForegroundWindow,
+    GetSystemMetrics, GetWindowRect, GetWindowTextW, GetWindowThreadProcessId, IsWindowVisible,
+    PostMessageW, SetCursorPos, SetWindowPos, SetWindowTextW, HWND_TOPMOST, SM_CXSCREEN,
+    SM_CYSCREEN, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOZORDER, SWP_NOSIZE, WM_CHAR,
 };
 
 use crate::runtime::{log, pack_pos, unpack_pos, CURSOR_UNSET, RT};
