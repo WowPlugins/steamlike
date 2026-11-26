@@ -11,7 +11,7 @@ android {  // 语法：android{} 块，Android 应用模块的配置入口
         minSdk = 24  // 语法：minSdk 最低支持 Android 版本（Android 7.0）
         targetSdk = 37  // 语法：targetSdk 目标 Android 版本（37，决定系统兼容行为）
         versionCode = 1  // 内部版本号（整数，用于版本比较/升级判断）
-        versionName = "0.1.163"  // 对外显示的版本名称
+        versionName = "0.1.164"  // 对外显示的版本名称
 
         // Rust 客户端期望版本（取自 Cargo.toml，只在 Rust 代码/依赖改动时才会变化）
         // APK 用它和 Windows 客户端上报的 exe 版本比对，不一致时提示重新导出客户端
@@ -104,10 +104,34 @@ tasks.register("compileWindowsExe") {  // 语法：tasks.register("任务名"){.
     outputs.files(outputExe, assetsExe)  // 输出：exe 归档与 assets 副本
 
     doLast {  // 语法：doLast{} 块，任务执行阶段的末尾执行其中代码（真正干活的动作）
+        // 在字节数组中查找子序列：release 二进制里嵌有 env!("CARGO_PKG_VERSION") 字符串，
+        // 用它判断 assets 中的 exe 是否由当前 Cargo.toml 版本编译而来
+        fun ByteArray.indexOfSequence(target: ByteArray): Int {
+            if (target.isEmpty() || target.size > size) return -1
+            for (i in 0..size - target.size) {
+                var matched = true
+                for (j in target.indices) {
+                    if (this[i + j] != target[j]) { matched = false; break }
+                }
+                if (matched) return i
+            }
+            return -1
+        }
+
         // 1. 编译 exe（cargo 可用时）
         if (cargoPath == null || !cargoPath.exists() || !manifestFile.exists()) {  // 语法：if 条件分支；未找到 cargo 或 Rust 工程缺失
             // 警告日志：跳过 exe 编译，沿用 assets 中已有的 inputbridge_client.exe
             logger.warn("cargo or windows/rust_client not found, skipping Windows exe build. Using existing assets/inputbridge_client.exe")
+            // 沿用旧 exe 时校验版本：找不到 Cargo.toml 的版本字符串，说明 exe 不是当前源码编译的
+            val expected = if (manifestFile.exists())
+                Regex("(?m)^version\\s*=\\s*\"([^\"]+)\"").find(manifestFile.readText())?.groupValues?.get(1)
+            else null
+            if (expected != null && assetsExe.exists()) {
+                val needle = expected.toByteArray()
+                if (assetsExe.readBytes().indexOfSequence(needle) < 0) {
+                    logger.warn("assets/inputbridge_client.exe 中找不到 Cargo.toml 版本 $expected：exe 可能已过期。请安装 cargo 后重新构建，或把新编译的 exe 复制到 assets。")
+                }
+            }
         } else {  // 否则（找到了可用的 cargo 且工程存在）
             logger.lifecycle("Building Windows exe with: ${cargoPath.absolutePath}")  // 输出生命周期日志：正在使用哪个 cargo 编译
 

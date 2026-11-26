@@ -33,7 +33,32 @@ use std::time::Duration;
 use crate::runtime::{self, log, set_status, BRIDGE_TARGET, CONNECTED, RT, WANT_CONNECT};
 use crate::win::{self, BTN_LEFT, BTN_RIGHT};
 
-const PACKET_SIZE: usize = 8;
+pub const PACKET_SIZE: usize = 8;
+
+// ===== 消息类型 =====
+// 与 Android 端 `InputBridgeServer.MSG_*` 及 `docs/protocol.md` 一一对应。
+// 修改协议时三处必须同时更新（见 docs/protocol.md「修改协议时」）。
+pub const MSG_KEY_EVENT: u8 = 0x01;
+pub const MSG_MOUSE_MOVE: u8 = 0x02;
+pub const MSG_MOUSE_BUTTON: u8 = 0x03;
+pub const MSG_MOUSE_WHEEL: u8 = 0x04;
+pub const MSG_RELEASE_ALL: u8 = 0x05;
+pub const MSG_PING: u8 = 0x06;
+pub const MSG_MOUSE_CENTER: u8 = 0x07;
+pub const MSG_MOUSE_CENTER_EXACT: u8 = 0x08;
+pub const MSG_CURSOR_SAVE: u8 = 0x09;
+pub const MSG_CURSOR_RESTORE: u8 = 0x0A;
+pub const MSG_TIME_SYNC: u8 = 0x0B;
+pub const MSG_VERSION: u8 = 0x0C;
+pub const MSG_RUST_VERSION: u8 = 0x0D;
+pub const MSG_CLIENT_VERSION: u8 = 0x20;
+pub const MSG_CLIPBOARD_TEXT: u8 = 0x21;
+pub const MSG_UNICODE_TEXT: u8 = 0x22;
+pub const MSG_TOGGLE_KEYBOARD: u8 = 0x23;
+pub const MSG_SHOW_KEYBOARD: u8 = 0x25;
+pub const MSG_UNLOCK_MOUSE: u8 = 0x26;
+pub const MSG_MAPPED_KEY: u8 = 0x27;
+pub const MSG_LOCK_STATE: u8 = 0x28;
 
 /// 待发送的剪贴板文本包队列（剪贴板线程投递，网络线程取走）
 static OUTBOX: Mutex<Vec<Vec<u8>>> = Mutex::new(Vec::new());
@@ -49,7 +74,7 @@ pub fn send_toggle_keyboard() {
         return;
     }
     let mut packet = [0u8; PACKET_SIZE];
-    packet[0] = 0x23;
+    packet[0] = MSG_TOGGLE_KEYBOARD;
     if let Ok(mut queue) = OUTBOX.lock() {
         queue.push(packet.to_vec());
     }
@@ -64,7 +89,7 @@ pub fn send_show_keyboard() {
         return;
     }
     let mut packet = [0u8; PACKET_SIZE];
-    packet[0] = 0x25;
+    packet[0] = MSG_SHOW_KEYBOARD;
     if let Ok(mut queue) = OUTBOX.lock() {
         queue.push(packet.to_vec());
     }
@@ -81,7 +106,7 @@ fn send_lock_state(right_locked: bool, left_locked: bool, wasd_suspend: bool) {
         return;
     }
     let mut packet = [0u8; PACKET_SIZE];
-    packet[0] = 0x28;
+    packet[0] = MSG_LOCK_STATE;
     packet[1] = right_locked as u8;
     packet[2] = left_locked as u8;
     packet[3] = wasd_suspend as u8;
@@ -101,7 +126,7 @@ pub fn send_text(text: &str) {
     let bytes = text.as_bytes();
     let mut packet = Vec::with_capacity(PACKET_SIZE + bytes.len());
     let mut head = [0u8; PACKET_SIZE];
-    head[0] = 0x21;
+    head[0] = MSG_CLIPBOARD_TEXT;
     head[1..5].copy_from_slice(&(bytes.len() as u32).to_le_bytes());
     packet.extend_from_slice(&head);
     packet.extend_from_slice(bytes);
@@ -130,7 +155,7 @@ fn flush_outbox(stream: &mut TcpStream) -> bool {
 /// 注意这里用编译期版本（Cargo.toml），不是运行时读取的 version.txt。
 fn client_version_packet() -> [u8; PACKET_SIZE] {
     let mut packet = [0u8; PACKET_SIZE];
-    packet[0] = 0x20;
+    packet[0] = MSG_CLIENT_VERSION;
     for (i, part) in env!("CARGO_PKG_VERSION").split('.').take(3).enumerate() {
         packet[1 + i] = part.parse::<u8>().unwrap_or(0);
     }
@@ -251,7 +276,7 @@ fn pump(stream: &mut TcpStream, buf: &mut Vec<u8>) -> bool {
             buf.extend_from_slice(&tmp[..n]);
             while buf.len() >= PACKET_SIZE {
                 // 变长包（0x22 Unicode 文本）：8 字节头 + 正文，正文长度写在 Byte4..7
-                if buf[0] == 0x22 {
+                if buf[0] == MSG_UNICODE_TEXT {
                     let len = u32::from_le_bytes([buf[4], buf[5], buf[6], buf[7]]) as usize;
                     if buf.len() < PACKET_SIZE + len {
                         break; // 正文还没到齐，等下一次读取
@@ -288,13 +313,13 @@ fn is_button_locked(button: u8) -> bool {
 
 fn process_packet(data: &[u8; PACKET_SIZE]) {
     match data[0] {
-        0x01 => {
+        MSG_KEY_EVENT => {
             let vk = u16::from_le_bytes([data[1], data[2]]);
             win::inject_key(vk, data[3] != 0);
             // 键盘事件不再逐包 sleep：整段文本已改走 0x22 一次性提交，
             // 这里只剩控制键/映射按键等稀疏事件，4ms 延时只会增加可感知的输入延迟
         }
-        0x27 => {
+        MSG_MAPPED_KEY => {
             // APK 键位映射产生的按键：不带 MAGIC 标记，本地按键映射可再次命中。
             // 长按期间 APK 可能连发同一个 down，这里做按下状态去重：重复的 down
             // 不再注入，否则钩子会把它当成新的按键事件重复触发映射与「恢复」逻辑。
@@ -310,12 +335,12 @@ fn process_packet(data: &[u8; PACKET_SIZE]) {
             drop(guard);
             win::inject_key_ex(vk, down, 0);
         }
-        0x02 => {
+        MSG_MOUSE_MOVE => {
             let dx = i16::from_le_bytes([data[1], data[2]]) as i32;
             let dy = i16::from_le_bytes([data[3], data[4]]) as i32;
             win::inject_mouse_move(dx, dy);
         }
-        0x03 => {
+        MSG_MOUSE_BUTTON => {
             let down = data[2] != 0;
             // 锁存中的按钮必须忽略「普通点击」（Byte3=0）。
             // 锁存本身已经把这个键按住：点击的按下是重复按下，而抬起会把游戏里的按住状态
@@ -357,25 +382,25 @@ fn process_packet(data: &[u8; PACKET_SIZE]) {
                 crate::hooks::request_resume_wasd_lock_after_click();
             }
         }
-        0x04 => {
+        MSG_MOUSE_WHEEL => {
             let delta = i16::from_le_bytes([data[1], data[2]]);
             win::inject_mouse_wheel(delta);
         }
-        0x05 => {
+        MSG_RELEASE_ALL => {
             win::release_all();
             // APK 释放全部按键/按钮：同时结束「临时禁用 WASD 自动锁定」
             crate::hooks::request_resume_wasd_lock();
         }
-        0x06 => {} // 心跳
-        0x07 => {
+        MSG_PING => {} // 心跳
+        MSG_MOUSE_CENTER => {
             // 落点由报文 Byte1 决定，仅作用于本次归位；
             // exe 自身的拦截路径落点由界面开关 + 配置文件决定，不在此处覆盖
             win::position_cursor(data[1] != 0);
         }
         // 交互键与各「解除锁定」路径的归中固定落在屏幕正中央，不受落点开关影响
-        0x08 => win::center_cursor(),
+        MSG_MOUSE_CENTER_EXACT => win::center_cursor(),
         // 交互键序列：记录当前光标位置，供序列末尾还原
-        0x09 => {
+        MSG_CURSOR_SAVE => {
             win::save_cursor();
             // 序列进行中抑制 WASD 自动锁定右键：序列自己负责「解锁 → 点击 → 恢复」，
             // 中途再自动锁定会把光标挪离交互目标，并让序列末尾的右键点击丢掉锁存
@@ -383,12 +408,12 @@ fn process_packet(data: &[u8; PACKET_SIZE]) {
                 .store(win::now_ms() + 1000, Ordering::Relaxed);
         }
         // 交互键序列：把光标还原到 0x09 记录的位置
-        0x0A => {
+        MSG_CURSOR_RESTORE => {
             win::restore_cursor();
             RT.interact_hold_ms.store(0, Ordering::Relaxed);
         }
         // 时间同步：Byte1-7 为小端 56 位 epoch 毫秒，校准 Windows 系统时间
-        0x0B => {
+        MSG_TIME_SYNC => {
             let mut millis: u64 = 0;
             for i in 0..7 {
                 millis |= (data[1 + i] as u64) << (8 * i);
@@ -396,20 +421,102 @@ fn process_packet(data: &[u8; PACKET_SIZE]) {
             win::sync_system_time(millis);
         }
         // 版本同步：Byte1/2/3 分别为 major/minor/patch（APK 下发），界面据此显示版本号
-        0x0C => {
+        MSG_VERSION => {
             let v = format!("{}.{}.{}", data[1], data[2], data[3]);
             runtime::set_remote_version(v.clone());
             runtime::log(format!("已同步 APK 版本号：v{}", v));
         }
         // 期望客户端版本：Byte1/2/3 分别为 major/minor/patch（APK 的 Cargo.toml 版本），
         // 与本 exe 的编译版本比对，不一致则停用功能并提示重新导出
-        0x0D => {
+        MSG_RUST_VERSION => {
             let v = format!("{}.{}.{}", data[1], data[2], data[3]);
             runtime::set_expected_rust_version(v.clone());
             runtime::log(format!("已同步 APK 期望的客户端版本：v{}", v));
         }
         // APK 悬浮窗「解锁鼠标」按钮：解除左右键长按锁定（居中由动作线程延时执行）
-        0x26 => crate::hooks::unlock_from_apk(),
+        MSG_UNLOCK_MOUSE => crate::hooks::unlock_from_apk(),
         _ => {}
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// 定长包长度必须与 Android 端一致
+    #[test]
+    fn packet_size_matches_contract() {
+        assert_eq!(PACKET_SIZE, 8);
+    }
+
+    /// 消息类型取值必须与 docs/protocol.md 及 Android 端 MSG_* 一致
+    #[test]
+    fn message_codes_match_contract() {
+        assert_eq!(MSG_KEY_EVENT, 0x01);
+        assert_eq!(MSG_MOUSE_MOVE, 0x02);
+        assert_eq!(MSG_MOUSE_BUTTON, 0x03);
+        assert_eq!(MSG_MOUSE_WHEEL, 0x04);
+        assert_eq!(MSG_RELEASE_ALL, 0x05);
+        assert_eq!(MSG_PING, 0x06);
+        assert_eq!(MSG_MOUSE_CENTER, 0x07);
+        assert_eq!(MSG_MOUSE_CENTER_EXACT, 0x08);
+        assert_eq!(MSG_CURSOR_SAVE, 0x09);
+        assert_eq!(MSG_CURSOR_RESTORE, 0x0A);
+        assert_eq!(MSG_TIME_SYNC, 0x0B);
+        assert_eq!(MSG_VERSION, 0x0C);
+        assert_eq!(MSG_RUST_VERSION, 0x0D);
+        assert_eq!(MSG_CLIENT_VERSION, 0x20);
+        assert_eq!(MSG_CLIPBOARD_TEXT, 0x21);
+        assert_eq!(MSG_UNICODE_TEXT, 0x22);
+        assert_eq!(MSG_TOGGLE_KEYBOARD, 0x23);
+        assert_eq!(MSG_SHOW_KEYBOARD, 0x25);
+        assert_eq!(MSG_UNLOCK_MOUSE, 0x26);
+        assert_eq!(MSG_MAPPED_KEY, 0x27);
+        assert_eq!(MSG_LOCK_STATE, 0x28);
+    }
+
+    /// 消息类型不允许重复，否则 match 分支会互相覆盖
+    #[test]
+    fn message_codes_are_unique() {
+        let mut codes = vec![
+            MSG_KEY_EVENT,
+            MSG_MOUSE_MOVE,
+            MSG_MOUSE_BUTTON,
+            MSG_MOUSE_WHEEL,
+            MSG_RELEASE_ALL,
+            MSG_PING,
+            MSG_MOUSE_CENTER,
+            MSG_MOUSE_CENTER_EXACT,
+            MSG_CURSOR_SAVE,
+            MSG_CURSOR_RESTORE,
+            MSG_TIME_SYNC,
+            MSG_VERSION,
+            MSG_RUST_VERSION,
+            MSG_CLIENT_VERSION,
+            MSG_CLIPBOARD_TEXT,
+            MSG_UNICODE_TEXT,
+            MSG_TOGGLE_KEYBOARD,
+            MSG_SHOW_KEYBOARD,
+            MSG_UNLOCK_MOUSE,
+            MSG_MAPPED_KEY,
+            MSG_LOCK_STATE,
+        ];
+        codes.sort_unstable();
+        let total = codes.len();
+        codes.dedup();
+        assert_eq!(codes.len(), total);
+    }
+
+    /// 版本包：首字节为 0x20，其后依次是 major/minor/patch
+    #[test]
+    fn client_version_packet_is_framed() {
+        let packet = client_version_packet();
+        assert_eq!(packet[0], MSG_CLIENT_VERSION);
+        let parts: Vec<u8> = env!("CARGO_PKG_VERSION")
+            .split('.')
+            .take(3)
+            .map(|part| part.parse::<u8>().unwrap_or(0))
+            .collect();
+        assert_eq!(&packet[1..1 + parts.len()], &parts[..]);
     }
 }

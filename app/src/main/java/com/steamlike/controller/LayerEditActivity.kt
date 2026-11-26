@@ -34,6 +34,7 @@ import com.steamlike.controller.config.AppConfigStore // 导入本应用配置�
 import com.steamlike.controller.config.ConfigManager // 导入配置管理器（含配置文件名常量）
 import com.steamlike.controller.config.ControllerConfig // 导入控制器配置序列化类（JSON 读写）
 import com.steamlike.controller.core.ActionSet // 导入操作集数据类
+import com.steamlike.controller.core.SteamInputHolder // 导入运行中 SteamInput 的全局访问点
 import com.steamlike.controller.core.ComboLayerSwitch // 导入两键同按切层规则数据类
 import com.steamlike.controller.core.ControllerButton // 导入手柄按键枚举
 import com.steamlike.controller.core.ControllerInputMapper // 导入按键码映射器（KeyCode→手柄按键）
@@ -65,12 +66,12 @@ import java.io.File // 导入 java.io.File（文件操作类）
  * ## 数据流
  * ```
  * ControllerOverlayService 创建 SteamInput 实例
- *      ↓ 设置 LayerEditActivity.steamInputRef
- * LayerEditActivity 通过 steamInputRef?.profile 获取配置
+ *      ↓ 设置 LayerEditActivity.SteamInputHolder.current
+ * LayerEditActivity 通过 SteamInputHolder.current?.profile 获取配置
  *      ↓ 用户编辑映射
  * 修改 OperationLayer.buttonMappings（MutableMap，可直接修改）
  *      ↓ 保存
- * steamInputRef?.loadProfile(newProfile) → 更新运行时
+ * SteamInputHolder.current?.loadProfile(newProfile) → 更新运行时
  * ConfigManager.saveToInternal(profile) → 持久化到内部存储
  * ```
  *
@@ -87,24 +88,6 @@ class LayerEditActivity : AppCompatActivity() { // 定义操作层编辑 Activit
         private const val TAG = "LayerEditActivity" // 私有常量：日志标签（语法：const val=编译期常量）
         /** 按键独立长按阈值的默认值（毫秒） */
         private const val DEFAULT_LONG_PRESS_THRESHOLD_MS = 300 // 默认长按阈值
-
-        /**
-         * SteamInput 实例引用
-         *
-         * 由 [ControllerOverlayService] 在创建 SteamInput 后赋值，
-         * LayerEditActivity 通过此引用获取和修改配置。
-         *
-         * ## 使用方式
-         * ```kotlin
-         * val profile = steamInputRef?.profile  // 获取当前配置
-         * steamInputRef?.loadProfile(newProfile)  // 更新配置
-         * ```
-         *
-         * ## 线程安全
-         * 此变量为 `var`，在服务主线程写入，Activity 主线程读取。
-         * 引用赋值是原子的，但建议在主线程操作。
-         */
-        var steamInputRef: SteamInput? = null // 静态引用：SteamInput 实例，由服务赋值后供本页读写配置（语法：var=可变变量，SteamInput?=可空类型）
 
         /** Intent extra 键: 初始选中的操作层名称 */
         const val EXTRA_LAYER_NAME = "layer_name" // 常量：Intent 传参键名，用于指定初始选中的层名（语法：const val=编译期常量）
@@ -467,7 +450,7 @@ class LayerEditActivity : AppCompatActivity() { // 定义操作层编辑 Activit
      * 优先级：服务运行时 [SteamInput.profile] → 内部配置文件 → 默认配置。
      */
     private fun loadProfile(): ControllerProfile { // 私有函数：加载控制器配置并返回（语法：fun=函数声明，返回类型 ControllerProfile）
-        steamInputRef?.profile?.let { return it } // 若服务运行中则直接返回其运行时 profile（语法：?.=安全调用，let{}=lambda 接收非空值，it=隐式参数）
+        SteamInputHolder.current?.profile?.let { return it } // 若服务运行中则直接返回其运行时 profile（语法：?.=安全调用，let{}=lambda 接收非空值，it=隐式参数）
         val file = File(filesDir, ConfigManager.CONFIG_FILE_NAME) // 构造配置文件对象：内部存储目录 + 配置文件名
         if (file.exists()) { // 若配置文件存在则进入解析分支
             return try { // 尝试解析 JSON（语法：try=异常捕获块）
@@ -507,7 +490,7 @@ class LayerEditActivity : AppCompatActivity() { // 定义操作层编辑 Activit
             event.isFromSource(InputDevice.SOURCE_JOYSTICK) // 或来自摇杆设备
         ) { // 结束来源判断，进入手柄事件处理块
             // 使用已连接手柄的类型做按键映射（PS 手柄 A/X 位置互换），未连接时用默认
-            val controllerType = steamInputRef?.controllers?.get(event.deviceId)?.controllerType // 获取该设备对应的手柄类型（安全调用链，可能为 null）（语法：?.=安全调用）
+            val controllerType = SteamInputHolder.current?.controllers?.get(event.deviceId)?.controllerType // 获取该设备对应的手柄类型（安全调用链，可能为 null）（语法：?.=安全调用）
                 ?: ControllerType.XBOX_360 // 若为空则默认 Xbox 360 类型（语法：?:=空值合并运算符）
             val button = ControllerInputMapper.mapKeyCode(event.keyCode, controllerType) // 将 KeyCode 按手柄类型映射为 ControllerButton
             if (button != null && event.repeatCount == 0) { // 仅处理映射成功且是首次按下（非长按重复）的情况（语法：&&=逻辑与）
@@ -1794,7 +1777,7 @@ class LayerEditActivity : AppCompatActivity() { // 定义操作层编辑 Activit
         File(filesDir, ConfigManager.CONFIG_FILE_NAME) // 构造配置文件对象（跨行链式调用）
             .writeText(ControllerConfig.toJson(profile, 2, appConfig)) // 把配置序列化为 JSON 写入文件
         // 服务运行时同步（不依赖服务也可正常保存）
-        steamInputRef?.let { si -> si.loadProfile(profile) } // 若服务运行则同步加载新配置（语法：?.=安全调用，let{}=lambda，si=显式参数）
+        SteamInputHolder.current?.let { si -> si.loadProfile(profile) } // 若服务运行则同步加载新配置（语法：?.=安全调用，let{}=lambda，si=显式参数）
 
         if (showToast) { // 若要求显示提示
             Toast.makeText(this, "配置已保存", Toast.LENGTH_SHORT).show() // 弹出短提示：配置已保存

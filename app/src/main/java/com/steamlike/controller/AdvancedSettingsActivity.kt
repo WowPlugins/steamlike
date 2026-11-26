@@ -26,6 +26,7 @@ import com.steamlike.controller.config.AppConfig // 导入运行时配置数据�
 import com.steamlike.controller.config.AppConfigStore // 导入运行时配置读写类
 import com.steamlike.controller.config.ControllerConfig // 导入控制器配置（JSON 解析）
 import com.steamlike.controller.core.ControllerProfile // 导入控制器配置文件（操作集/图层）
+import com.steamlike.controller.core.SteamInputHolder // 导入运行中 SteamInput 的全局访问点
 import com.steamlike.controller.service.ControllerOverlayService // 导入悬浮窗服务
 import com.steamlike.controller.ui.UiKit // 导入 UI 工具类
 import java.io.File // 导入 File（配置状态判断）
@@ -363,7 +364,7 @@ class AdvancedSettingsActivity : AppCompatActivity() { // 声明高级设置页�
         debugCard.addView(UiKit.spacer(this, 6))
         debugCard.addView(UiKit.button(this, "测试手柄按键（模拟器调试用）", {
             ensureServiceRunning()
-            if (LayerEditActivity.steamInputRef == null) {
+            if (SteamInputHolder.current == null) {
                 toastLog("服务正在初始化，请稍候...")
                 var waited = 0
                 val tick = 100
@@ -371,7 +372,7 @@ class AdvancedSettingsActivity : AppCompatActivity() { // 声明高级设置页�
                 scroll.postDelayed(object : Runnable {
                     override fun run() {
                         waited += tick
-                        if (LayerEditActivity.steamInputRef != null) {
+                        if (SteamInputHolder.current != null) {
                             startActivity(Intent(this@AdvancedSettingsActivity, GamepadTestActivity::class.java))
                         } else if (waited < maxWait) {
                             scroll.postDelayed(this, tick.toLong())
@@ -494,7 +495,7 @@ class AdvancedSettingsActivity : AppCompatActivity() { // 声明高级设置页�
 
     /** 获取当前生效的 ControllerProfile（服务运行中优先读运行时配置） */
     private fun getCurrentProfile(): ControllerProfile {
-        LayerEditActivity.steamInputRef?.profile?.let { return it }
+        SteamInputHolder.current?.profile?.let { return it }
         val configFile = File(filesDir, "steamlike_config.json")
         if (configFile.exists()) {
             return try {

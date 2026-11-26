@@ -59,6 +59,7 @@ import com.steamlike.controller.core.GamepadBattery  // 导入手柄电量信息
 import com.steamlike.controller.core.KeyMapping  // 导入按键映射数据类
 import com.steamlike.controller.core.MouseButton  // 导入鼠标按键枚举
 import com.steamlike.controller.core.SteamInput  // 导入 SteamInput 手柄控制器
+import com.steamlike.controller.core.SteamInputHolder  // 导入运行中 SteamInput 的全局访问点
 import com.steamlike.controller.injection.BridgeInputInjector  // 导入桥接事件注入器
 import com.steamlike.controller.injection.GamepadInputView  // 导入焦点输入视图
 import com.steamlike.controller.injection.InputBridgeServer  // 导入 TCP 桥接服务器
@@ -592,8 +593,8 @@ class ControllerOverlayService : Service() {  // class=类声明；继承 Servic
                 val injector = BridgeInputInjector(bridgeServer!!)  // val=只读变量；!!=非空断言；创建桥接事件注入器
 
                 steamInput = SteamInput(this)  // 创建 SteamInput 手柄控制器
-                // 将 SteamInput 实例暴露给 LayerEditActivity，供操作层设置界面读写配置
-                LayerEditActivity.steamInputRef = steamInput  // 把 SteamInput 实例赋值给 LayerEditActivity 的静态引用
+                // 将 SteamInput 实例放入全局访问点，供操作层设置界面读写配置
+                SteamInputHolder.current = steamInput  // 服务启动时登记运行中的控制器
                 // 手柄按钮按下/释放 → 悬浮窗按键映射页按钮高亮反馈
                 steamInput?.onButtonStateChanged = { button, pressed ->  // ?.=安全调用；lambda {button, pressed->}；设置手柄按键状态变化回调
                     mainHandler.post { updateMappingViewHighlight(button, pressed) }  // 回主线程更新映射页按钮高亮
@@ -876,7 +877,7 @@ class ControllerOverlayService : Service() {  // class=类声明；继承 Servic
         mapper = null  // 清空映射器引用
         steamInput = null  // 清空 SteamInput 引用
         // 清除 LayerEditActivity 的 SteamInput 引用（startMapper 会重新设置）
-        LayerEditActivity.steamInputRef = null  // 清除编辑页的静态 SteamInput 引用
+        SteamInputHolder.current = null  // 清除编辑页的静态 SteamInput 引用
         startMapper()  // 重新启动映射器
         // 刷新悬浮窗层名（重置后恢复默认名）
         refreshLayerNames()  // 刷新层按钮名称
@@ -3147,7 +3148,7 @@ class ControllerOverlayService : Service() {  // class=类声明；继承 Servic
         mapper = null  // 清空映射器引用
         steamInput = null  // 清空 SteamInput 引用
         // 清除 LayerEditActivity 的 SteamInput 引用
-        LayerEditActivity.steamInputRef = null  // 清空静态引用
+        SteamInputHolder.current = null  // 服务销毁时清空全局访问点
         configManager = null  // 清空配置管理器引用
         // 停止TCP服务器
         bridgeServer?.stop()  // ?.=安全调用；停止 TCP 桥接服务器

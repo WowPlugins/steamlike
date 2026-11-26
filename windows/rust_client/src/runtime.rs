@@ -132,21 +132,57 @@ fn timestamp() -> String {
 pub fn version() -> &'static str {
     static VERSION: OnceLock<String> = OnceLock::new();
     VERSION.get_or_init(|| {
-        let from_file = std::env::current_exe()
-            .ok()
-            .and_then(|exe| exe.parent().map(|dir| dir.join("version.txt")))
-            .and_then(|path| std::fs::read_to_string(path).ok())
-            // 必须剥掉 UTF-8 BOM：带 BOM 写出的 version.txt 会让标题变成
-            // 「v﻿0.1.148」（含不可见字符），与 APK 下发的版本号不一致，
-            // 界面按标题找不到自身窗口 → 尺寸调整与圆形裁剪全部失效（圆点铺满窗口）
-            .map(|text| text.trim_start_matches('\u{feff}').trim().to_string())
-            .filter(|v| !v.is_empty());
-        from_file.unwrap_or_else(|| {
+        version_file_lines().into_iter().next().unwrap_or_else(|| {
             option_env!("STEAMLIKE_VERSION")
                 .unwrap_or(env!("CARGO_PKG_VERSION"))
                 .to_string()
         })
     })
+}
+
+/// 读取 exe 同目录 version.txt 的非空行
+///
+/// 文件由 APK「导出」时写入：第一行 = APK 版本（界面显示），
+/// 第二行 = 导出时 APK 记录的 Rust 编译版本（自检用）。
+/// 必须剥掉 UTF-8 BOM：带 BOM 写出的 version.txt 会让标题变成
+/// 「v﻿0.1.148」（含不可见字符），与 APK 下发的版本号不一致，
+/// 界面按标题找不到自身窗口 → 尺寸调整与圆形裁剪全部失效（圆点铺满窗口）。
+fn version_file_lines() -> Vec<String> {
+    let Ok(exe) = std::env::current_exe() else {
+        return Vec::new();
+    };
+    let Some(dir) = exe.parent() else {
+        return Vec::new();
+    };
+    let Ok(text) = std::fs::read_to_string(dir.join("version.txt")) else {
+        return Vec::new();
+    };
+    text.trim_start_matches('\u{feff}')
+        .lines()
+        .map(|line| line.trim().to_string())
+        .filter(|line| !line.is_empty())
+        .collect()
+}
+
+/// version.txt 第二行记录的 Rust 编译版本（旧格式/未导出时为 None）
+pub fn version_file_rust_version() -> Option<String> {
+    version_file_lines().into_iter().nth(1)
+}
+
+/// 启动自检：version.txt 标注的 Rust 版本与当前 exe 编译版本不一致时告警
+///
+/// 未连接 APK 时也能发现「只导出了 version.txt、exe 还是旧的」，
+/// 连接后 0x0D / 0x20 的比对会再做一次同样的检查。
+pub fn check_version_file() {
+    if let Some(from_file) = version_file_rust_version() {
+        if from_file != build_version() {
+            log(format!(
+                "[版本] version.txt 标注客户端 v{}，但当前 exe 编译版本为 v{}：exe 可能未重新导出/编译",
+                from_file,
+                build_version()
+            ));
+        }
+    }
 }
 
 /// 远端（APK）下发的版本号：连接成功后自动同步，界面优先显示它

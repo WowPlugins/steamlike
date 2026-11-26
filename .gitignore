@@ -85,3 +85,6 @@ $RECYCLE.BIN/
 # Rust 构建产物
 windows/rust_client/target/
 windows/rust_client_config.json
+
+# Windows 客户端运行期产物
+windows/clipboard_log.txt

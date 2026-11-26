@@ -9,6 +9,7 @@ import android.widget.TextView // 语法：import=导入类，TextView=文本控
 import androidx.appcompat.app.AppCompatActivity // 语法：import=导入类，AppCompatActivity=兼容性 Activity 基类
 import com.steamlike.controller.config.ControllerConfig // 语法：import=导入类，ControllerConfig=配置 JSON 读写
 import com.steamlike.controller.core.ControllerButton // 语法：import=导入类，ControllerButton=手柄按键枚举
+import com.steamlike.controller.core.SteamInputHolder // 语法：import=导入类，SteamInputHolder=运行中 SteamInput 的全局访问点
 import com.steamlike.controller.core.ControllerProfile // 语法：import=导入类，ControllerProfile=配置文件数据模型
 import com.steamlike.controller.core.MappedAction // 语法：import=导入类，MappedAction=映射动作
 import com.steamlike.controller.ui.UiKit // 语法：import=导入类，UiKit=统一 UI 样式工具
@@ -204,12 +205,12 @@ class HelpActivity : AppCompatActivity() { // 语法：class=类声明，继承 
      * 获取当前生效的 ControllerProfile
      *
      * 数据源优先级:
-     * 1. 服务已启动: 读取运行时 [LayerEditActivity.steamInputRef] 的 profile
+     * 1. 服务已启动: 读取运行时 [SteamInputHolder.current] 的 profile
      * 2. 服务未启动但配置文件存在: 从内部配置文件加载
      * 3. 都没有: 使用代码内置默认 profile
      */
     private fun getCurrentProfile(): ControllerProfile { // 语法：private fun=私有函数声明，返回当前生效的配置
-        LayerEditActivity.steamInputRef?.profile?.let { return it } // 语法：?.=安全调用（为空则跳过）；let=作用域函数；服务已启动时直接返回其 profile
+        SteamInputHolder.current?.profile?.let { return it } // 语法：?.=安全调用（为空则跳过）；let=作用域函数；服务已启动时直接返回其 profile
         val configFile = File(filesDir, "steamlike_config.json") // 语法：val=只读变量；File=构造文件对象，指向内部存储的配置文件
         if (configFile.exists()) { // 语法：if 条件判断，配置文件存在时读取
             return try { // 语法：return try 表达式，解析出错时走 catch 回退

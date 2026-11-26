@@ -13,6 +13,7 @@ import android.widget.Toast // 导入 Toast 提示控件
 import androidx.appcompat.app.AppCompatActivity // 导入 AppCompatActivity 兼容基类
 import com.steamlike.controller.core.ControllerButton // 导入手柄按键枚举
 import com.steamlike.controller.core.SteamInput // 导入 SteamInput 主控制器类
+import com.steamlike.controller.core.SteamInputHolder // 导入运行中 SteamInput 的全局访问点
 import com.steamlike.controller.ui.UiKit // 导入 UI 工具类
 
 /**
@@ -53,7 +54,7 @@ class GamepadTestActivity : AppCompatActivity() { // 声明手柄测试 Activity
                 WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_SHORT_EDGES // 布局延伸到挖孔屏短边
         } // 结束挖孔屏设置 if
 
-        steamInput = LayerEditActivity.steamInputRef // 从层编辑页的静态引用获取控制器
+        steamInput = SteamInputHolder.current // 取运行中的控制器（服务未启动时为 null）
         if (steamInput == null) { // 服务未启动或未初始化时进入（语法：if 判断 + == 比较）
             Toast.makeText(this, "服务未启动或初始化未完成", Toast.LENGTH_LONG).show() // 弹出错误提示
             finish() // 关闭当前界面

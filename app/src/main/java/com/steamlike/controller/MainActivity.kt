@@ -35,6 +35,7 @@ import com.steamlike.controller.config.AppConfig // 导入运行时配置数据�
 import com.steamlike.controller.config.AppConfigStore // 导入运行时配置读写类
 import com.steamlike.controller.config.ConfigManager // 导入配置管理器
 import com.steamlike.controller.core.ControllerDevice // 导入手柄设备类（读取手柄电量）
+import com.steamlike.controller.core.SteamInputHolder // 导入运行中 SteamInput 的全局访问点
 import com.steamlike.controller.service.ControllerOverlayService // 导入悬浮窗服务
 import com.steamlike.controller.ui.UiKit // 导入 UI 工具类
 import java.io.File // 导入 File 文件类
@@ -517,7 +518,8 @@ class MainActivity : AppCompatActivity() { // 声明主界面 Activity，继承 
 
         // 额外导出 version.txt（Windows 客户端启动时读取该文件显示版本号，
         // 因此仅提升版本号无需重新编译/导出 exe）
-        val versionBytes = "${BuildConfig.VERSION_NAME}\n".toByteArray(Charsets.UTF_8) // 版本号文本（语法：字符串模板）
+        // 第一行 = APK 版本（界面显示），第二行 = Rust 编译版本（客户端自检 exe 是否过期）
+        val versionBytes = "${BuildConfig.VERSION_NAME}\n${BuildConfig.RUST_CLIENT_VERSION}\n".toByteArray(Charsets.UTF_8) // 版本号文本（语法：字符串模板）
         val versionSuccess = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) { // 系统版本分支（语法：if 条件分支）
             exportViaMediaStore(versionBytes, "version.txt") // 用 MediaStore 方式写入
         } else { // 旧系统分支
@@ -744,7 +746,7 @@ class MainActivity : AppCompatActivity() { // 声明主界面 Activity，继承 
             // 清除 extra 避免重复跳转
             intent.removeExtra(EXTRA_AUTO_OPEN_TEST) // 移除 extra 防止重复跳转
             ensureServiceRunning() // 确保映射服务已启动
-            if (LayerEditActivity.steamInputRef != null) { // 服务已就绪时进入（语法：if 判断）
+            if (SteamInputHolder.current != null) { // 服务已就绪时进入（语法：if 判断）
                 startActivity(Intent(this@MainActivity, GamepadTestActivity::class.java)) // 直接跳转到手柄测试页
             } else { // 服务未就绪分支
                 // 等待服务初始化，最多 5 秒
@@ -754,7 +756,7 @@ class MainActivity : AppCompatActivity() { // 声明主界面 Activity，继承 
                 configStatusText.postDelayed(object : Runnable { // 延迟执行轮询（语法：object : 匿名接口实现）
                     override fun run() { // 覆写 run 方法（语法：override）
                         waited += tick // 累加等待时间
-                        if (LayerEditActivity.steamInputRef != null) { // 服务就绪时进入
+                        if (SteamInputHolder.current != null) { // 服务就绪时进入
                             startActivity(Intent(this@MainActivity, GamepadTestActivity::class.java)) // 跳转手柄测试页
                         } else if (waited < maxWait) { // 未超时继续等待（语法：else if 分支）
                             configStatusText.postDelayed(this, tick.toLong()) // 继续轮询

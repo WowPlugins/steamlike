@@ -83,8 +83,8 @@
 - **捕获开关双向同步**: 悬浮窗"暂停/恢复捕获"按钮与 App 内"手柄捕获"开关实时同步（广播 + 持久化）
 - **悬浮窗主页按钮**: 一键拉起手机桌面（切出游戏）
 - **悬浮窗层名动态同步**: 悬浮窗层按钮显示 App 内配置的层名（在设置界面重命名后自动同步；未重命名的层显示预设中文名）
-- **控制脚本**: `control.bat` 提供 start/stop/status/restart 命令
-- **内置导出**: APK 内置 exe 和 control.bat，一键导出到 Download/AControler
+- **桌面控制面板**: Windows 客户端自带 egui 界面（基本设置 / 按键映射 / 日志），无需命令行参数
+- **内置导出**: APK 内置 `inputbridge_client.exe` 与 `version.txt`，一键导出到 Download/AControler
 - **自动重连**: Windows客户端断线自动重连
 - **自动编译 exe**: build.gradle.kts 的 `compileWindowsExe` task 在 APK 编译前自动编译 Windows exe 并打包到 assets
 
@@ -231,7 +231,7 @@ stop
 - Android 7.0 (API 24) 或更高（推荐 Android 8.0+ 以使用 `TYPE_APPLICATION_OVERLAY`）
 - 蓝牙/USB 手柄
 - Winlator（用于运行 WoW）
-- MinGW gcc（可选，仅自行编译 Windows 配套程序时需要；APK 编译会自动调用）
+- Rust 工具链 cargo（可选，仅自行编译 Windows 配套程序时需要；APK 编译会自动调用）
 
 ### 第一步: Android端安装
 
@@ -259,40 +259,38 @@ stop
 
 1. 在 SteamLike 控制器主界面点击"导出 Windows 客户端到 Download/AControler"
 2. 文件会导出到 `/sdcard/Download/AControler/` 目录：
-   - `inputbridge_client.exe` - Windows 客户端程序
-   - `control.bat` - 控制脚本（启停管理）
+   - `inputbridge_client.exe` - Windows 客户端（Rust + egui）
+   - `version.txt` - 版本号（客户端启动时读取第一行显示）
 3. 通过文件管理器或 ADB 取出这两个文件
 
-> **说明**: APK 编译时 `compileWindowsExe` task 会自动编译 exe 并打包到 assets，所以 APK 内的 exe 始终与源码同步。
+> **说明**: APK 编译时 `compileWindowsExe` task 会调用 `cargo build --release` 编译 Rust 客户端并打包到 assets；cargo 不可用时沿用 assets 中已有的 exe。
 
 **方式2: 自行编译**
 
 ```bash
-# 进入windows目录
-cd l:\steamlike\windows
+# 进入 Rust 工程目录
+cd windows/rust_client
 
-# 使用build.bat (需要MinGW)
-build.bat
-
-# 或手动编译
-gcc -O2 -o inputbridge_client.exe inputbridge_client.c -lws2_32 -luser32
+# 编译 release 版
+cargo build --release
+# 产物: target/release/inputbridge_client.exe
 ```
 
 ### 第三步: 在Winlator中运行
 
 1. **复制程序到Winlator**
-   - 将 `inputbridge_client.exe` 和 `control.bat` 复制到 Winlator 的虚拟C盘
+   - 将 `inputbridge_client.exe` 和 `version.txt` 复制到 Winlator 的虚拟C盘
    - 通常路径: `Winlator容器内部 → C:\`
 
 2. **启动顺序**
    ```
    ① 打开 SteamLike 控制器 → 授予悬浮窗权限 → 启动手柄映射
-   ② 切换到 Winlator → 运行 control.bat start (或直接运行 inputbridge_client.exe)
+   ② 切换到 Winlator → 运行 inputbridge_client.exe
    ③ 启动 WoW 游戏
    ```
 
 3. **验证连接**
-   - Windows客户端控制台显示 `[CONNECT] Connected to Android server!`
+   - Windows客户端面板状态显示「已连接 127.0.0.1:27015」
    - Android主界面显示 `Client: connected`
    - 按手柄按键，WoW游戏有响应 = 成功
    - 若手柄无响应，请点击悬浮窗区域使焦点窗口重新获取焦点
@@ -308,9 +306,9 @@ gcc -O2 -o inputbridge_client.exe inputbridge_client.c -lws2_32 -luser32
       ↓
 （可选）点击"操作层设置" → 自定义按键映射/触发键/层名
       ↓  注: 进入设置界面时悬浮窗自动隐藏，退出后恢复
-切换到 Winlator → 运行 control.bat start
+切换到 Winlator → 运行 inputbridge_client.exe
       ↓
-客户端显示"[CONNECT] Connected" → 启动 WoW 游戏
+客户端面板显示「已连接」 → 启动 WoW 游戏
       ↓
 按住 D-Pad 上/下/左/右 等触发键激活对应操作层（松开回公共层）
       ↓
@@ -323,48 +321,39 @@ gcc -O2 -o inputbridge_client.exe inputbridge_client.c -lws2_32 -luser32
 
 ### inputbridge_client.exe
 
-运行在 Winlator 内的 Windows 控制台程序，负责：
-1. 连接 Android 端的 TCP 服务器（localhost:27015）
-2. 接收 8 字节定长数据包
-3. 解析数据包并通过 `SendInput()` API 注入键盘/鼠标事件
+运行在 Winlator 内的 Rust GUI 程序（egui），负责：
+1. 连接 Android 端的 TCP 服务器（localhost:27015），断线自动重连
+2. 接收 8 字节定长数据包（完整消息表见 [docs/protocol.md](docs/protocol.md)）
+3. 解析数据包并通过 `SendInput()` 注入键盘/鼠标事件
+4. 可选安装低级键鼠钩子，在 Windows 侧做本地按键映射（WASD 自动锁定右键、交互键序列、长按交换等）
+5. 读取 `SLState` WoW 插件维护的角色状态，供「仅潜行 / 仅非潜行」等映射条件使用
+6. 剪贴板同步：游戏内复制的文本追加到 `clipboard_log.txt`，已连接时同时发回手机剪贴板
 
 ### 编译方式
 
 | 方式 | 命令 | 依赖 |
 |------|------|------|
-| build.bat | `cd windows && build.bat` | MinGW gcc |
-| 手动编译 | `gcc -O2 -o inputbridge_client.exe inputbridge_client.c -lws2_32 -luser32` | MinGW gcc |
-| CMake | `mkdir build && cd build && cmake .. && make` | CMake + gcc |
-| Gradle 自动编译 | `./gradlew assembleDebug`（自动触发 compileWindowsExe） | MinGW gcc（可选） |
+| Gradle 自动编译 | `./gradlew assembleDebug`（自动触发 compileWindowsExe） | cargo（可选） |
+| 手动编译 | `cd windows/rust_client && cargo build --release` | Rust 工具链 |
 
-### 运行参数
+### 启动方式
+
+程序无命令行参数，直接运行：
 
 ```bash
-# 默认连接 127.0.0.1:27015
 inputbridge_client.exe
-
-# 指定IP和端口
-inputbridge_client.exe 192.168.1.100 27015
 ```
+
+服务器地址/端口在「基本设置」页配置，保存在 exe 同目录的 `rust_client_config.json`。
 
 ### 程序特性
 
-- **单进程限制**: 使用命名互斥锁 `Global\SteamLikeInputBridgeClient` 确保同时只有一个实例运行，重复启动提示 `[ERROR] Another instance is already running.`
-- **自动重连**: 连接断开后自动重试（默认1秒间隔）
-- **状态跟踪**: 跟踪所有按下的键和按钮，断开时自动释放
-- **Ctrl+C退出**: 退出时自动释放所有按下的键，防止按键卡住
-- **控制台日志**: 全英文输出，显示连接状态和数据流（`[INFO]`/`[CONNECT]`/`[ERROR]`/`[RETRY]`/`[EXIT]`）
-- **禁用缓冲**: `setvbuf` 禁用 stdout 缓冲，确保管道/重定向环境下实时输出
-
-### control.bat 控制脚本
-
-| 命令 | 功能 |
-|------|------|
-| `control.bat start` | 启动 exe（新窗口运行，显示连接输出） |
-| `control.bat stop` | 停止 exe（taskkill /F） |
-| `control.bat status` | 显示运行状态 + 端口 27015 监听信息 |
-| `control.bat restart` | 先 stop 再 start |
-| `control.bat help` | 显示帮助 |
+- **单进程限制**: 使用命名互斥锁 `Global\SteamLikeInputBridgeClient` 确保同时只有一个实例运行，重复启动会提示并退出
+- **自动重连**: 连接断开后 1~2 秒自动重试，服务器地址改动后立即按新地址重连
+- **状态跟踪**: 跟踪所有按下的键和按钮，断开或退出时自动释放，防止按键卡住
+- **浮动控制面板**: 无边框置顶窗口，可在「圆点 / 小面板 / 完整面板」三种形态间切换
+- **文件日志**: exe 同目录 `inputbridge_client.log`，同时显示在「日志」页
+- **版本自检**: 读取同目录 `version.txt` 显示版本，并与 APK 下发的期望版本比对，不一致时提示重新导出客户端
 
 ---
 
@@ -372,7 +361,7 @@ inputbridge_client.exe 192.168.1.100 27015
 
 ### compileWindowsExe Task
 
-[build.gradle.kts](app/build.gradle.kts) 中定义了 `compileWindowsExe` Gradle task，在 APK 编译前自动编译 Windows 端 `inputbridge_client.exe` 并复制到 assets 目录，确保 APK 内置的 exe 始终与 C 源码同步。
+[build.gradle.kts](app/build.gradle.kts) 中定义了 `compileWindowsExe` Gradle task，在 APK 编译前自动编译 Rust 客户端 `inputbridge_client.exe` 并复制到 assets 目录，确保 APK 内置的 exe 与 Rust 源码同步。
 
 #### 工作流程
 
@@ -383,18 +372,23 @@ start
 :./gradlew assembleDebug;
 :preBuild (Gradle 内置任务);
 :dependsOn("compileWindowsExe") → compileWindowsExe task 执行;
-:搜索 gcc 路径\n优先级: M:/msys64/ucrt64/bin/gcc.exe\n→ C:/msys64/ucrt64/bin/gcc.exe\n→ C:/MinGW/bin/gcc.exe\n→ 系统 PATH 中的 gcc.exe;
-if (gcc 可用?) then (否)
-  :跳过编译（使用 assets 中已有的 exe）\n输出警告;
-else (是)
-  :执行编译命令\ngcc -O2 -o windows/inputbridge_client.exe\n    windows/inputbridge_client.c\n    -lws2_32 -luser32;
-  if (编译成功?) then (是)
-    :复制 exe 到 app/src/main/assets/inputbridge_client.exe;
-  else (失败)
-    :跳过（使用已有 exe）\n输出警告和编译日志;
+:检查增量输入\nwindows/rust_client/src、assets、Cargo.toml、Cargo.lock;
+if (输入与输出都未变?) then (是)
+  :UP-TO-DATE，跳过 cargo;
+else (否)
+  :搜索 cargo 路径\nM:/msys64/ucrt64/bin/cargo.exe\n→ C:/msys64/ucrt64/bin/cargo.exe\n→ ~/.cargo/bin/cargo.exe\n→ 系统 PATH;
+  if (cargo 可用?) then (否)
+    :跳过编译（使用 assets 中已有的 exe）\n输出警告;
+  else (是)
+    :cargo build --release --manifest-path windows/rust_client/Cargo.toml;
+    if (编译成功?) then (是)
+      :复制到 windows/inputbridge_client.exe\n与 app/src/main/assets/inputbridge_client.exe;
+    else (失败)
+      :跳过（使用已有 exe）\n输出警告和编译日志;
+    endif
   endif
 endif
-:APK 打包\n(assets 中的 exe 和 control.bat 被打包进 APK);
+:APK 打包\n(assets 中的 exe 与 version.txt 进入 APK);
 stop
 @enduml
 ```
@@ -404,8 +398,8 @@ stop
 ```kotlin
 tasks.register("compileWindowsExe") {
     group = "build"
-    description = "Compiles Windows inputbridge_client.exe and copies to assets"
-    // ... 搜索 gcc，执行编译，复制到 assets
+    description = "Builds Windows inputbridge_client.exe (Rust) and copies it to assets"
+    // ... 搜索 cargo，执行 cargo build --release，复制到 windows/ 与 assets
 }
 
 // 在 preBuild 前执行编译
@@ -416,10 +410,10 @@ tasks.named("preBuild") {
 
 #### 设计说明
 
-- **容错性**: gcc 不可用或编译失败时不会中断 APK 构建，而是使用 assets 中已有的 exe
-- **幂等性**: 每次构建都会重新编译并覆盖 assets 中的 exe，保证与源码同步
-- **路径搜索**: 依次检查 MSYS2 ucrt64、MinGW、系统 PATH 三个位置
-- **依赖最小化**: 仅依赖 gcc 和 Windows 系统库（ws2_32 网络库、user32 输入库）
+- **容错性**: cargo 不可用或编译失败时不会中断 APK 构建，而是使用 assets 中已有的 exe（会输出警告）
+- **增量构建**: 声明 `src/`、`assets/`、`Cargo.toml`、`Cargo.lock` 为输入，未变化时标记 UP-TO-DATE，不重复调用 cargo
+- **版本号与编译解耦**: `versionName` 故意不作为任务输入——exe 的版本号改为运行时读取同目录 `version.txt`，只改版本号时无需重编 Rust
+- **路径搜索**: 依次检查 MSYS2 ucrt64、rustup 默认目录、系统 PATH
 
 ---
 
@@ -761,12 +755,12 @@ Layer1: A → KeyboardKey(5)   (用户配置的覆盖)
 
 ```
 ControllerOverlayService 创建 SteamInput 实例
-     ↓ LayerEditActivity.steamInputRef = steamInput
-LayerEditActivity 通过 steamInputRef?.profile 获取配置
+     ↓ SteamInputHolder.current = steamInput
+LayerEditActivity 通过 SteamInputHolder.current?.profile 获取配置
      ↓ 用户编辑映射 / 操作集
 修改 OperationLayer.buttonMappings / 操作集列表（MutableMap，可直接修改）
      ↓ 保存
-steamInputRef?.loadProfile(newProfile) → 更新运行时
+SteamInputHolder.current?.loadProfile(newProfile) → 更新运行时
 ConfigManager.saveToInternal(profile) → 持久化到内部存储
 ```
 
@@ -785,13 +779,13 @@ MainActivity 中"操作层设置"按钮的入口逻辑会自动等待服务初�
 
 ```kotlin
 // MainActivity.kt 操作层设置按钮
-if (LayerEditActivity.steamInputRef == null) {
+if (SteamInputHolder.current == null) {
     toastLog("服务正在初始化，请稍候...")
     var waited = 0
     configStatusText.postDelayed(object : Runnable {
         override fun run() {
             waited += 100
-            if (LayerEditActivity.steamInputRef != null) {
+            if (SteamInputHolder.current != null) {
                 startActivity(Intent(this@MainActivity, LayerEditActivity::class.java))
             } else if (waited < 3000) {
                 configStatusText.postDelayed(this, 100)
@@ -877,22 +871,22 @@ imm?.showSoftInput(editText, InputMethodManager.SHOW_IMPLICIT)
 
 #### SteamInput 引用传递
 
-LayerEditActivity 通过静态变量 `steamInputRef` 获取 SteamInput 实例：
+设置界面通过 [SteamInputHolder](app/src/main/java/com/steamlike/controller/core/SteamInputHolder.kt) 获取运行中的 SteamInput 实例（`object` 单例，替代原先挂在 Activity 上的静态字段）：
 
 ```kotlin
-class LayerEditActivity : AppCompatActivity() {
-    companion object {
-        var steamInputRef: SteamInput? = null  // 由 ControllerOverlayService 设置
-        const val EXTRA_LAYER_NAME = "layer_name"
-    }
+object SteamInputHolder {
+    @Volatile
+    var current: SteamInput? = null
 }
 ```
 
-ControllerOverlayService 在 `startMapper()` 中创建 SteamInput 后赋值：
+ControllerOverlayService 在 `startMapper()` 中创建 SteamInput 后赋值，并在服务销毁时清空：
 ```kotlin
 steamInput = SteamInput(this)
-LayerEditActivity.steamInputRef = steamInput  // 暴露给设置界面
+SteamInputHolder.current = steamInput  // 暴露给设置界面
 ```
+
+服务未运行时 `SteamInputHolder.current` 为 null，设置界面回退到已保存的配置文件。
 
 #### 编辑对话框
 
@@ -1136,7 +1130,7 @@ steamInput.loadProfile(newProfile)
   ② ConfigManager.loadFromInternal() → 检查内部配置文件是否存在
      ├─ 存在 → ControllerConfig.fromJson() 解析 → SteamInput.loadProfile() 应用
      └─ 不存在 → 使用默认配置并保存
-  ③ LayerEditActivity.steamInputRef = steamInput → 暴露给设置界面
+  ③ SteamInputHolder.current = steamInput → 暴露给设置界面
 ```
 
 内部配置文件路径: `{应用内部存储}/files/steamlike_config.json`
@@ -1222,8 +1216,7 @@ l:\steamlike/
 │       ├── main/
 │       │   ├── AndroidManifest.xml      # 清单文件(权限+服务声明+Activity声明)
 │       │   ├── assets/
-│       │   │   ├── control.bat              # Windows 控制脚本
-│       │   │   └── inputbridge_client.exe   # Windows 客户端（由 compileWindowsExe 编译）
+│       │   │   └── inputbridge_client.exe   # Rust Windows 客户端（由 compileWindowsExe 编译）
 │       │   ├── res/
 │       │   │   └── layout/
 │       │   │       ├── activity_layer_edit.xml  # 操作层设置界面布局
@@ -1240,7 +1233,7 @@ l:\steamlike/
 │       │       │   └── ControllerDevice.kt    # 设备管理+输入映射(ControllerInputMapper)
 │       │       │
 │       │       ├── config/              # 配置文件系统
-│       │       │   ├── ControllerConfig.kt   # JSON序列化/反序列化(version=2)
+│       │       │   ├── ControllerConfig.kt   # JSON序列化/反序列化(version=3)
 │       │       │   └── ConfigManager.kt      # 导出/导入逻辑 + 文件IO(内部存储+SAF)
 │       │       │
 │       │       ├── injection/           # 输入注入(桥接模式)
@@ -1256,18 +1249,27 @@ l:\steamlike/
 │       │       └── service/             # 服务
 │       │           └── ControllerOverlayService.kt  # 悬浮窗+焦点窗口前台服务
 │       │
-│       └── test/                            # ★ 单元测试目录
+│       └── test/                            # ★ 单元测试目录（纯 JVM）
 │           └── java/com/steamlike/controller/
-│               └── core/
-│                   ├── ControllerTypesTest.kt  # 枚举/向量测试
-│                   └── Vector2Test.kt          # 2D向量运算测试
+│               ├── config/ControllerConfigTest.kt   # version=3 JSON 往返
+│               ├── core/ControllerTypesTest.kt      # 枚举/向量测试
+│               ├── core/KeyMappingTest.kt           # 映射描述/子命令
+│               ├── core/OperationLayerTest.kt       # 层查找/默认配置
+│               ├── core/Vector2Test.kt              # 2D向量运算
+│               └── injection/ProtocolConstantsTest.kt  # TCP 协议契约（对齐 docs/protocol.md）
 │
-└── windows/                         # Windows配套程序
-    ├── inputbridge_client.c         # C源码(TCP客户端+SendInput)
-    ├── inputbridge_client.exe       # 编译产物(由 compileWindowsExe 生成)
-    ├── build.bat                    # MinGW编译脚本
-    ├── control.bat                  # 控制脚本(打包到assets)
-    └── CMakeLists.txt               # CMake构建配置
+└── windows/                         # Windows 配套程序
+    ├── rust_client/                 # Rust 工程（Cargo.toml + src）
+    │   ├── src/main.rs              # 入口：单实例、自动启动、窗口
+    │   ├── src/bridge.rs            # TCP 客户端（27015）
+    │   ├── src/hooks.rs             # 键鼠钩子 + 动作线程
+    │   ├── src/win.rs               # SendInput / 光标 / 窗口
+    │   ├── src/ui.rs                # egui 控制面板
+    │   ├── src/config.rs            # rust_client_config.json
+    │   ├── src/runtime.rs           # 运行期共享状态与日志
+    │   ├── src/clipboard.rs         # 剪贴板同步
+    │   └── src/wowmem.rs            # SLState 角色状态读取
+    └── inputbridge_client.exe       # 编译产物归档（由 compileWindowsExe 生成）
 ```
 
 ### 文件变化（相对旧架构）
@@ -1285,7 +1287,7 @@ l:\steamlike/
 | 删除 | `WoWActionSets.kt`（旧版） | 旧预设配置（新版仅保留 LAYER_NAMES） |
 | 重写 | `SteamInput.kt` | 改用 ControllerProfile + 激活层列表 |
 | 重写 | `KeyboardMouseMapper.kt` | 改用子命令注入 |
-| 重写 | `ControllerConfig.kt` | 改为 version=2 JSON 格式 |
+| 重写 | `ControllerConfig.kt` | 改为 version=3 JSON 格式（旧版 version=2 可自动迁移） |
 | 重写 | `ConfigManager.kt` | 简化为 profile 读写 |
 | 修改 | `ControllerOverlayService.kt` | 适配新架构 + 暴露 SteamInput 给 LayerEditActivity |
 | 修改 | `MainActivity.kt` | 适配新配置 API |
@@ -1336,7 +1338,7 @@ class LayerEditActivity : AppCompatActivity()
 - **声明位置**: AndroidManifest.xml 中 `<activity android:name=".LayerEditActivity" android:exported="false" android:parentActivityName=".MainActivity">`
 - **职责**: 可视化编辑操作层和按键映射（详见 [设置界面](#设置界面)）
 - **启动方式**: 通过 `Intent` 启动，可选携带 `EXTRA_LAYER_NAME` 指定初始层
-- **数据来源**: 通过静态变量 `LayerEditActivity.steamInputRef` 获取 SteamInput 实例（由 ControllerOverlayService 设置）
+- **数据来源**: 通过 `SteamInputHolder.current` 获取 SteamInput 实例（由 ControllerOverlayService 设置，服务未运行时回退到配置文件）
 - **UI 构建**: 使用 XML 布局 `activity_layer_edit.xml` + `dialog_mapping_edit.xml`
 
 ### 4. Service 入口: `ControllerOverlayService.kt`
@@ -1361,12 +1363,12 @@ class ControllerOverlayService : Service()
   - 调用 `ServiceCompat.startForeground(..., ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE)`
   - 在 Manifest 中声明 `<property android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE">`
 
-### 5. Windows 端入口: `inputbridge_client.c`
+### 5. Windows 端入口: `windows/rust_client/src/main.rs`
 
-- **入口函数**: C 标准 `main(int argc, char *argv[])`
+- **入口函数**: Rust 标准 `fn main() -> eframe::Result<()>`
 - **运行环境**: Winlator 内的 Windows 虚拟环境
-- **启动参数**: `inputbridge_client.exe [server_ip] [port]`（默认 127.0.0.1:27015）
-- **职责**: 连接 Android TCP 服务器，接收 8 字节定长数据包，调用 `SendInput()` API 注入键鼠事件
+- **启动参数**: 无（服务器地址/端口读取 `rust_client_config.json`，可在界面修改）
+- **职责**: 单实例检查 → 加载配置 → 启动钩子/网络/剪贴板线程 → 打开 egui 控制面板；连接 Android TCP 服务器后接收数据包并调用 `SendInput()` 注入
 
 ### 启动流程图
 
@@ -1386,7 +1388,7 @@ start
 :startMapper() (后台线程);
 :InputBridgeServer.start()\nTCP 服务器;
 :SteamInput(context)\n输入系统 (注册 InputManager 监听);
-:LayerEditActivity.steamInputRef = steamInput\n暴露给设置界面;
+:SteamInputHolder.current = steamInput\n暴露给设置界面;
 :ConfigManager(this, steamInput);
 :KeyboardMouseMapper.start()\n注册回调;
 :loadUserConfig()\n加载用户配置（覆盖默认）;
@@ -1626,7 +1628,7 @@ package "注入模块 (底层) injection/" {
 
 APP --> COS : startForegroundService / startActivity
 MA --> COS : startForegroundService / startActivity
-LEA --> COS : steamInputRef
+LEA ..> COS : SteamInputHolder.current
 COS --> SI : 持有引用
 COS --> KMM : 持有引用
 COS --> CM : 持有引用
@@ -1674,7 +1676,7 @@ V --> SI : 事件转发
 
 | 文件 | 职责 |
 |------|------|
-| [ControllerConfig.kt](app/src/main/java/com/steamlike/controller/config/ControllerConfig.kt) | JSON 序列化/反序列化（version=2） |
+| [ControllerConfig.kt](app/src/main/java/com/steamlike/controller/config/ControllerConfig.kt) | JSON 序列化/反序列化（version=3） |
 | [ConfigManager.kt](app/src/main/java/com/steamlike/controller/config/ConfigManager.kt) | 导出/导入逻辑 + 文件 IO（内部存储 + SAF） |
 
 #### 6. 注入模块 (`injection`)
@@ -1909,7 +1911,7 @@ GamepadInputView --> KeyboardMouseMapper : 事件转发
 
 ### 3. 配置与序列化（config/）
 
-[ControllerConfig.kt](app/src/main/java/com/steamlike/controller/config/ControllerConfig.kt) 负责 version=2 JSON 序列化；`ConfigManager` 负责文件 IO（内部存储 + SAF）；`AppConfig` / `AppConfigStore` 管理运行时设置。
+[ControllerConfig.kt](app/src/main/java/com/steamlike/controller/config/ControllerConfig.kt) 负责 version=3 JSON 序列化（兼容 version=2 迁移）；`ConfigManager` 负责文件 IO（内部存储 + SAF）；`AppConfig` / `AppConfigStore` 管理运行时设置。
 
 ```plantuml
 @startuml
@@ -2005,7 +2007,6 @@ class MainActivity {
 }
 
 class LayerEditActivity {
-  + {static} steamInputRef : SteamInput?
   + {static} EXTRA_LAYER_NAME
   + onCreate()
   - 编辑操作层 / 按键映射 / 子命令
@@ -2034,7 +2035,7 @@ ControllerOverlayService *-- InputBridgeServer
 ControllerOverlayService *-- ConfigManager
 ControllerOverlayService *-- GamepadInputView
 GamepadInputView --> KeyboardMouseMapper : 事件转发
-LayerEditActivity --> SteamInput : 静态引用 steamInputRef
+SteamInputHolder --> SteamInput : current
 MainActivity ..> ControllerOverlayService : startForegroundService / Intent
 ControllerOverlayService ..> MainActivity : 广播状态
 @enduml
@@ -2701,13 +2702,12 @@ if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
 - `SteamInputTest.kt` - 旧绑定查找逻辑测试（待新架构稳定后重写）
 - `ControllerConfigTest.kt`（旧版） - 旧 version=1 配置测试（被 version=2 取代）
 
-### 新测试（规划中）
-
-针对新架构的测试，待添加：
+### 新测试
 
 - `KeyMappingTest.kt` - 测试 `KeyMapping.describe()`、`keyCodeToName()`、子命令约束（MAX_SUB_COMMANDS）
 - `OperationLayerTest.kt` - 测试 `OperationLayer.getMapping()`、`ControllerProfile.findLayer()`/`findLayerByTrigger()`/`createDefault()`
-- `ControllerConfigTest.kt`（新版） - 测试 version=2 JSON 序列化/反序列化往返、动作类型解析、子命令解析
+- `ControllerConfigTest.kt`（新版） - 测试 version=3 JSON 序列化/反序列化往返、动作类型解析、子命令解析
+- `ProtocolConstantsTest.kt` - 锁定 TCP 协议常量取值，防止与 Rust 端（[docs/protocol.md](docs/protocol.md)）漂移
 
 ### 测试策略
 
@@ -2990,7 +2990,7 @@ KeyboardMouseMapper.handleMapping(X, isPressed=true, mapping)
 ### Q: 悬浮窗显示"等待Windows客户端连接"
 
 **A**: 这是正常状态，表示Android端TCP服务器已启动，等待Winlator内的 `inputbridge_client.exe` 连接。请：
-1. 确认已编译 `inputbridge_client.exe`（运行 `windows/build.bat` 或 `./gradlew assembleDebug` 自动编译）
+1. 确认已编译 `inputbridge_client.exe`（`./gradlew assembleDebug` 会自动调用 cargo 编译，或在 `windows/rust_client` 下执行 `cargo build --release`）
 2. 将exe复制到Winlator的C盘
 3. 在Winlator中运行 `inputbridge_client.exe`
 4. 连接成功后悬浮窗会显示"客户端已连接"
@@ -3091,10 +3091,10 @@ layer.buttonMappings[ControllerButton.X] = KeyMapping(
 
 ### Q: compileWindowsExe task 失败怎么办？
 
-**A**: `compileWindowsExe` task 在 gcc 不可用或编译失败时会跳过（使用 assets 中已有的 exe），不会中断 APK 构建。如需手动编译:
-1. 安装 MinGW gcc（推荐 MSYS2 ucrt64）
-2. 运行 `cd windows && build.bat`
-3. 将编译出的 `inputbridge_client.exe` 复制到 `app/src/main/assets/`
+**A**: `compileWindowsExe` task 在 cargo 不可用或编译失败时会跳过（使用 assets 中已有的 exe），不会中断 APK 构建。如需手动编译:
+1. 安装 Rust 工具链（rustup 或 MSYS2 ucrt64 的 cargo）
+2. 运行 `cd windows/rust_client && cargo build --release`
+3. 将 `target/release/inputbridge_client.exe` 复制到 `app/src/main/assets/`
 
 ### Q: 与旧版（基于 ActionSet/ChordBinding）的差异？
 
@@ -3116,7 +3116,7 @@ layer.buttonMappings[ControllerButton.X] = KeyMapping(
 - JDK 8
 - Android SDK 37 (compileSdk)
 - 最低支持 Android 7.0 (minSdk 24)
-- MinGW gcc（可选，用于 compileWindowsExe task 自动编译 Windows exe）
+- Rust 工具链 cargo（可选，用于 compileWindowsExe task 自动编译 Windows exe）
 
 ### 构建命令
 

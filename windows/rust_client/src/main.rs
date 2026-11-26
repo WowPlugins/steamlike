@@ -47,6 +47,8 @@ fn main() -> eframe::Result<()> {
         "==== SteamLike InputBridge v{} 启动 ====",
         runtime::version()
     ));
+    // version.txt 第二行标注的 Rust 版本与当前 exe 不一致时告警（离线也能发现 exe 过期）
+    runtime::check_version_file();
 
     let cfg = config::load();
     apply_runtime(&cfg);
