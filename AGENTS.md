@@ -63,9 +63,8 @@ The APK export bundles **only** `inputbridge_client.exe` + `version.txt` into `D
   - `config.rs` — `rust_client_config.json` (exe directory), key mappings, conditions
   - `runtime.rs` — shared runtime state (atomics + mutexes), logging, version reporting
   - `clipboard.rs` — clipboard polling → `clipboard_log.txt` + APK
-  - `wowmem.rs` — reads character state from the `SLState` WoW addon's Lua table
+  - `wowmem.rs` — reads character state from the `SLState` WoW addon's Lua table (the addon lives in its own repo and is installed manually into `Interface/AddOns/SLState`; it is not bundled here)
 - `docs/protocol.md` — single source of truth for the TCP packet types
-- `SLState.lua` / `SLState.toc` — WoW addon that publishes character state into a Lua array
 
 ## Key architecture facts
 

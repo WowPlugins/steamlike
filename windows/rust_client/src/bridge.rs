@@ -26,7 +26,7 @@
 
 use std::io::{ErrorKind, Read, Write};
 use std::net::{SocketAddr, TcpStream, ToSocketAddrs};
-use std::sync::atomic::Ordering;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Mutex;
 use std::time::Duration;
 
@@ -60,8 +60,18 @@ pub const MSG_UNLOCK_MOUSE: u8 = 0x26;
 pub const MSG_MAPPED_KEY: u8 = 0x27;
 pub const MSG_LOCK_STATE: u8 = 0x28;
 
-/// 待发送的剪贴板文本包队列（剪贴板线程投递，网络线程取走）
-static OUTBOX: Mutex<Vec<Vec<u8>>> = Mutex::new(Vec::new());
+/// 待发送的字节流（多条包直接拼接；网络线程取出后一次 write 写出）
+static OUTBOX: Mutex<Vec<u8>> = Mutex::new(Vec::new());
+/// 队列中的字节数：无数据时避免网络线程每次轮询都加锁
+static OUTBOX_LEN: AtomicUsize = AtomicUsize::new(0);
+
+/// 把一段已序列化的包追加到发送队列
+fn queue_packet(bytes: &[u8]) {
+    if let Ok(mut queue) = OUTBOX.lock() {
+        queue.extend_from_slice(bytes);
+        OUTBOX_LEN.fetch_add(bytes.len(), Ordering::Relaxed);
+    }
+}
 /// APK 转发按键（0x27）的按下状态，用于忽略长按期间连发的重复 down
 static APK_KEY_DOWN: Mutex<[bool; 256]> = Mutex::new([false; 256]);
 
@@ -75,9 +85,7 @@ pub fn send_toggle_keyboard() {
     }
     let mut packet = [0u8; PACKET_SIZE];
     packet[0] = MSG_TOGGLE_KEYBOARD;
-    if let Ok(mut queue) = OUTBOX.lock() {
-        queue.push(packet.to_vec());
-    }
+    queue_packet(&packet);
 }
 
 /// 通知 APK 拉起安卓软键盘（0x25，8 字节定长包，无载荷）
@@ -90,9 +98,7 @@ pub fn send_show_keyboard() {
     }
     let mut packet = [0u8; PACKET_SIZE];
     packet[0] = MSG_SHOW_KEYBOARD;
-    if let Ok(mut queue) = OUTBOX.lock() {
-        queue.push(packet.to_vec());
-    }
+    queue_packet(&packet);
 }
 
 /// 上报鼠标锁存状态（0x28，8 字节定长包）
@@ -110,9 +116,7 @@ fn send_lock_state(right_locked: bool, left_locked: bool, wasd_suspend: bool) {
     packet[1] = right_locked as u8;
     packet[2] = left_locked as u8;
     packet[3] = wasd_suspend as u8;
-    if let Ok(mut queue) = OUTBOX.lock() {
-        queue.push(packet.to_vec());
-    }
+    queue_packet(&packet);
 }
 
 /// 把一段剪贴板文本排队发送给 APK
@@ -130,23 +134,27 @@ pub fn send_text(text: &str) {
     head[1..5].copy_from_slice(&(bytes.len() as u32).to_le_bytes());
     packet.extend_from_slice(&head);
     packet.extend_from_slice(bytes);
-    if let Ok(mut queue) = OUTBOX.lock() {
-        queue.push(packet);
-    }
+    queue_packet(&packet);
 }
 
 /// 把队列里的文本包全部写出；返回 false 表示连接已损坏
 fn flush_outbox(stream: &mut TcpStream) -> bool {
-    let packets: Vec<Vec<u8>> = match OUTBOX.lock() {
-        Ok(mut queue) => std::mem::take(&mut *queue),
+    // 无待发数据时直接返回，不加锁
+    if OUTBOX_LEN.load(Ordering::Relaxed) == 0 {
+        return true;
+    }
+    let data = match OUTBOX.lock() {
+        Ok(mut queue) => {
+            OUTBOX_LEN.store(0, Ordering::Relaxed);
+            std::mem::take(&mut *queue)
+        }
         Err(_) => return true,
     };
-    for packet in packets {
-        if stream.write_all(&packet).is_err() {
-            return false;
-        }
+    if data.is_empty() {
+        return true;
     }
-    true
+    // 整批一次写：反向包很小，逐包 write 会把系统调用放大
+    stream.write_all(&data).is_ok()
 }
 
 /// 客户端版本信息包（0x20）：把 exe 编译时的版本号上报给 APK
@@ -181,6 +189,8 @@ fn bridge_thread() {
     let mut buf: Vec<u8> = Vec::with_capacity(4096);
     // 上一次上报给 APK 的锁存状态（None = 尚未上报，连接建立后强制上报一次）
     let mut last_lock_state: Option<(bool, bool, bool)> = None;
+    // 界面最近一次设置的连接目标：只有变化时才克隆，避免 50ms 轮询持续分配字符串
+    let mut last_target: Option<(String, u16)> = None;
 
     loop {
         if !WANT_CONNECT.load(Ordering::Relaxed) {
@@ -197,10 +207,18 @@ fn bridge_thread() {
             continue;
         }
 
-        let target = BRIDGE_TARGET.lock().unwrap().clone();
+        // 锁内比较即可判断是否变化，未变化时不做任何分配
+        let target_changed = {
+            let guard = BRIDGE_TARGET.lock().unwrap();
+            last_target.as_ref() != Some(&*guard)
+        };
+        if target_changed {
+            last_target = Some(BRIDGE_TARGET.lock().unwrap().clone());
+        }
+        let target = last_target.as_ref().unwrap();
 
         // 服务器地址/端口被界面改动 → 断开后按新地址重连
-        if stream.is_some() && connected_to.as_ref() != Some(&target) {
+        if stream.is_some() && connected_to.as_ref() != Some(target) {
             stream = None;
             connected_to = None;
             buf.clear();

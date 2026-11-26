@@ -11,7 +11,7 @@ android {  // 语法：android{} 块，Android 应用模块的配置入口
         minSdk = 24  // 语法：minSdk 最低支持 Android 版本（Android 7.0）
         targetSdk = 37  // 语法：targetSdk 目标 Android 版本（37，决定系统兼容行为）
         versionCode = 1  // 内部版本号（整数，用于版本比较/升级判断）
-        versionName = "0.1.164"  // 对外显示的版本名称
+        versionName = "0.1.165"  // 对外显示的版本名称
 
         // Rust 客户端期望版本（取自 Cargo.toml，只在 Rust 代码/依赖改动时才会变化）
         // APK 用它和 Windows 客户端上报的 exe 版本比对，不一致时提示重新导出客户端
@@ -98,7 +98,7 @@ tasks.register("compileWindowsExe") {  // 语法：tasks.register("任务名"){.
     // 注意：刻意不把 versionName 作为输入——exe 的版本号改为运行时读取
     // 同目录 version.txt（由 APK 导出时生成），所以仅改版本号时无需重编 Rust。
     inputs.dir(rustProjectDir.resolve("src"))  // 输入：Rust 源码目录（.rs 文件内容变化才需重编）
-    inputs.dir(rustProjectDir.resolve("assets"))  // 输入：内嵌资源（SLState 插件经 include_str! 编进 exe）
+    inputs.dir(rustProjectDir.resolve("assets"))  // 输入：需要随 exe 分发的内嵌资源目录（当前为空）
     inputs.file(manifestFile)  // 输入：Cargo.toml（依赖/特性变化会影响产物）
     inputs.file(rustProjectDir.resolve("Cargo.lock"))  // 输入：Cargo.lock（依赖版本锁定变化会影响产物）
     outputs.files(outputExe, assetsExe)  // 输出：exe 归档与 assets 副本

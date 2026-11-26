@@ -5,8 +5,10 @@
 //! 所有钩子需要读取的运行期参数都放在原子量里；状态文本/日志这类
 //! 只有非钩子线程会访问的数据才使用互斥锁。
 
+use std::collections::VecDeque;
 use std::fs::File;
-use std::sync::atomic::{AtomicBool, AtomicI64, AtomicU32, AtomicU64};
+use std::io::BufWriter;
+use std::sync::atomic::{AtomicBool, AtomicI64, AtomicU32, AtomicU64, AtomicUsize};
 use std::sync::Mutex;
 use std::sync::OnceLock;
 
@@ -84,6 +86,16 @@ pub static RT: Runtime = Runtime {
 
 /// APK 服务器地址与端口（界面可改，网络线程每次重连时读取）
 pub static BRIDGE_TARGET: Mutex<(String, u16)> = Mutex::new((String::new(), 0));
+
+/// 更新网络目标：内容没变就不改写，避免界面每次重绘都克隆一次字符串
+pub fn set_bridge_target(ip: &str, port: u16) {
+    let mut guard = BRIDGE_TARGET.lock().unwrap();
+    if guard.0 != ip {
+        guard.0.clear();
+        guard.0.push_str(ip);
+    }
+    guard.1 = port;
+}
 /// 是否连接 APK 服务器
 pub static WANT_CONNECT: AtomicBool = AtomicBool::new(true);
 /// 当前是否已连上 APK 服务器
@@ -91,11 +103,15 @@ pub static CONNECTED: AtomicBool = AtomicBool::new(false);
 /// 网络状态文本（界面展示）
 pub static STATUS: Mutex<String> = Mutex::new(String::new());
 
-static LOGS: Mutex<Vec<String>> = Mutex::new(Vec::new());
+static LOGS: Mutex<VecDeque<String>> = Mutex::new(VecDeque::new());
 const MAX_LOGS: usize = 200;
+/// 日志版本号：每次追加 +1，界面只在它变化时重新取快照
+static LOG_VERSION: AtomicU64 = AtomicU64::new(0);
+/// 距上次冲刷文件日志的条数：攒够一批再写，减少热路径上的 write 系统调用
+static LOG_SINCE_FLUSH: AtomicUsize = AtomicUsize::new(0);
 
 /// 文件日志句柄（exe 目录下的 inputbridge_client.log，启动时清空重写）
-static LOG_FILE: Mutex<Option<File>> = Mutex::new(None);
+static LOG_FILE: Mutex<Option<BufWriter<File>>> = Mutex::new(None);
 
 /// 初始化文件日志：清空 exe 目录下旧的 inputbridge_client.log
 ///
@@ -110,20 +126,13 @@ pub fn init_file_log() {
     let path = dir.join("inputbridge_client.log");
     match File::create(&path) {
         Ok(f) => {
-            *LOG_FILE.lock().unwrap() = Some(f);
+            *LOG_FILE.lock().unwrap() = Some(BufWriter::new(f));
         }
         Err(e) => println!("无法打开日志文件 {:?}：{}", path, e),
     }
 }
 
-/// 当前本地时间戳文本，格式 [HH:MM:SS.mmm]
-fn timestamp() -> String {
-    let st = unsafe { GetLocalTime() };
-    format!(
-        "[{:02}:{:02}:{:02}.{:03}]",
-        st.wHour, st.wMinute, st.wSecond, st.wMilliseconds
-    )
-}
+
 
 /// 客户端版本号（进程内缓存一次）
 ///
@@ -239,31 +248,59 @@ pub fn display_version() -> String {
 ///
 /// 注意：绝对不要在钩子回调里调用（钩子回调必须保持无锁）。
 pub fn log(msg: impl AsRef<str>) {
-    let line = format!("{} {}", timestamp(), msg.as_ref());
+    // 直接拼进最终行：只分配一次，不再为时间戳单独建 String
+    let st = unsafe { GetLocalTime() };
+    let mut line = String::with_capacity(msg.as_ref().len() + 32);
+    {
+        use std::fmt::Write as _;
+        let _ = write!(
+            line,
+            "[{:02}:{:02}:{:02}.{:03}] {}",
+            st.wHour, st.wMinute, st.wSecond, st.wMilliseconds,
+            msg.as_ref()
+        );
+    }
+    // 控制台输出只在调试构建保留：Winlator 下 stdout 是同步写，release 会拖慢热路径
+    #[cfg(debug_assertions)]
     println!("{}", line);
     // 写入文件日志（未初始化或写失败时静默忽略，不影响运行）
     if let Ok(mut guard) = LOG_FILE.lock() {
         if let Some(f) = guard.as_mut() {
             use std::io::Write;
             let _ = writeln!(f, "{}", line);
-            let _ = f.flush();
+            // 攒够 16 条再冲刷，避免每次按键命中都产生一次 write 系统调用
+            if LOG_SINCE_FLUSH.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1 >= 16 {
+                LOG_SINCE_FLUSH.store(0, std::sync::atomic::Ordering::Relaxed);
+                let _ = f.flush();
+            }
         }
     }
+    LOG_VERSION.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     let mut guard = LOGS.lock().unwrap();
-    guard.push(line);
+    guard.push_back(line);
     if guard.len() > MAX_LOGS {
-        let excess = guard.len() - MAX_LOGS;
-        guard.drain(0..excess);
+        guard.pop_front();
     }
 }
 
-/// 取日志快照（界面每帧读取）
+/// 取日志快照（界面只在 [logs_version] 变化时调用）
 pub fn logs_snapshot() -> Vec<String> {
-    LOGS.lock().unwrap().clone()
+    LOGS.lock().unwrap().iter().cloned().collect()
 }
 
-pub fn set_status(s: impl Into<String>) {
-    *STATUS.lock().unwrap() = s.into();
+/// 日志版本号：每次追加日志时递增，界面据此决定是否重新取快照
+pub fn logs_version() -> u64 {
+    LOG_VERSION.load(std::sync::atomic::Ordering::Relaxed)
+}
+
+pub fn set_status(s: impl AsRef<str>) {
+    let text = s.as_ref();
+    let mut guard = STATUS.lock().unwrap();
+    // 内容没变就不重写：网络线程空闲时会反复上报同一个状态
+    if guard.as_str() != text {
+        guard.clear();
+        guard.push_str(text);
+    }
 }
 
 pub fn status_snapshot() -> String {

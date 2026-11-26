@@ -42,6 +42,8 @@ const SLOT: usize = 16;
 const NSLOT: usize = 16;
 /// 一帧的字节数
 const FRAME: usize = SLOT * NSLOT;
+/// 扫描分块大小（64KB）
+const SCAN_STEP: usize = 0x1_0000;
 /// anchor 浮点（对应插件里 1..3 号槽）
 const ANCHORS: [f64; 3] = [3494.38, 1982.44, 9918.71];
 /// 是否额外校验 TValue 类型标签（标准 Lua 5.1 的 number 为 3）
@@ -125,16 +127,20 @@ pub fn states_text() -> String {
 
 /// 把状态位转成「潜行中、战斗中」这样的文本
 fn describe(bits: u16) -> String {
-    let names: Vec<&str> = STATE_DEFS
-        .iter()
-        .enumerate()
-        .filter(|(i, _)| bits & (1u16 << i) != 0)
-        .map(|(_, (_, name))| *name)
-        .collect();
-    if names.is_empty() {
+    // 直接往目标字符串拼接：不再先建 Vec<&str> 再 join（省两次分配）
+    let mut text = String::new();
+    for (i, (_, name)) in STATE_DEFS.iter().enumerate() {
+        if bits & (1u16 << i) != 0 {
+            if !text.is_empty() {
+                text.push('、');
+            }
+            text.push_str(name);
+        }
+    }
+    if text.is_empty() {
         "（全部为假）".to_string()
     } else {
-        names.join("、")
+        text
     }
 }
 
@@ -329,6 +335,28 @@ fn probe_alive(h: HANDLE) -> bool {
     }
 }
 
+/// 比较 UTF-16 进程名与 ASCII 期望名（大小写不敏感，忽略结尾 NUL）
+///
+/// 进程枚举时用它替代 `String::from_utf16_lossy` + 小写化，
+/// 避免每个进程两次短命字符串分配。
+fn name_matches(buf: &[u16], wanted: &str) -> bool {
+    let wanted = wanted.as_bytes();
+    let mut i = 0usize;
+    for &ch in buf {
+        if ch == 0 {
+            break;
+        }
+        if i >= wanted.len() || ch > 0x7F {
+            return false;
+        }
+        if (ch as u8).to_ascii_lowercase() != wanted[i].to_ascii_lowercase() {
+            return false;
+        }
+        i += 1;
+    }
+    i == wanted.len()
+}
+
 /// 查找游戏进程 PID（找不到返回 0）
 ///
 /// 供窗口枚举兜底使用：Winlator 虚拟桌面里游戏窗口不一定属于前台进程，
@@ -343,10 +371,11 @@ pub fn game_pid() -> u32 {
         entry.dwSize = size_of::<PROCESSENTRY32W>() as u32;
         let mut ok = Process32FirstW(snapshot, &mut entry).is_ok();
         while ok {
-            let name = String::from_utf16_lossy(&entry.szExeFile)
-                .trim_end_matches('\0')
-                .to_ascii_lowercase();
-            if name == "wow.exe" || expected.as_deref() == Some(name.as_str()) {
+            if name_matches(&entry.szExeFile, "wow.exe")
+                || expected
+                    .as_deref()
+                    .map_or(false, |name| name_matches(&entry.szExeFile, name))
+            {
                 let _ = CloseHandle(snapshot);
                 return entry.th32ProcessID;
             }
@@ -365,10 +394,9 @@ fn open_wow(expected: Option<&str>) -> Option<HANDLE> {
         entry.dwSize = size_of::<PROCESSENTRY32W>() as u32;
         let mut ok = Process32FirstW(snapshot, &mut entry).is_ok();
         while ok {
-            let name = String::from_utf16_lossy(&entry.szExeFile)
-                .trim_end_matches('\0')
-                .to_ascii_lowercase();
-            if name == "wow.exe" || expected == Some(name.as_str()) {
+            if name_matches(&entry.szExeFile, "wow.exe")
+                || expected.map_or(false, |name| name_matches(&entry.szExeFile, name))
+            {
                 let _ = CloseHandle(snapshot);
                 return OpenProcess(
                     PROCESS_QUERY_INFORMATION | PROCESS_VM_READ,
@@ -451,6 +479,8 @@ fn read_frame(h: HANDLE, addr: usize) -> Option<(u16, u16)> {
 ///
 /// 只扫已提交、可读的私有区（Lua 的堆来自 malloc，属于 MEM_PRIVATE）。
 fn find_frame(h: HANDLE, regions: &mut usize) -> Option<usize> {
+    // 扫描缓冲只分配一次，所有区域复用：单次重扫可省掉上千次 64KB 的分配与清零
+    let mut chunk = vec![0u8; SCAN_STEP + FRAME];
     let mut addr: usize = 0x1_0000;
     while addr < 0x8000_0000 {
         let mut info = MEMORY_BASIC_INFORMATION::default();
@@ -475,7 +505,7 @@ fn find_frame(h: HANDLE, regions: &mut usize) -> Option<usize> {
             && (info.Protect.0 & (PAGE_NOACCESS.0 | PAGE_GUARD.0)) == 0;
         if readable && size >= FRAME {
             *regions += 1;
-            if let Some(found) = scan_region(h, base, size) {
+            if let Some(found) = scan_region(h, base, size, &mut chunk) {
                 return Some(found);
             }
         }
@@ -485,12 +515,10 @@ fn find_frame(h: HANDLE, regions: &mut usize) -> Option<usize> {
 }
 
 /// 按 64KB 分块扫描一个内存区域，块与块之间重叠一帧，避免 anchor 跨边界漏掉
-fn scan_region(h: HANDLE, base: usize, size: usize) -> Option<usize> {
-    const STEP: usize = 0x1_0000; // 64KB
-    let mut chunk = vec![0u8; STEP + FRAME];
+fn scan_region(h: HANDLE, base: usize, size: usize, chunk: &mut [u8]) -> Option<usize> {
     let mut offset = 0usize;
     while offset < size {
-        let len = (size - offset).min(STEP + FRAME);
+        let len = (size - offset).min(SCAN_STEP + FRAME);
         let mut read = 0usize;
         let ok = unsafe {
             ReadProcessMemory(
@@ -513,7 +541,7 @@ fn scan_region(h: HANDLE, base: usize, size: usize) -> Option<usize> {
                 k += 8;
             }
         }
-        offset += STEP;
+        offset += SCAN_STEP;
     }
     None
 }

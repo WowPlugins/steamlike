@@ -7,7 +7,7 @@ use eframe::egui;
 
 use crate::config::{self, ClientConfig};
 use crate::hooks;
-use crate::runtime::{self, BRIDGE_TARGET, CONNECTED, RT, WANT_CONNECT};
+use crate::runtime::{self, CONNECTED, RT, WANT_CONNECT};
 
 /// 可选按键（完整键位表：字母、数字、符号、控制键、编辑键、修饰键、功能键）
 const KEY_CHOICES: &[(u32, &str)] = &[
@@ -340,6 +340,10 @@ pub struct App {
     last_topmost_at: std::time::Instant,
     /// 是否已恢复上次退出时的窗口位置（只在首个界面帧做一次）
     pos_restored: bool,
+    /// 日志页缓存的快照（只在日志版本变化时重新克隆）
+    logs_cache: Vec<String>,
+    /// 缓存对应的日志版本号
+    logs_cache_version: u64,
 }
 
 impl App {
@@ -428,6 +432,8 @@ impl App {
             last_region: (0, 0, 0),
             last_topmost_at: std::time::Instant::now(),
             pos_restored: false,
+            logs_cache: Vec::new(),
+            logs_cache_version: u64::MAX,
         }
     }
 
@@ -622,7 +628,8 @@ impl eframe::App for App {
             .store(self.cfg.cursor_park_offscreen, Ordering::SeqCst);
         RT.clipboard_sync
             .store(self.cfg.clipboard_sync, Ordering::SeqCst);
-        *BRIDGE_TARGET.lock().unwrap() = (self.cfg.server_ip.clone(), self.cfg.server_port);
+        // 内容未变时内部直接返回，不会每帧克隆字符串
+        runtime::set_bridge_target(&self.cfg.server_ip, self.cfg.server_port);
         WANT_CONNECT.store(self.cfg.auto_connect && !mismatch, Ordering::SeqCst);
 
         // 版本不一致时强制关闭键鼠拦截（配置本身不改，版本恢复一致后自动生效）
@@ -1223,12 +1230,17 @@ impl App {
     /// 日志 Tab 页
     fn tab_logs(&mut self, ui: &mut egui::Ui) {
         Self::section(ui, "运行日志");
-        let logs = runtime::logs_snapshot();
+        // 只有日志版本变化时才重新克隆：日志页静止时不再每 300ms 复制 200 条字符串
+        let version = runtime::logs_version();
+        if version != self.logs_cache_version {
+            self.logs_cache_version = version;
+            self.logs_cache = runtime::logs_snapshot();
+        }
         egui::ScrollArea::vertical()
             .max_height(300.0)
             .stick_to_bottom(true)
             .show(ui, |ui| {
-                for line in &logs {
+                for line in &self.logs_cache {
                     ui.label(line);
                 }
             });

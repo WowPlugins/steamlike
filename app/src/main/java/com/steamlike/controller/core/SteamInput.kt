@@ -68,6 +68,8 @@ class SteamInput(context: Context) { // 主控制器类（语法：class 声明�
     // D-Pad HAT 轴状态跟踪，避免 MotionEvent 重复触发
     // 记录当前 HAT 轴按下的方向（无 = emptySet）
     private val hatState = mutableSetOf<ControllerButton>() // HAT 轴按下方向集合（语法：mutableSetOf 可变集合 + <T> 泛型指定元素类型）
+    // 摇杆读取复用数组：[左X, 左Y, 右X, 右Y]，避免每个 MotionEvent 构造 4 个 Vector2
+    private val stickScratch = FloatArray(4)
     // 扳机轴（L2/R2）按下状态，避免重复触发
     private var l2Pressed = false // L2 扳机按下状态标记（语法：var 可变变量）
     private var r2Pressed = false // R2 扳机按下状态标记
@@ -592,20 +594,22 @@ class SteamInput(context: Context) { // 主控制器类（语法：class 声明�
         val device = event.device ?: return false // 无设备对象则返回
         val controller = connectedControllers[deviceId] ?: return false // 设备未连接则返回
 
-        val leftStick = ControllerInputMapper.getStickValue(event, ControllerStick.LEFT_STICK, device) // 读取左摇杆位置
-        val rightStick = ControllerInputMapper.getStickValue(event, ControllerStick.RIGHT_STICK, device) // 读取右摇杆位置
+        // 复用数组读取摇杆，避免每个 MotionEvent 构造 4 个 Vector2（摇杆事件 60~200Hz）
+        val sticks = stickScratch
+        ControllerInputMapper.getStickValueInto(event, ControllerStick.LEFT_STICK, device, sticks, 0) // 左摇杆 → [0],[1]
+        ControllerInputMapper.getStickValueInto(event, ControllerStick.RIGHT_STICK, device, sticks, 2) // 右摇杆 → [2],[3]
 
-        // 应用死区
+        // 应用死区（就地计算，不构造向量）
         val deadzone = profile.globalSettings.deadzone // 读取全局死区配置
-        val leftStickDz = leftStick.withDeadzone(deadzone) // 左摇杆应用死区
-        val rightStickDz = rightStick.withDeadzone(deadzone) // 右摇杆应用死区
+        applyDeadzoneInPlace(sticks, 0, deadzone) // 左摇杆应用死区
+        applyDeadzoneInPlace(sticks, 2, deadzone) // 右摇杆应用死区
 
         // 通知摇杆事件（始终回调）
         // 原实现仅在"死区外或有居中事件"时回调：摇杆从死区外回中经过死区时
         // 事件被跳过，映射器的 EMA 平滑值会冻结在最后位置，产生拖尾抖动。
         // 始终回调 (0,0) 让平滑值立即收敛到零。
-        onStickMapped?.invoke(ControllerStick.LEFT_STICK, leftStickDz.x, leftStickDz.y) // 回调左摇杆位置
-        onStickMapped?.invoke(ControllerStick.RIGHT_STICK, rightStickDz.x, rightStickDz.y) // 回调右摇杆位置
+        onStickMapped?.invoke(ControllerStick.LEFT_STICK, sticks[0], sticks[1]) // 回调左摇杆位置
+        onStickMapped?.invoke(ControllerStick.RIGHT_STICK, sticks[2], sticks[3]) // 回调右摇杆位置
 
         // 处理 D-Pad 的 HAT 轴事件（很多手柄的 D-Pad 通过 MotionEvent 而非 KeyEvent 发送）
         handleDpadHatAxis(event) // 处理 D-Pad HAT 轴事件
@@ -628,6 +632,28 @@ class SteamInput(context: Context) { // 主控制器类（语法：class 声明�
      *
      * @param event MotionEvent
      */
+    /**
+     * 就地应用摇杆死区（与 [Vector2.withDeadzone] 算法完全一致）
+     *
+     * @param buf 存放 [x, y, ...] 的复用数组
+     * @param offset 本次摇杆在数组中的起始下标
+     * @param deadzone 死区（0.0~1.0）
+     */
+    private fun applyDeadzoneInPlace(buf: FloatArray, offset: Int, deadzone: Float) {
+        val x = buf[offset]
+        val y = buf[offset + 1]
+        val mag = kotlin.math.sqrt(x * x + y * y) // 向量长度
+        if (mag < deadzone) { // 死区内归零
+            buf[offset] = 0f
+            buf[offset + 1] = 0f
+            return
+        }
+        // 死区外重新缩放到 0~1：(mag - deadzone) / (1 - deadzone)，再折算成单位方向上的系数
+        val scale = (mag - deadzone) / (1f - deadzone) / mag
+        buf[offset] = x * scale
+        buf[offset + 1] = y * scale
+    }
+
     private fun handleDpadHatAxis(event: MotionEvent) { // 处理 D-Pad HAT 轴（语法：private 私有函数）
         val hatX = event.getAxisValue(MotionEvent.AXIS_HAT_X) // 读取 HAT_X 轴值
         val hatY = event.getAxisValue(MotionEvent.AXIS_HAT_Y) // 读取 HAT_Y 轴值

@@ -132,6 +132,7 @@ class InputBridgeServer(  // 语法：class 声明类；InputBridge TCP 服务�
 
         const val PACKET_SIZE = 8  // 语法：const val 编译期常量；协议数据包固定长度 8 字节
         const val MAX_CLIPBOARD_BYTES = 1 shl 20  // 单个剪贴板文本正文上限（1 MB，防御异常数据）
+    private const val READ_BUFFER_SIZE = 1024  // 单次读取缓冲：一次 read 可容纳上百个小包，减少系统调用
     }  // 结束 companion object
 
     private var serverSocket: ServerSocket? = null  // 语法：private var + ?可空；TCP 服务器套接字
@@ -479,36 +480,40 @@ class InputBridgeServer(  // 语法：class 声明类；InputBridge TCP 服务�
     private fun handleClient(client: ClientConnection) {  // 语法：private fun 私有函数；处理单个客户端连接
         try {  // 尝试读取客户端数据
             val input = client.socket.getInputStream()  // 获取客户端输入流
-            val buffer = ByteArray(64)  // 语法：val + ByteArray；单次读取缓冲区
-            val pending = java.io.ByteArrayOutputStream()  // 尚未凑成完整帧的字节（跨 read 累积）
+            // 固定读缓冲 + 有效长度：只分配一次，解析时直接按偏移读，不再每次 read 都复制整段
+            var buffer = ByteArray(READ_BUFFER_SIZE)  // 单次读取缓冲区
+            var length = 0  // buffer 中的有效字节数
             var textRemaining = 0  // 剪贴板正文剩余待读字节数（0 表示当前不在读正文）
-            var textBuffer: java.io.ByteArrayOutputStream? = null  // 剪贴板正文累积缓冲区
+            var textBuffer: ByteArray? = null  // 剪贴板正文累积缓冲（按包长预分配）
+            var textLength = 0  // 正文已写入字节数
+            val packet = ByteArray(PACKET_SIZE)  // 每个连接复用同一个 8 字节帧
             while (isRunning.get() && !client.closed) {  // 语法：while + && + !；运行且未关闭时持续读
-                val read = input.read(buffer)  // 读取客户端发来的数据
+                if (length == buffer.size) buffer = buffer.copyOf(buffer.size * 2)  // 极端情况下扩容
+                val read = input.read(buffer, length, buffer.size - length)  // 读取客户端发来的数据
                 if (read == -1) break  // 客户端断开
-                pending.write(buffer, 0, read)  // 把本次读到的字节追加到累积缓冲
+                length += read  // 更新有效字节数
 
-                val data = pending.toByteArray()  // 当前累计的完整字节（解析后写回剩余部分）
-                var consumed = 0  // 已解析字节偏移
+                var offset = 0  // 已解析字节偏移
                 while (true) {  // 循环解析直到数据不足一帧
                     if (textRemaining > 0) {  // 正在读取剪贴板正文
-                        val take = minOf(textRemaining, data.size - consumed)  // 本次可读的正文字节数
-                        textBuffer!!.write(data, consumed, take)  // 追加到正文缓冲
-                        consumed += take  // 更新偏移
+                        val take = minOf(textRemaining, length - offset)  // 本次可读的正文字节数
+                        System.arraycopy(buffer, offset, textBuffer!!, textLength, take)  // 追加到正文缓冲
+                        textLength += take  // 更新正文长度
+                        offset += take  // 更新偏移
                         textRemaining -= take  // 更新剩余字节数
                         if (textRemaining == 0) {  // 正文读满
-                            onClipboardText?.invoke(String(textBuffer!!.toByteArray(), Charsets.UTF_8))  // 回调 UTF-8 文本
+                            onClipboardText?.invoke(String(textBuffer!!, 0, textLength, Charsets.UTF_8))  // 回调 UTF-8 文本
                             textBuffer = null  // 释放正文缓冲
+                            textLength = 0
                         }  // 结束正文读满判断
-                        if (consumed >= data.size) break  // 数据已消费完，等下一次 read
+                        if (offset >= length) break  // 数据已消费完，等下一次 read
                         continue  // 还有数据，继续解析后续帧
                     }  // 结束正文读取分支
 
-                    if (data.size - consumed < PACKET_SIZE) break  // 不足 8 字节，等下一次 read
+                    if (length - offset < PACKET_SIZE) break  // 不足 8 字节，等下一次 read
 
-                    val packet = ByteArray(PACKET_SIZE)  // 取出一个 8 字节帧
-                    System.arraycopy(data, consumed, packet, 0, PACKET_SIZE)  // 拷贝帧内容
-                    consumed += PACKET_SIZE  // 更新偏移
+                    System.arraycopy(buffer, offset, packet, 0, PACKET_SIZE)  // 取出一个 8 字节帧（复用数组）
+                    offset += PACKET_SIZE  // 更新偏移
 
                     if (packet[0] == MSG_CLIPBOARD_TEXT) {  // 剪贴板文本包：后续还有变长正文
                         val len = (packet[1].toInt() and 0xFF) or  // 语法：位或；正文长度低 8 位
@@ -520,19 +525,17 @@ class InputBridgeServer(  // 语法：class 声明类；InputBridge TCP 服务�
                             return  // 直接返回（finally 会关闭连接）
                         }  // 结束长度校验
                         textRemaining = len  // 记录待读正文长度
-                        if (len > 0) {  // 非空正文才需要缓冲
-                            textBuffer = java.io.ByteArrayOutputStream(len)  // 按长度预分配正文缓冲
-                        }  // 结束非空正文分支
+                        textLength = 0
+                        if (len > 0) textBuffer = ByteArray(len)  // 按长度预分配正文缓冲
                     } else {  // 其余类型仍是 8 字节定长包
                         handleClientPacket(packet)  // 处理该数据包
                     }  // 结束包类型判断
                 }  // 结束内层解析循环
 
-                if (consumed > 0) {  // 有已解析字节时，把未解析的尾部写回累积缓冲
-                    val rest = data.copyOfRange(consumed, data.size)  // 取出未消费尾部
-                    pending.reset()  // 清空累积缓冲
-                    if (rest.isNotEmpty()) pending.write(rest, 0, rest.size)  // 写回剩余字节
-                }  // 结束尾部写回
+                if (offset > 0) {  // 有已解析字节时，把未解析的尾部前移复用
+                    System.arraycopy(buffer, offset, buffer, 0, length - offset)
+                    length -= offset
+                }  // 结束尾部处理
             }  // 结束 while 循环
         } catch (e: IOException) {  // 语法：catch 捕获 IO 异常
             // 客户端断开

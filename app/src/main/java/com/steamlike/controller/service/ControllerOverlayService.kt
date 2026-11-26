@@ -178,7 +178,7 @@ class ControllerOverlayService : Service() {  // class=类声明；继承 Servic
         const val EXTRA_CAPTURING = "capturing"  // const val=编译期常量；捕获标志 extra 键
 
         /** 智能监控轮询间隔（毫秒） */
-        private const val SMART_MONITOR_INTERVAL_MS = 1500L  // const val=编译期常量；长整型；智能监控轮询间隔 1.5 秒
+        private const val SMART_MONITOR_INTERVAL_MS = 3000L  // const val=编译期常量；长整型；智能监控轮询间隔 3 秒（每次都要跨进程查前台应用，放宽以减少 Binder 开销）
 
         /** 前台应用查询时间窗（毫秒） */
         private const val SMART_FOREGROUND_WINDOW_MS = 60_000L  // const val=编译期常量；长整型；前台应用查询时间窗 60 秒
@@ -1037,8 +1037,10 @@ class ControllerOverlayService : Service() {  // class=类声明；继承 Servic
      * 这里周期查询系统真实输入设备作为兜底，确保悬浮窗图标状态始终准确。
      */
     private var controllerMonitor: Runnable? = null  // var=可变变量；?=可空类型；手柄连接状态轮询任务
+    /** 手柄检测专用工作线程：枚举 InputDevice + 蓝牙 HID 查询都是跨进程调用，不能放在主线程 */
+    private val controllerDetectExecutor = java.util.concurrent.Executors.newSingleThreadExecutor()  // 单线程执行器；检测结果再 post 回主线程
     /** 上一次打印的连接检测摘要（用于诊断日志去重，仅在变化时打印） */
-    private var lastDetectSummary: String? = null  // var=可变变量；?=可空类型；上一次连接检测摘要
+    @Volatile private var lastDetectSummary: String? = null  // 上一次连接检测摘要（检测线程写、日志去重用）
     /**
      * 蓝牙 HID Host profile 代理
      *
@@ -1047,9 +1049,9 @@ class ControllerOverlayService : Service() {  // class=类声明；继承 Servic
      * [hidProxyReady] 置 true，轮询即可用 [BluetoothProfile.getConnectedDevices]
      * 判断蓝牙手柄真实在线状态（该 API 不依赖系统广播，不受 MIUI 后台限制）。
      */
-    private var hidProxy: BluetoothProfile? = null  // var=可变变量；?=可空类型；蓝牙 HID Host 代理
+    @Volatile private var hidProxy: BluetoothProfile? = null  // 蓝牙 HID Host 代理（主线程赋值、检测线程读取）
     /** HID Host 代理是否成功获取（false 时退化为仅设备条目判断） */
-    private var hidProxyReady: Boolean = false  // var=可变变量；HID 代理是否就绪
+    @Volatile private var hidProxyReady: Boolean = false  // HID 代理是否就绪
 
     /**
      * 创建全屏透明焦点窗口捕获手柄事件
@@ -1645,21 +1647,27 @@ class ControllerOverlayService : Service() {  // class=类声明；继承 Servic
         Log.i(TAG, "Controller monitor started")  // 打印轮询启动日志
         controllerMonitor = object : Runnable {  // object=匿名对象；实现 Runnable 接口
             override fun run() {  // override=覆写父类方法；fun=函数声明；Runnable 的执行体
-                val connected = detectControllerConnected()  // val=只读变量；检测手柄是否在线
-                // 仅状态变化时刷新 UI，避免高频重复设置文本
-                if (connected != controllerConnected) {  // if 判断：连接状态发生变化
-                    controllerConnected = connected  // 更新连接状态
-                    updateCollapsedViewText(mapper?.getActiveLayers() ?: emptyList())  // ?.=安全调用；?:=空值合并；刷新收起胶囊文本
-                    Log.i(TAG, "Controller monitor: connected=$connected")  // 字符串模板 "$var"=插值变量；打印连接状态日志
-                }  // 结束 if 块
-                // 捕获状态自愈：视图重建（展开↔收起/映射页）时可能丢掉一次刷新，
-                // 与最近一次反映到 UI 的状态对比，漂移就补刷，避免「已捕获却显示未捕获」
-                if (lastUiCapturing != isCapturing) {  // if 判断：UI 状态与实际捕获状态不一致
-                    Log.i(TAG, "Capture UI resync: isCapturing=$isCapturing")  // 打印自愈日志
-                    updateCaptureButtonState()  // 重新刷新按钮/胶囊
-                }  // 结束 if 块
-                refreshPhoneBattery()  // 顺带刷新手机电量（收起与展开都要显示）
-                mainHandler.postDelayed(this, controllerMonitorIntervalMs)  // 延迟一个周期后再次轮询（自重复）
+                val task = this  // 捕获自身，用于回主线程后重新排期
+                controllerDetectExecutor.execute {  // 检测放到工作线程：设备枚举与蓝牙查询都是跨进程调用
+                    val connected = detectControllerConnected()  // 工作线程：检测手柄是否在线
+                    mainHandler.post {  // 回到主线程：只做状态判断与 UI 刷新
+                        if (controllerMonitor !== task) return@post  // 轮询已停止则丢弃结果
+                        // 仅状态变化时刷新 UI，避免高频重复设置文本
+                        if (connected != controllerConnected) {  // if 判断：连接状态发生变化
+                            controllerConnected = connected  // 更新连接状态
+                            updateCollapsedViewText(mapper?.getActiveLayers() ?: emptyList())  // ?.=安全调用；?:=空值合并；刷新收起胶囊文本
+                            Log.i(TAG, "Controller monitor: connected=$connected")  // 字符串模板 "$var"=插值变量；打印连接状态日志
+                        }  // 结束 if 块
+                        // 捕获状态自愈：视图重建（展开↔收起/映射页）时可能丢掉一次刷新，
+                        // 与最近一次反映到 UI 的状态对比，漂移就补刷，避免「已捕获却显示未捕获」
+                        if (lastUiCapturing != isCapturing) {  // if 判断：UI 状态与实际捕获状态不一致
+                            Log.i(TAG, "Capture UI resync: isCapturing=$isCapturing")  // 打印自愈日志
+                            updateCaptureButtonState()  // 重新刷新按钮/胶囊
+                        }  // 结束 if 块
+                        refreshPhoneBattery()  // 顺带刷新手机电量（收起与展开都要显示）
+                        mainHandler.postDelayed(task, controllerMonitorIntervalMs)  // 延迟一个周期后再次轮询（自重复）
+                    }
+                }
             }  // 结束 run 函数
         }  // 结束匿名对象
         mainHandler.post(controllerMonitor!!)  // !! = 非空断言；立即投递首次轮询
@@ -3136,6 +3144,7 @@ class ControllerOverlayService : Service() {  // class=类声明；继承 Servic
         stopSmartMonitor()  // 停止前台应用轮询线程
         // 停止手柄连接状态轮询
         stopControllerMonitor()  // 停止手柄状态轮询任务
+        controllerDetectExecutor.shutdownNow()  // 释放检测线程，避免 Service 销毁后线程泄漏
         // 注销蓝牙 HID Host 代理
         unregisterHidProxy()  // 注销蓝牙代理监听
         // 清除无障碍按键转发回调

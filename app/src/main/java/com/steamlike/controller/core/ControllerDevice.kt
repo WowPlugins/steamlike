@@ -264,6 +264,34 @@ object ControllerInputMapper { // 输入映射器单例（语法：object 单例
      * @param device 输入设备（用于查询轴范围）
      * @return 摇杆位置向量
      */
+    /**
+     * 读取摇杆轴值并写入调用方提供的数组（不构造 Vector2）
+     *
+     * 摇杆事件可达 60~200Hz，热路径上用这个重载可以避免每次 4 个短命对象。
+     * `out[0]` = X，`out[1]` = Y。
+     */
+    fun getStickValueInto(event: MotionEvent, stick: ControllerStick, device: InputDevice, out: FloatArray, offset: Int = 0) { // 写入复用数组
+        val i = offset // 写入位置（同一数组可同时存放左右摇杆）
+        when (stick) { // 按摇杆类型分支
+            ControllerStick.LEFT_STICK -> { // 左摇杆
+                out[i] = getCenteredAxis(event, device, MotionEvent.AXIS_X) // 读取 X 轴归一化值
+                out[i + 1] = getCenteredAxis(event, device, MotionEvent.AXIS_Y) // 读取 Y 轴归一化值
+            }
+            ControllerStick.RIGHT_STICK -> { // 右摇杆
+                var x = getCenteredAxis(event, device, MotionEvent.AXIS_Z) // 优先 AXIS_Z
+                if (x == 0f) x = getCenteredAxis(event, device, MotionEvent.AXIS_RX) // 回退 AXIS_RX
+                var y = getCenteredAxis(event, device, MotionEvent.AXIS_RZ) // 优先 AXIS_RZ
+                if (y == 0f) y = getCenteredAxis(event, device, MotionEvent.AXIS_RY) // 回退 AXIS_RY
+                out[i] = x
+                out[i + 1] = y
+            }
+            ControllerStick.DPAD_AS_STICK -> { // 十字键当摇杆
+                out[i] = event.getAxisValue(MotionEvent.AXIS_HAT_X).coerceIn(-1f, 1f) // HAT_X 限幅
+                out[i + 1] = event.getAxisValue(MotionEvent.AXIS_HAT_Y).coerceIn(-1f, 1f) // HAT_Y 限幅
+            }
+        }
+    }
+
     fun getStickValue(event: MotionEvent, stick: ControllerStick, device: InputDevice): Vector2 { // 读取摇杆 2D 位置（语法：返回 Vector2）
         return when (stick) { // 按摇杆类型分支（语法：when 表达式）
             ControllerStick.LEFT_STICK -> { // 左摇杆分支

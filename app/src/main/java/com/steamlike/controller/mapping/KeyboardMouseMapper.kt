@@ -1606,6 +1606,8 @@ class KeyboardMouseMapper( // 语法：class 类声明，定义键盘/鼠标映�
      * @param dt 实际经过时间（秒），位移 = 速度 × dt
      */
     private fun processLookTick(dt: Float) { // 语法：private fun 私有函数，单个 tick 计算并发送鼠标位移
+        // 摇杆已回中且平滑值已收敛：跳过本轮开方/幂运算（16ms 一次的常驻计算），位移本来就是 0
+        if (latestLookX == 0f && latestLookY == 0f && smoothedLookX == 0f && smoothedLookY == 0f) return
         var rx = latestLookX // 读取最新 X 到局部变量（语法：var 可变变量）
         var ry = latestLookY // 读取最新 Y 到局部变量（语法：var 可变变量）
         val settings = steamInput.profile.globalSettings // 获取全局设置（灵敏度/加速/平滑）（语法：val 只读变量 + 链式属性访问）
