@@ -14,6 +14,7 @@ import android.os.Build // 导入 Build，判断系统版本
 import android.os.Bundle // 导入 Bundle，Activity 状态传递
 import android.os.Environment // 导入 Environment，获取公共目录
 import android.os.Process // 导入 Process，获取当前进程 UID
+import android.provider.DocumentsContract // 导入 DocumentsContract，操作 SAF 目录内的文件
 import android.provider.MediaStore // 导入 MediaStore，媒体文件数据库
 import android.provider.Settings // 导入 Settings，系统设置（悬浮窗权限等）
 import android.util.Log // 导入 Log，日志输出
@@ -103,6 +104,31 @@ class MainActivity : AppCompatActivity() { // 声明主界面 Activity，继承 
         } // 结束 uri 非空判断
     } // 结束打开文档回调 lambda
 
+    /**
+     * SAF 目录选择启动器（用于选择 Windows 客户端的导出目录）
+     *
+     * 未选择时导出到默认的 Download/AControler；选中后持久化授权，
+     * 下次启动继续使用该目录。导出前会先删除目标目录中的同名旧文件。
+     */
+    private val openTreeLauncher = registerForActivityResult( // 注册“选择目录”启动器（语法：val + 回调注册）
+        ActivityResultContracts.OpenDocumentTree() // 目录选择契约
+    ) { uri: Uri? -> // 回调 lambda，接收用户选择的目录 URI
+        if (uri != null) { // 用户选择了目录
+            try { // 申请持久化读写授权，避免重启后失效
+                contentResolver.takePersistableUriPermission( // 持久化目录授权
+                    uri, // 目录 URI
+                    Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION // 读写权限
+                ) // 结束授权申请
+            } catch (e: Exception) { // 个别 provider 不支持持久化授权
+                Log.w(TAG, "takePersistableUriPermission failed", e) // 记录警告，本次选择仍可用
+            } // 结束 try-catch
+            exportTreeUri = uri // 更新当前导出目录
+            exportPrefs.edit().putString(KEY_EXPORT_TREE_URI, uri.toString()).apply() // 持久化保存
+            exportDirLabel?.text = exportTargetLabel() // 刷新界面上的目录说明
+            toastLog("导出目录已设为: ${exportTargetDesc()}", long = true) // 提示用户
+        } // 结束 uri 非空判断
+    } // 结束目录选择回调 lambda
+
     override fun onCreate(savedInstanceState: Bundle?) { // 覆写 Activity 创建回调（语法：override 覆写 + fun 函数声明）
         super.onCreate(savedInstanceState) // 调用父类创建逻辑（语法：super 调用父类）
 
@@ -116,6 +142,9 @@ class MainActivity : AppCompatActivity() { // 声明主界面 Activity，继承 
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) { // 系统版本 >= Android 5.0 时执行（语法：if 条件分支）
             window.statusBarColor = 0xFF1C1C1C.toInt() // 设置状态栏背景为深色
         } // 结束状态栏颜色设置 if
+
+        // 恢复上次选择的导出目录（null 表示使用默认 Download/AControler）
+        exportTreeUri = exportPrefs.getString(KEY_EXPORT_TREE_URI, null)?.let { Uri.parse(it) } // 读取并解析保存的目录 URI
 
         // 加载当前运行时配置（随配置文件持久化）
         val appCfg = AppConfigStore.load(this) // 读取运行时配置（语法：val 只读变量）
@@ -271,9 +300,15 @@ class MainActivity : AppCompatActivity() { // 声明主界面 Activity，继承 
         val winCard = UiKit.card(this) // 创建“Windows 客户端”卡片
         winCard.addView(UiKit.sectionTitle(this, "Windows 客户端")) // 添加卡片标题
         winCard.addView(UiKit.spacer(this, 6)) // 添加 6dp 间距
-        winCard.addView(UiKit.button(this, "导出 Windows 客户端到 Download/AControler", { // 创建导出客户端按钮（语法：lambda 点击回调）
+        winCard.addView(UiKit.button(this, "导出 Windows 客户端", { // 创建导出客户端按钮（语法：lambda 点击回调）
             exportFilesToDownload() // 执行导出操作
         })) // 结束按钮回调
+        val exportDirText = UiKit.caption(this, exportTargetLabel(), 0xFF999999.toInt(), 11f) // 当前导出目录说明
+        exportDirLabel = exportDirText // 保存引用，选择目录后刷新
+        winCard.addView(exportDirText) // 把说明文本加入卡片
+        winCard.addView(UiKit.button(this, "选择导出目录", { // 打开系统目录选择器
+            openTreeLauncher.launch(exportTreeUri) // 以当前目录作为初始位置（null = 默认位置）
+        })) // 结束选择目录回调
         container.addView(winCard) // 把 Windows 客户端卡片加入内容容器
 
         // ===== 配置管理卡片 =====
@@ -483,6 +518,12 @@ class MainActivity : AppCompatActivity() { // 声明主界面 Activity，继承 
 
     /** 导出目标子目录名 */
     private val exportDirName = "AControler" // 导出目标子目录名（语法：val 只读变量）
+    /** 用户通过 SAF 选择的导出目录（null = 默认 Download/AControler） */
+    private var exportTreeUri: Uri? = null // var=可变变量；SAF 目录 URI
+    /** 导出目录说明文本（选择目录后刷新） */
+    private var exportDirLabel: TextView? = null // 界面上的目录说明控件引用
+    /** 导出目录设置偏好（SAF 授权持久化） */
+    private val exportPrefs by lazy { getSharedPreferences(EXPORT_PREFS, MODE_PRIVATE) } // 懒加载偏好存储
 
     /** 需要导出的文件列表 (assetName → displayName) */
     private val exportFiles = listOf( // 需要导出的文件列表（语法：val + listOf 列表）
@@ -494,8 +535,10 @@ class MainActivity : AppCompatActivity() { // 声明主界面 Activity，继承 
      *
      * 从 APK 的 assets 中读取 exe，写入到公共 Download/AControler 目录。
      */
-    private fun exportFilesToDownload() { // 导出 Windows 客户端文件到 Download/AControler
+    private fun exportFilesToDownload() { // 导出 Windows 客户端文件到当前选择的目录
         val results = mutableListOf<String>() // 收集各文件导出结果（语法：val + mutableListOf 可变列表）
+        // 导出前先删掉目标目录中的同名旧文件（只删本次要导出的文件，不动目录里的其他内容）
+        cleanExportTarget() // 清理目标目录
 
         for ((assetName, displayName) in exportFiles) { // 遍历待导出文件（语法：for 循环 + 解构键值对）
             // 从 assets 读取文件字节
@@ -507,11 +550,7 @@ class MainActivity : AppCompatActivity() { // 声明主界面 Activity，继承 
             } // 结束 try-catch
 
             // 根据 Android 版本选择写入方式（均强制覆盖已存在文件）
-            val success = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) { // 系统版本 >= Android 10 时（语法：if 条件分支）
-                exportViaMediaStore(bytes, displayName) // 用 MediaStore 方式写入
-            } else { // 旧系统分支
-                exportViaLegacyFile(bytes, displayName) // 用传统文件方式写入
-            } // 结束版本分支
+            val success = exportFile(bytes, displayName) // 按当前选择的目录写入
 
             results.add("$displayName: ${if (success) "OK" else "FAIL"} (${bytes.size} bytes)") // 记录本次导出结果（语法：字符串模板 + if 表达式）
         } // 结束 for 循环
@@ -520,17 +559,13 @@ class MainActivity : AppCompatActivity() { // 声明主界面 Activity，继承 
         // 因此仅提升版本号无需重新编译/导出 exe）
         // 第一行 = APK 版本（界面显示），第二行 = Rust 编译版本（客户端自检 exe 是否过期）
         val versionBytes = "${BuildConfig.VERSION_NAME}\n${BuildConfig.RUST_CLIENT_VERSION}\n".toByteArray(Charsets.UTF_8) // 版本号文本（语法：字符串模板）
-        val versionSuccess = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) { // 系统版本分支（语法：if 条件分支）
-            exportViaMediaStore(versionBytes, "version.txt") // 用 MediaStore 方式写入
-        } else { // 旧系统分支
-            exportViaLegacyFile(versionBytes, "version.txt") // 用传统文件方式写入
-        } // 结束版本分支
+        val versionSuccess = exportFile(versionBytes, "version.txt") // 按当前选择的目录写入
         results.add("version.txt: ${if (versionSuccess) "OK" else "FAIL"} (${versionBytes.size} bytes)") // 记录 version.txt 导出结果
 
         // 汇总提示
         val allSuccess = results.all { it.contains("OK") } // 判断是否全部成功（语法：lambda + all 判断）
         val msg = if (allSuccess) { // 全部成功时（语法：if 条件分支）
-            "已导出 ${exportFiles.size + 1} 个文件到 Download/$exportDirName 目录:\n" + // 成功提示第一行（exe+version.txt）
+            "已导出 ${exportFiles.size + 1} 个文件到 ${exportTargetDesc()}:\n" + // 成功提示第一行（exe+version.txt）
             results.joinToString("\n") { "  $it" } // 拼接各文件结果（语法：joinToString + lambda）
         } else { // 有失败时进入
             "导出部分失败:\n" + results.joinToString("\n") { "  $it" } // 拼接失败明细
@@ -639,6 +674,7 @@ class MainActivity : AppCompatActivity() { // 声明主界面 Activity，继承 
             val targetDir = File(downloadDir, exportDirName) // 构造目标子目录
             if (!targetDir.exists()) targetDir.mkdirs() // 目录不存在则创建（语法：if 判断）
             val targetFile = File(targetDir, displayName) // 构造目标文件
+            if (targetFile.exists()) targetFile.delete() // 先删旧文件再写（只删同名文件）
             FileOutputStream(targetFile).use { output -> // 打开输出流并自动关闭（语法：use 资源自动关闭）
                 output.write(bytes) // 写入文件字节
                 output.flush() // 刷新缓冲区
@@ -650,6 +686,149 @@ class MainActivity : AppCompatActivity() { // 声明主界面 Activity，继承 
             false // 返回失败
         } // 结束 try-catch
     } // 结束 exportViaLegacyFile 函数
+
+    /**
+     * 本次导出涉及的文件名集合（清理旧文件时只删这些）
+     */
+    private fun exportFileNames(): Set<String> = exportFiles.map { it.second }.toSet() + "version.txt" // 导出清单中的文件名
+
+    /**
+     * 目标目录描述（用于界面说明与结果提示）
+     */
+    private fun exportTargetDesc(): String { // 返回目标目录名称
+        val uri = exportTreeUri ?: return "Download/$exportDirName" // 未选择时是默认目录
+        return treeDisplayName(uri) // 已选择时读取 SAF 目录显示名
+    } // 结束 exportTargetDesc
+
+    /**
+     * 界面上的导出目录说明（默认目录额外标注）
+     */
+    private fun exportTargetLabel(): String = // 生成说明文本
+        if (exportTreeUri == null) "导出到：Download/$exportDirName（默认）" // 默认目录
+        else "导出到：${exportTargetDesc()}" // 自选目录
+
+    /**
+     * 导出前清理目标目录：只删除本次要导出的同名文件，目录中的其他文件保持不动
+     */
+    private fun cleanExportTarget() { // 清理目标目录中的旧导出文件
+        val names = exportFileNames() // 本次要导出的文件名
+        val uri = exportTreeUri // 当前选择的目录
+        if (uri != null) { // 自选目录：按 SAF 删除同名子项
+            cleanTreeTarget(uri, names)
+            return
+        } // 结束自选目录分支
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) { // Android 9 及以下：直接删默认目录中的同名文件
+            val dir = File(Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS), exportDirName) // 默认目录
+            if (dir.isDirectory) { // 目录存在才清理
+                names.forEach { name -> File(dir, name).takeIf { it.exists() }?.delete() } // 只删清单内的文件
+            } // 结束目录存在判断
+        } // 结束旧系统分支
+        // Android 10+ 的默认目录由 exportViaMediaStore 内部按 MediaStore 记录删除同名旧文件
+    } // 结束 cleanExportTarget
+
+    /**
+     * 按当前选择的目录写入一个文件
+     */
+    private fun exportFile(bytes: ByteArray, displayName: String): Boolean { // 统一导出入口
+        val uri = exportTreeUri // 当前选择的目录
+        if (uri != null) return exportViaTree(uri, bytes, displayName) // 自选目录走 SAF
+        return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) { // 默认目录：Android 10+ 走 MediaStore
+            exportViaMediaStore(bytes, displayName)
+        } else { // Android 9 及以下走传统文件写入
+            exportViaLegacyFile(bytes, displayName)
+        } // 结束版本分支
+    } // 结束 exportFile
+
+    /**
+     * 读取 SAF 目录的显示名
+     */
+    private fun treeDisplayName(treeUri: Uri): String { // 读取目录名称
+        return try { // 尝试查询目录文档名
+            val docUri = DocumentsContract.buildDocumentUriUsingTree( // 目录自身文档 URI
+                treeUri,
+                DocumentsContract.getTreeDocumentId(treeUri)
+            ) // 结束 URI 构造
+            contentResolver.query( // 查询显示名
+                docUri,
+                arrayOf(DocumentsContract.Document.COLUMN_DISPLAY_NAME),
+                null, null, null
+            )?.use { cursor -> // 自动关闭游标
+                if (cursor.moveToFirst()) cursor.getString(0) else null // 返回第一行名称
+            } ?: (treeUri.lastPathSegment ?: "所选目录") // 查询失败时的兜底名称
+        } catch (e: Exception) { // 查询异常
+            Log.w(TAG, "读取目录名称失败", e) // 记录警告
+            treeUri.lastPathSegment ?: "所选目录" // 使用 URI 末段兜底
+        } // 结束 try-catch
+    } // 结束 treeDisplayName
+
+    /**
+     * 删除 SAF 目录中与待导出文件同名的子项
+     */
+    private fun cleanTreeTarget(treeUri: Uri, names: Set<String>) { // 清理 SAF 目录中的同名文件
+        try { // 尝试查询子项
+            val children = DocumentsContract.buildChildDocumentsUriUsingTree( // 子项集合 URI
+                treeUri,
+                DocumentsContract.getTreeDocumentId(treeUri)
+            ) // 结束 URI 构造
+            contentResolver.query( // 查询子项 ID 与名称
+                children,
+                arrayOf(
+                    DocumentsContract.Document.COLUMN_DOCUMENT_ID,
+                    DocumentsContract.Document.COLUMN_DISPLAY_NAME
+                ),
+                null, null, null
+            )?.use { cursor -> // 自动关闭游标
+                while (cursor.moveToNext()) { // 遍历子项
+                    val name = cursor.getString(1) ?: continue // 读取名称
+                    if (name in names) { // 只处理本次要导出的文件
+                        try { // 删除同名子项
+                            DocumentsContract.deleteDocument( // 删除文档
+                                contentResolver,
+                                DocumentsContract.buildDocumentUriUsingTree(treeUri, cursor.getString(0)) // 子项 URI
+                            ) // 结束删除
+                        } catch (e: Exception) { // 个别 provider 不允许删除
+                            Log.w(TAG, "删除旧文件失败: $name", e) // 记录警告
+                        } // 结束内层 try-catch
+                    } // 结束同名判断
+                } // 结束遍历
+            } // 结束 use 块
+        } catch (e: Exception) { // 查询异常
+            Log.e(TAG, "清理导出目录失败", e) // 记录错误
+        } // 结束 try-catch
+    } // 结束 cleanTreeTarget
+
+    /**
+     * 通过 SAF 写入文件到用户选择的目录
+     */
+    private fun exportViaTree(treeUri: Uri, bytes: ByteArray, displayName: String): Boolean { // SAF 目录写入
+        return try { // 尝试创建并写入
+            val parent = DocumentsContract.buildDocumentUriUsingTree( // 目标目录文档 URI
+                treeUri,
+                DocumentsContract.getTreeDocumentId(treeUri)
+            ) // 结束 URI 构造
+            val created = DocumentsContract.createDocument( // 在目录中创建文件
+                contentResolver,
+                parent,
+                "application/octet-stream",
+                displayName
+            ) ?: run { // 创建失败时
+                Log.e(TAG, "createDocument failed for $displayName") // 记录错误
+                return false // 返回失败
+            } // 结束创建
+            contentResolver.openOutputStream(created)?.use { output -> // 打开输出流
+                output.write(bytes) // 写入字节
+                output.flush() // 刷新缓冲
+            } ?: run { // 打开失败时
+                Log.e(TAG, "openOutputStream failed for $displayName") // 记录错误
+                return false // 返回失败
+            } // 结束输出流处理
+            Log.i(TAG, "Exported $displayName to ${exportTargetDesc()} (${bytes.size} bytes)") // 记录成功日志
+            true // 返回成功
+        } catch (e: Exception) { // 写入异常
+            Log.e(TAG, "Export $displayName failed", e) // 记录错误
+            false // 返回失败
+        } // 结束 try-catch
+    } // 结束 exportViaTree
 
     /**
      * 请求蓝牙连接权限（Android 12+，API 31+）
@@ -675,6 +854,10 @@ class MainActivity : AppCompatActivity() { // 声明主界面 Activity，继承 
         private const val REQUEST_WRITE_STORAGE = 1001 // 存储写入权限请求码（语法：const val 编译期常量）
         /** 请求 BLUETOOTH_CONNECT 权限的请求码 (Android 12+ 检测手柄蓝牙连接状态) */
         private const val REQUEST_BLUETOOTH_CONNECT = 1002 // 蓝牙连接权限请求码
+        /** 导出目录设置偏好文件名 */
+        private const val EXPORT_PREFS = "export_settings" // 偏好文件名
+        /** 导出目录 URI 的键名 */
+        private const val KEY_EXPORT_TREE_URI = "tree_uri" // 键名
         private const val TAG = "SteamLikeUI" // 日志标签（语法：const val 编译期常量）
         /** 主界面滚动位置持久化 */
         private const val SCROLL_PREFS = "main_scroll" // 滚动位置偏好文件名

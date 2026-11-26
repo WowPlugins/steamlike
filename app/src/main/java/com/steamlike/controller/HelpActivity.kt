@@ -100,7 +100,8 @@ class HelpActivity : AppCompatActivity() { // 语法：class=类声明，继承 
                 + "4. 切到 Winlator 运行 WoW")) // 正文：第 4 步
 
         container.addView(makeCard("快速开始（Windows 端）", // 创建“快速开始（Windows 端）”说明卡片
-            "1. 点「导出 Windows 客户端」，从 Download/AControler\n" // 正文：导出 Windows 客户端
+            "1. 点「导出 Windows 客户端」\n" // 正文：导出 Windows 客户端
+                + "   默认目录是 Download/AControler，也可点「选择导出目录」自选\n" // 正文：默认目录与自选目录
                 + "   取出 inputbridge_client.exe\n" // 正文：取出客户端程序
                 + "2. 复制到 Winlator 的 C 盘\n" // 正文：复制到 C 盘
                 + "3. 直接运行 inputbridge_client.exe\n" // 正文：启动方式
