@@ -370,6 +370,45 @@
                     android:layout_height="wrap_content" />
             </LinearLayout>
 
+            <!-- ===== 触发方式（每个按键独立设置，仅对未设置长按动作的键生效） ===== -->
+            <LinearLayout
+                android:id="@+id/layout_trigger_mode"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical"
+                android:paddingHorizontal="10dp"
+                android:paddingBottom="10dp">
+
+                <!-- 说明单独成行自动换行，避免把下拉框挤出窗口 -->
+                <TextView
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:text="触发方式（仅对未设置长按动作的键盘/小键盘/鼠标点击生效）：&#10;抬起触发 = 松手时点按一次&#10;按下触发 = 按下立刻执行、按住保持、松开释放&#10;长按按住 = 长按超过阈值后一直按住、松手释放&#10;长按触发 = 长按超过阈值立刻点按一次、不用松手"
+                    android:textSize="12sp"
+                    android:textColor="#FF999999"
+                    android:paddingBottom="4dp" />
+
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="horizontal"
+                    android:gravity="center_vertical">
+
+                    <TextView
+                        android:layout_width="0dp"
+                        android:layout_weight="1"
+                        android:layout_height="wrap_content"
+                        android:text="触发方式:"
+                        android:textSize="14sp"
+                        android:textColor="#FFDDDDDD" />
+
+                    <Spinner
+                        android:id="@+id/spinner_trigger_mode"
+                        android:layout_width="130dp"
+                        android:layout_height="wrap_content" />
+                </LinearLayout>
+            </LinearLayout>
+
             <!-- 语法：TextView 文本控件；「长按动作类型:」标签
                  textSize=14sp：字号；textColor=#FFDDDDDD：浅灰 -->
             <TextView

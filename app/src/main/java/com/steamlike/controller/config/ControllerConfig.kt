@@ -9,6 +9,7 @@ import com.steamlike.controller.core.KeyMapping // 导入按键映射数据类
 import com.steamlike.controller.core.MappedAction // 导入映射动作密封类
 import com.steamlike.controller.core.MouseButton // 导入鼠标按键枚举
 import com.steamlike.controller.core.OperationLayer // 导入操作层数据类
+import com.steamlike.controller.core.TriggerMode // 导入按键触发方式枚举
 import org.json.JSONArray // 导入 Android 内置 JSON 数组类
 import org.json.JSONObject // 导入 Android 内置 JSON 对象类
 
@@ -256,7 +257,6 @@ object ControllerConfig { // 单例对象：配置的 JSON 序列化/反序列�
         json.put("lookSmoothing", settings.lookSmoothing) // 写入视角平滑
         json.put("lookAcceleration", settings.lookAcceleration) // 写入视角加速度
         json.put("longPressThresholdMs", settings.longPressThresholdMs) // 写入长按判定阈值
-        json.put("longPressFallbackToShort", settings.longPressFallbackToShort) // 写入长按回退开关
         json.put("wasdAutoRightLock", settings.wasdAutoRightLock) // 写入 WASD 自动锁定右键开关
         json.put("wasdAutoCenterMouse", settings.wasdAutoCenterMouse) // 写入 WASD 自动锁定前的光标归位开关
         json.put("cursorParkOffscreen", settings.cursorParkOffscreen) // 写入归位落点开关（是否停放到屏幕左下角之外）
@@ -271,7 +271,6 @@ object ControllerConfig { // 单例对象：配置的 JSON 序列化/反序列�
             lookSmoothing = json.optDouble("lookSmoothing", 0.5).toFloat(), // 读取平滑并转 Float
             lookAcceleration = json.optDouble("lookAcceleration", 1.5).toFloat(), // 读取加速度并转 Float
             longPressThresholdMs = json.optInt("longPressThresholdMs", 500), // 读取长按阈值（语法：optInt=带默认值读取整数）
-            longPressFallbackToShort = json.optBoolean("longPressFallbackToShort", false), // 读取长按回退开关
             wasdAutoRightLock = json.optBoolean("wasdAutoRightLock", true), // 读取 WASD 自动锁定右键开关（默认开启）
             wasdAutoCenterMouse = json.optBoolean("wasdAutoCenterMouse", true), // 读取 WASD 自动锁定前的光标归位开关（默认开启）
             cursorParkOffscreen = json.optBoolean("cursorParkOffscreen", true) // 读取归位落点开关（默认停放到屏幕左下角之外）
@@ -347,6 +346,7 @@ object ControllerConfig { // 单例对象：配置的 JSON 序列化/反序列�
         if (mapping.layerSwitchOnly) json.put("layerSwitchOnly", true) // 短按「只切换层」开启时才写入（默认关闭，省体积）
         if (mapping.longPressLayerSwitchOnly) json.put("longPressLayerSwitchOnly", true) // 长按「只切换层」开启时才写入
         mapping.longPressThresholdMs?.let { json.put("longPressThresholdMs", it) } // 独立长按阈值（未设置则沿用全局）
+        if (mapping.triggerMode != TriggerMode.THRESHOLD) json.put("triggerMode", mapping.triggerMode.name) // 非默认触发方式才写入（默认长按触发，省体积）
         return json // 返回 JSON 对象
     } // 结束 mappingToJson 函数
 
@@ -368,7 +368,10 @@ object ControllerConfig { // 单例对象：配置的 JSON 序列化/反序列�
             action, subCommands, longPressAction, longPressSubCommands, // 原有字段
             json.optBoolean("layerSwitchOnly", false), // 短按「只切换层」（缺失=关闭，兼容旧配置）
             json.optBoolean("longPressLayerSwitchOnly", false), // 长按「只切换层」（缺失=关闭）
-            longPressThresholdMs = json.optInt("longPressThresholdMs", 0).takeIf { it > 0 } // 独立长按阈值（缺失/非法=沿用全局）
+            longPressThresholdMs = json.optInt("longPressThresholdMs", 0).takeIf { it > 0 }, // 独立长按阈值（缺失/非法=沿用全局）
+            // 每键触发方式（缺失=长按触发）；兼容旧配置里的 holdShortOnLongPress=true → 长按按住
+            triggerMode = TriggerMode.values().find { it.name == json.optString("triggerMode") }
+                ?: if (json.optBoolean("holdShortOnLongPress", false)) TriggerMode.HOLD else TriggerMode.THRESHOLD
         ) // 结束 KeyMapping 构造
     } // 结束 parseMapping 函数
 

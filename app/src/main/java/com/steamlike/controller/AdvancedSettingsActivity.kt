@@ -286,12 +286,6 @@ class AdvancedSettingsActivity : AppCompatActivity() { // 声明高级设置页�
         longPressCard.addView(longPressThresholdSpinner)
         longPressCard.addView(UiKit.spacer(this, 8))
 
-        val longPressFallbackSwitch = UiKit.switchRow(
-            this, "长按未映射时执行短按动作", currentSettings.longPressFallbackToShort
-        ) {}
-        longPressCard.addView(longPressFallbackSwitch)
-        longPressCard.addView(UiKit.spacer(this, 6))
-
         longPressCard.addView(UiKit.button(this, "保存长按设置", {
             if (!Settings.canDrawOverlays(this)) {
                 toastLog("请先授予悬浮窗权限并启动服务", long = true)
@@ -301,7 +295,6 @@ class AdvancedSettingsActivity : AppCompatActivity() { // 声明高级设置页�
                     action = ControllerOverlayService.ACTION_UPDATE_SETTINGS
                     putExtra(ControllerOverlayService.EXTRA_LONG_PRESS_THRESHOLD_MS,
                         longPressThresholdOptions[longPressThresholdSpinner.selectedItemPosition])
-                    putExtra(ControllerOverlayService.EXTRA_LONG_PRESS_FALLBACK, longPressFallbackSwitch.isChecked)
                 }
                 ContextCompat.startForegroundService(this, intent)
                 toastLog("正在保存长按设置...")

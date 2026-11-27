@@ -13,6 +13,7 @@ import com.steamlike.controller.core.MappedAction // 语法：import 导入声�
 import com.steamlike.controller.core.MouseButton // 语法：import 导入声明，导入鼠标按钮枚举
 import com.steamlike.controller.core.OperationLayer // 语法：import 导入声明，导入操作层类型（记录触发过鼠标动作的层）
 import com.steamlike.controller.core.SteamInput // 语法：import 导入声明，导入 SteamInput 核心控制器
+import com.steamlike.controller.core.TriggerMode // 语法：import 导入声明，导入按键触发方式枚举
 import com.steamlike.controller.injection.InputInjector // 语法：import 导入声明，导入输入注入器接口
 
 /**
@@ -579,9 +580,10 @@ class KeyboardMouseMapper( // 语法：class 类声明，定义键盘/鼠标映�
      * 判断某映射是否启用「长按判定」
      *
      * - 已配置长按动作 → 一律启用（无论短按动作是保持型还是触发型，如鼠标锁存/交换）
-     * - 未配置长按动作但全局回退开关开启，且短按为保持型动作（键盘键/数字小键盘/鼠标点击）
-     *   → 也启用（长按松开时回退执行短按动作）
-     * - 其余情况（未配置且回退关闭）→ 不启用，保持原有「按下即触发」行为
+     * - 未配置长按动作，短按为保持型动作（键盘键/数字小键盘/鼠标点击），
+     *   且触发方式为抬起触发 / 长按按住 → 也启用
+     *   （抬起触发=松手时点按；长按按住=到达阈值后按住）
+     * - 触发方式为按下触发 → 不启用，保持「按下即触发、按住保持」行为
      *
      * @param mapping 按键映射
      */
@@ -589,11 +591,11 @@ class KeyboardMouseMapper( // 语法：class 类声明，定义键盘/鼠标映�
         if (mapping.longPressBlocked) return true // 长按被本层屏蔽：仍要判定，判定成功后什么都不执行
         if (mapping.longPressAction != null) return true // 配置了长按动作 → 一律启用判定
         val shortAction = mapping.action // 取短按动作
-        // 未配置长按动作时，仅「保持型短按动作」在回退开关开启下参与判定
+        // 未配置长按动作时，仅「保持型短按动作」在回退开关或「长按按住」开启下参与判定
         val holdable = shortAction is MappedAction.KeyboardKey || // 键盘键（语法：|| 逻辑或）
                 shortAction is MappedAction.NumpadKey || // 数字小键盘
                 shortAction is MappedAction.MouseClick // 鼠标点击
-        return holdable && steamInput.profile.globalSettings.longPressFallbackToShort // 回退开关决定
+        return holdable && mapping.triggerMode != TriggerMode.DOWN // 按下触发不进入判定，其余两种进入
     } // 结束 isLongPressEligible 函数
 
     /**
@@ -684,7 +686,9 @@ class KeyboardMouseMapper( // 语法：class 类声明，定义键盘/鼠标映�
         if (deferredPresses.containsKey(button)) return // 已在判定中则忽略，防重复（语法：containsKey 判断）
         val pressTime = SystemClock.elapsedRealtime() // 记录按下时刻（单调时钟，不受系统时间调整影响）
         deferredPresses[button] = DeferredPress(mapping, pressTime, layerName) // 存入延迟按下上下文（含所属层）
-        if (mapping.longPressAction != null || mapping.longPressBlocked) { // 配置了长按动作或长按被屏蔽时才需要阈值定时器
+        if (mapping.longPressAction != null || mapping.longPressBlocked || // 配置了长按动作或长按被屏蔽
+            mapping.triggerMode == TriggerMode.HOLD || // 或触发方式为「长按按住」
+            mapping.triggerMode == TriggerMode.THRESHOLD) { // 或「长按触发」时才需要阈值定时器
             val threshold = mapping.longPressThresholdMs?.toLong() // 优先使用该按键的独立阈值
                 ?: steamInput.profile.globalSettings.longPressThresholdMs.toLong() // 未配置时沿用全局阈值
             val runnable = Runnable { onLongPressThreshold(button) } // 构造阈值到达回调（语法：Runnable{}=可运行 lambda）
@@ -703,7 +707,25 @@ class KeyboardMouseMapper( // 语法：class 类声明，定义键盘/鼠标映�
     private fun onLongPressThreshold(button: ControllerButton) { // 语法：private fun 私有函数，阈值到达注入长按动作
         longPressTimers.remove(button) // 定时器已触发，移除记录
         val pending = deferredPresses[button] ?: return // 取出延迟按下上下文，已松开则返回（语法：?: 空值合并）
-        val longAction = pending.mapping.longPressAction ?: return // 无长按动作（回退模式）则不注入
+        val longAction = pending.mapping.longPressAction
+        if (longAction == null) { // 未配置长按动作（回退模式）
+            // 仅「长按按住」需要在此刻注入：到达阈值就按下并保持，松手时释放
+            if (!pending.mapping.longPressBlocked) { // 长按未被本层屏蔽
+                if (pending.mapping.triggerMode == TriggerMode.HOLD) { // 长按按住：注入按下并保持到松手
+                    if (pending.mapping.layerSwitchOnly && isOnlyLayerApplicable(pending.mapping.action)) { // 短按动作开启「只切换层」
+                        suppressLayerKeys(button, pending.layerName) // 先抬起本层切层键（松开时由释放流程恢复）
+                    } // 结束「只切换层」判断
+                    injectActionDown(button, pending.mapping.action, pending.mapping.subCommands, pending.mapping.layerSwitchOnly) // 注入短按动作按下并记录保持状态
+                    longHoldActive.add(button) // 记入保持型集合，手柄松开时释放
+                    Log.d(TAG, "LongPress hold: $button → ${pending.mapping.action}") // 打印回退保持日志
+                } else if (pending.mapping.triggerMode == TriggerMode.THRESHOLD) { // 长按触发：阈值到达立刻点按一次
+                    tapAction(button, pending.mapping.action, pending.mapping.subCommands, pending.mapping.layerSwitchOnly) // 执行一次点按
+                    longInstantFired.add(button) // 记为已触发，手柄松开时不再重复执行
+                    Log.d(TAG, "LongPress threshold: $button → ${pending.mapping.action}") // 打印阈值触发日志
+                } // 结束触发方式判断
+            } // 结束回退处理
+            return // 回退模式处理完毕
+        } // 结束回退模式判断
         if (longAction is MappedAction.KeyboardKey || longAction is MappedAction.NumpadKey) { // 键盘/小键盘长按动作
             // 阈值到达立即「点按」（按下+释放），不等手柄松开：
             // 只注入按下时，游戏侧要等按键抬起才确认，表现为「松手才触发长按动作」。
@@ -759,12 +781,16 @@ class KeyboardMouseMapper( // 语法：class 类声明，定义键盘/鼠标映�
             } // 结束长按类型判断
         } else if (pending.mapping.longPressBlocked) { // 长按被本层屏蔽：什么都不做（也不回退短按）
             Log.d(TAG, "LongPress blocked: $button held=${held}ms") // 打印屏蔽日志
-        } else if (steamInput.profile.globalSettings.longPressFallbackToShort) { // 长按未配置动作：回退开关开启
+        } else if (longHoldActive.remove(button)) { // 长按按住期间已注入按下 → 现在释放
+            releaseButtonInjection(button) // 释放长按期间保持的按键
+        } else if (longInstantFired.remove(button)) { // 长按触发模式已在阈值时点按 → 松手不再执行
+            // 无需处理
+        } else if (pending.mapping.triggerMode != TriggerMode.DOWN) { // 长按未配置动作：抬起/长按按住模式下松手点按
             if (pending.mapping.layerSwitchOnly && isOnlyLayerApplicable(pending.mapping.action)) { // 回退执行的短按动作开启「只切换层」
                 suppressLayerKeys(button, pending.layerName) // 先抬起本层切层键（点按内部的释放流程会恢复）
             } // 结束「只切换层」判断
             tapAction(button, pending.mapping.action, pending.mapping.subCommands, pending.mapping.layerSwitchOnly) // 松开时执行短按动作（保持型点按/触发型触发）
-        } // 否则（未配置长按动作且回退关闭）：什么都不做
+        } // 否则（未配置长按动作且都关闭）：什么都不做
         Log.d(TAG, "LongPress end: $button held=${held}ms threshold=${threshold}ms") // 打印判定结束日志
         return true // 已处理
     } // 结束 finishDeferredPress 函数

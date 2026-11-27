@@ -284,8 +284,10 @@ sealed class MappedAction { // 映射动作密封类（语法：sealed class 密
  * - 仅当配置了长按动作时该按键才进入判定；未配置时保持原有「按下即触发」行为
  * - 按住时长 < [GlobalSettings.longPressThresholdMs]：执行短按动作（按下+立即松开）
  * - 按住时长 ≥ 阈值：执行长按动作（保持型动作为按住，松开时释放；瞬时动作触发一次）
- * - 全局开关 [GlobalSettings.longPressFallbackToShort] 开启时，未配置长按动作的按键
- *   也会进入判定，长按松开时回退执行短按动作
+ * - 未配置长按动作时，按键的 [KeyMapping.triggerMode] 决定何时执行短按动作：
+ *   [TriggerMode.UP]=抬起触发、[TriggerMode.DOWN]=按下即触发并保持、
+ *   [TriggerMode.HOLD]=长按到达阈值后按住（适用于空格这类「按住才持续生效」的按键）、
+ *   [TriggerMode.THRESHOLD]=长按到达阈值立刻点按一次、不用松手（默认）
  *
  * @param action 主动作（短按动作）
  * @param subCommands 子命令列表（最多 3 个 Android [KeyEvent.KEYCODE_*] 常量），作用于短按动作
@@ -303,6 +305,16 @@ sealed class MappedAction { // 映射动作密封类（语法：sealed class 密
  * @param layerSwitchOnly 短按动作是否「只切换层」（不叠加切层键按下的按键）
  * @param longPressLayerSwitchOnly 长按动作是否「只切换层」（不叠加切层键按下的按键）
  */
+/**
+ * 按键触发方式（仅作用于未配置长按动作的按键）
+ *
+ * - [UP] 抬起触发：松手时点按一次（WoW 抬起才放技能）
+ * - [DOWN] 按下触发：按下即执行、按住保持、松开释放（WoW 默认动作条逻辑）
+ * - [HOLD] 长按按住：短按松手点按；长按到达阈值后按住，松手释放
+ * - [THRESHOLD] 长按触发（默认）：短按松手点按；长按到达阈值立刻点按一次，不用松手
+ */
+enum class TriggerMode { UP, DOWN, HOLD, THRESHOLD }
+
 data class KeyMapping( // 按键映射定义（语法：data class 数据类）
     val action: MappedAction, // 主动作（短按动作）
     val subCommands: List<Int> = emptyList(), // 短按子命令列表（语法：默认参数 = emptyList()）
@@ -313,7 +325,9 @@ data class KeyMapping( // 按键映射定义（语法：data class 数据类）
     /** 运行时标记：长按被当前层屏蔽（长按判定照常进行，但到阈值与松开时都不执行任何动作） */
     val longPressBlocked: Boolean = false,
     /** 该按键独立的长按判定阈值（毫秒）；null=沿用全局 [GlobalSettings.longPressThresholdMs] */
-    val longPressThresholdMs: Int? = null
+    val longPressThresholdMs: Int? = null,
+    /** 未配置长按动作时的触发方式（默认长按触发） */
+    val triggerMode: TriggerMode = TriggerMode.THRESHOLD
 ) { // 数据类主体开始
     init { // 初始化块校验（语法：init 初始化块）
         require(subCommands.size <= MAX_SUB_COMMANDS) { // 校验子命令数量不超上限（语法：require 前置条件检查）
@@ -541,7 +555,6 @@ data class OperationLayer( // 操作层定义（语法：data class 数据类）
  * @param lookSmoothing 视角平滑系数（0.0~0.95），0=关闭平滑，越大越顺滑但延迟略增。默认 0.5
  * @param lookAcceleration 视角加速曲线指数（0.5~3.0），1.0=线性，>1轻推更慢重推更快，<1相反。默认 1.5
  * @param longPressThresholdMs 长按判定阈值（毫秒），按住时长达到该值视为长按。默认 500
- * @param longPressFallbackToShort 长按未配置动作时，是否在松开时回退执行短按动作。默认 false
  * @param wasdAutoRightLock 左摇杆移动（WASD）时是否自动锁定鼠标右键。默认 true
  * @param wasdAutoCenterMouse 自动锁定右键前是否先把光标挪到画面外（避免视角跳一下）。默认 true
  * @param cursorParkOffscreen 归位落点：true=屏幕左下角之外、屏幕下边缘再往下约 2/3 屏高处，false=屏幕正中央。默认 true
@@ -553,7 +566,6 @@ data class GlobalSettings( // 全局设置（语法：data class 数据类）
     val lookSmoothing: Float = 0.5f, // 视角平滑系数
     val lookAcceleration: Float = 1.5f, // 视角加速曲线指数
     val longPressThresholdMs: Int = 500, // 长按判定阈值（毫秒）
-    val longPressFallbackToShort: Boolean = false, // 长按未配置动作时是否回退执行短按动作
     val wasdAutoRightLock: Boolean = true, // 左摇杆移动时是否自动锁定鼠标右键（默认开启）
     val wasdAutoCenterMouse: Boolean = true, // 自动锁定右键前是否先把光标挪到画面外（默认开启）
     val cursorParkOffscreen: Boolean = true // 归位落点：true=屏幕左下角之外、下边缘再往下约 2/3 屏高，false=屏幕正中央（默认屏幕左下角之外）

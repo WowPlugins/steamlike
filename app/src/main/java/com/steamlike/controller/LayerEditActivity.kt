@@ -46,6 +46,7 @@ import com.steamlike.controller.core.MappedAction // 导入映射动作密封类
 import com.steamlike.controller.core.MouseButton // 导入鼠标按键枚举
 import com.steamlike.controller.core.OperationLayer // 导入操作层数据类
 import com.steamlike.controller.core.SteamInput // 导入 SteamInput（主控制器）
+import com.steamlike.controller.core.TriggerMode // 导入按键触发方式枚举
 import java.io.File // 导入 java.io.File（文件操作类）
 
 /**
@@ -814,6 +815,12 @@ class LayerEditActivity : AppCompatActivity() { // 定义操作层编辑 Activit
         val layoutBlockHold = dialogView.findViewById<LinearLayout>(R.id.layout_block_hold) // 获取「屏蔽长按回落」区域（长按分组内）
         val switchBlockTap = dialogView.findViewById<Switch>(R.id.switch_block_tap) // 获取「屏蔽短按回落」开关
         val switchBlockHold = dialogView.findViewById<Switch>(R.id.switch_block_hold) // 获取「屏蔽长按回落」开关
+        val spinnerTriggerMode = dialogView.findViewById<Spinner>(R.id.spinner_trigger_mode) // 获取「触发方式」下拉框
+        val triggerModeLabels = listOf("抬起触发", "按下触发", "长按按住", "长按触发") // 顺序必须与 TriggerMode 枚举一致
+        spinnerTriggerMode.adapter = ArrayAdapter(this, android.R.layout.simple_spinner_item, triggerModeLabels).also {
+            it.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item) // 设置下拉展开项布局
+        }
+        spinnerTriggerMode.setSelection((existingMapping?.triggerMode ?: TriggerMode.THRESHOLD).ordinal) // 回显触发方式（默认长按触发）
 
         // 屏蔽回落：仅操作层有意义（公共层本身就是兜底，没有可回落的下一层）
         val blockVisibility = if (isCommonLayer) View.GONE else View.VISIBLE // 公共层隐藏这两个区域
@@ -1181,7 +1188,8 @@ class LayerEditActivity : AppCompatActivity() { // 定义操作层编辑 Activit
                     val thresholdValue = if (thresholdPos in thresholdPresets.indices) thresholdPresets[thresholdPos]
                         else customThreshold ?: DEFAULT_LONG_PRESS_THRESHOLD_MS // 自定义项取值
                     val newMapping = KeyMapping(action, subCommands, longPressAction, longPressSubCommands, tapOnlyLayer, longOnlyLayer, // 构建新的按键映射对象
-                        longPressThresholdMs = thresholdValue.takeIf { longPressAction != null }) // 仅配置了长按动作时保存独立阈值
+                        longPressThresholdMs = thresholdValue.takeIf { longPressAction != null }, // 仅配置了长按动作时保存独立阈值
+                        triggerMode = TriggerMode.values()[spinnerTriggerMode.selectedItemPosition]) // 每键触发方式
 
                     // 写入当前操作层的 buttonMappings（MutableMap，可直接修改）
                     layer.buttonMappings[button] = newMapping // 将新映射写入当前层的映射表

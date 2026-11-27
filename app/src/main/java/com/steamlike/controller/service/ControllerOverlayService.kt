@@ -156,8 +156,6 @@ class ControllerOverlayService : Service() {  // class=类声明；继承 Servic
         const val EXTRA_LOOK_ACCELERATION = "look_acceleration"  // const val=编译期常量；视角加速指数的 extra 键
         /** Intent extra: 长按判定阈值 (Int, 毫秒) */
         const val EXTRA_LONG_PRESS_THRESHOLD_MS = "long_press_threshold_ms"  // const val=编译期常量；长按判定阈值的 extra 键
-        /** Intent extra: 长按未映射时是否回退执行短按动作 (Boolean) */
-        const val EXTRA_LONG_PRESS_FALLBACK = "long_press_fallback"  // const val=编译期常量；长按回退开关的 extra 键
         /** Intent extra: 左摇杆移动时是否自动锁定鼠标右键 (Boolean) */
         const val EXTRA_WASD_AUTO_RIGHT_LOCK = "wasd_auto_right_lock"  // const val=编译期常量；WASD 自动锁定右键开关的 extra 键
         /** Intent extra: 自动锁定右键前是否先把鼠标移到屏幕中央 (Boolean) */
@@ -904,7 +902,6 @@ class ControllerOverlayService : Service() {  // class=类声明；继承 Servic
             lookSmoothing = intent.getFloatExtra(EXTRA_LOOK_SMOOTHING, old.lookSmoothing),  // 命名参数；读取平滑系数
             lookAcceleration = intent.getFloatExtra(EXTRA_LOOK_ACCELERATION, old.lookAcceleration),  // 命名参数；读取加速指数
             longPressThresholdMs = intent.getIntExtra(EXTRA_LONG_PRESS_THRESHOLD_MS, old.longPressThresholdMs),  // 命名参数；读取长按阈值
-            longPressFallbackToShort = intent.getBooleanExtra(EXTRA_LONG_PRESS_FALLBACK, old.longPressFallbackToShort),  // 命名参数；读取长按回退开关
             wasdAutoRightLock = intent.getBooleanExtra(EXTRA_WASD_AUTO_RIGHT_LOCK, old.wasdAutoRightLock),  // 命名参数；读取 WASD 自动锁定右键开关
             wasdAutoCenterMouse = intent.getBooleanExtra(EXTRA_WASD_AUTO_CENTER_MOUSE, old.wasdAutoCenterMouse),  // 命名参数；读取 WASD 自动锁定前的光标归位开关
             cursorParkOffscreen = intent.getBooleanExtra(EXTRA_CURSOR_PARK_OFFSCREEN, old.cursorParkOffscreen)  // 命名参数；读取归位落点开关（屏幕左下角之外 / 屏幕正中央）
