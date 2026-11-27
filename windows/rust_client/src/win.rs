@@ -189,11 +189,11 @@ fn log_window_once(hwnd: HWND) {
     ));
 }
 
-/// 直接向游戏窗口投递 `WM_CHAR`，把 Unicode 文本送进聊天框
+/// 直接向游戏窗口投递 `WM_CHAR`（仅用于纯 ASCII 文本）
 ///
-/// 真实的中文输入法也是通过 `WM_CHAR` 把字符交给 WoW 的，这条路径完全不碰剪贴板：
-/// 既不会让 Winlator 的共享剪贴板把内容同步回手机、触发系统剪贴板提示，
-/// 也不受 Wine 剪贴板粘贴时序的影响。
+/// WoW 3.3.5 的中文界面在 Wine 下会把 WM_CHAR 的 wParam 按单字节处理，
+/// UTF-16 码元投递后汉字会变成乱码（无论是否先转 ANSI 字节），
+/// 因此中文等非 ASCII 文本不能走这里，见 [paste_text]。
 ///
 /// 返回 false 表示没找到游戏窗口（未启动游戏），由调用方决定是否回退。
 fn type_text(text: &str) -> bool {
@@ -211,18 +211,30 @@ fn type_text(text: &str) -> bool {
 
 /// 把文本输入游戏
 ///
-/// 优先直接投递 `WM_CHAR`；只有找不到游戏窗口时才回退到「写剪贴板 + Ctrl+V」。
-/// 回退路径会让 Winlator 把剪贴板内容同步回手机，尽量少走。
+/// - 纯 ASCII：直接投递 `WM_CHAR`，不碰剪贴板
+/// - 含中文等非 ASCII：必须走「写剪贴板 + Ctrl+V」——WoW 3.3.5 的中文界面
+///   在 Wine 下按本地代码页处理输入，`KEYEVENTF_UNICODE` 注入汉字和 `WM_CHAR`
+///   投递都会显示成乱码，只有剪贴板粘贴与 Winlator 自带键盘打字的效果一致。
+///   写剪贴板时 [crate::clipboard] 会记录序列号/内容，避免回环同步回手机。
 pub fn paste_text(text: &str) {
     if text.is_empty() {
         return;
     }
-    if type_text(text) {
+    if text.is_ascii() && type_text(text) {
         log(format!("[键盘] 已直接输入文本 {} 字节", text.len()));
         return;
     }
-    log("[键盘] 未找到游戏窗口，改用剪贴板粘贴");
+    // 诊断日志：记录前台窗口与剪贴板写入结果（粘贴依赖前台窗口的键盘焦点）
+    let fg = unsafe { GetForegroundWindow() };
+    let mut class = [0u16; 64];
+    let n = unsafe { GetClassNameW(fg, &mut class) }.max(0) as usize;
+    log(format!(
+        "[键盘] 剪贴板粘贴：前台窗口类名={} 文本={} 字节",
+        String::from_utf16_lossy(&class[..n]),
+        text.len()
+    ));
     if !crate::clipboard::write_text(text) {
+        log("[键盘] 写剪贴板失败");
         return;
     }
     // 给目标程序一点时间感知剪贴板更新
@@ -231,6 +243,7 @@ pub fn paste_text(text: &str) {
     inject_key(VK_V, true);
     inject_key(VK_V, false);
     inject_key(VK_CONTROL, false);
+    log("[键盘] 已发送 Ctrl+V");
     // 粘贴后等待目标程序真正读取剪贴板：剪贴板是全局资源，
     // 下一段文本若过早写入会覆盖内容，表现为丢字/重字
     std::thread::sleep(std::time::Duration::from_millis(150));

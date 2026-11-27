@@ -1363,7 +1363,7 @@ dependencies = [
 
 [[package]]
 name = "inputbridge_client"
-version = "0.1.154"
+version = "0.1.157"
 dependencies = [
  "crossbeam-channel",
  "eframe",
